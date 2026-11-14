@@ -16,9 +16,17 @@ collapsed are remembered by your browser.
 Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
 window over the app, closed with **Done**, **Cancel** or ++escape++.
 
-The app has one theme, a dark one, in Neuroglancer's black and greys with
-square corners; there is no light theme. Light grey marks what is
-selected; green only a switch that is on.
+The app has one theme, a dark one, in Neuroglancer's materials: black
+panels divided by thin lines, white type, square corners, numbers in a
+monospaced face; there is no light theme. What is chosen or on is shown
+inverted, white with black words (as Neuroglancer's chosen tab), and the
+only colour in the interface is red, for errors and what deletes: colour
+on screen is the data's. The views are a black stage: a new scene draws the margin around the
+sections near black and a layer's bounding box in a dim grey (a link keeps
+the colours it was shared with; the margin's colour is in Settings ›
+View). Values the
+app shows, such as the coordinates over the views and the status line's
+items, are in a monospaced face with their units in grey.
 
 An empty scene is an empty viewer. **+** beside **Data** in the Layers
 panel opens **Open** (a file or a folder, a link, another scene's

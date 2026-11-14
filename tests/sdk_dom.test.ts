@@ -5,7 +5,7 @@
  * panel in place; against the SDK's stand-in document.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { card, checkbox, emptyState, field, info, numberInput, region, select, slider, statusLine, stepText, toggle } from "../src/sdk/dom.js";
+import { card, checkbox, emptyState, field, info, numberInput, readout, region, select, slider, statusLine, stepText, toggle } from "../src/sdk/dom.js";
 import { type FakeDom, fakeDocument } from "../src/sdk/testing.js";
 
 let dom: FakeDom;
@@ -312,5 +312,18 @@ describe("region", () => {
     expect(dom.document.activeElement).toBe(count);
     expect(count.value).toBe("3");
     expect(dom.text(rows)).toBe("row 0 row 1 row 2 row 3");
+  });
+});
+
+describe("readout", () => {
+  it("shows a value and its unit after a thin space, and another in place", () => {
+    const r = readout(12.5, "mm", { class: "size" });
+    expect(r.className).toBe("readout-value size");
+    expect(r.textContent).toBe("12.5\u2009mm");
+    expect(r.querySelector(".readout-unit")?.textContent).toBe("\u2009mm");
+    r.set({ value: "3", unit: "µm" });
+    expect(r.textContent).toBe("3\u2009µm");
+    r.set(7);
+    expect(r.textContent).toBe("7");
   });
 });

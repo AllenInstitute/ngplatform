@@ -50,3 +50,23 @@ export function parseBytes(text: string): number | undefined {
   const power = m[3] !== undefined ? 0 : "kmgt".indexOf((m[2] ?? "m").toLowerCase()) + 1;
   return Math.round(Number(m[1]) * 1024 ** power);
 }
+
+/**
+ * An address in three parts, as a layer's source line shows it: where
+ * (its schemes and host), the path between, and the end of the path (the
+ * store's own name), with a pipeline after "|" kept on the end.
+ * "zarr3://https://host/a/b/c.ome.zarr/" is where "zarr3://https://host",
+ * path "/a/b/", name "c.ome.zarr/".
+ */
+export function splitAddress(url: string): { where: string; path: string; name: string } {
+  const bar = url.indexOf("|");
+  const address = bar < 0 ? url : url.slice(0, bar);
+  const pipeline = bar < 0 ? "" : url.slice(bar);
+  const m = /^((?:[a-z][a-z0-9+.-]*:\/\/)*)([^/]*)(.*)$/i.exec(address)!;
+  const [, schemes, host, rest] = m;
+  // Nothing after the host ("local://annotations"): the host is the name.
+  if (rest.replace(/\/+$/, "") === "") return { where: schemes, path: "", name: host + rest + pipeline };
+  const trimmed = rest.replace(/\/+$/, "");
+  const cut = trimmed.lastIndexOf("/");
+  return { where: schemes + host, path: rest.slice(0, cut + 1), name: rest.slice(cut + 1) + pipeline };
+}

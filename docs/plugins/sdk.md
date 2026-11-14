@@ -31,7 +31,7 @@ The types, the manifest check and the parts a panel is built from.
 | `Disposer`, `Json`, `DockSlot` | Small shared types. |
 | `checkManifest`, `MANIFEST_SCHEMA` | Checks a manifest (the tests run it on every plugin). |
 | `PLATFORM_CONTEXT_KEYS` | The names on `ctx`, for checks. |
-| `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `region`, `roving`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
+| `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `readout`, `region`, `roving`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
 
 ## `@ngplatform/sdk/dom`
 
@@ -50,9 +50,10 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 | `info` | An explanation behind a small (i) that keyboard and touch reach. |
 | `emptyState` | One line and its action, for a panel with nothing to show. |
 | `statusLine` | Progress and errors, an error with its action (Retry, say). |
+| `readout` | A value shown, not edited (a size, a count, a coordinate): in Source Code Pro with tabular digits, its unit quiet after a thin space; `set()` shows another. |
 | `region` | Part of a panel drawn again only when what it shows changes. |
 | `roving` | Arrow keys, Home, End (and a letter, in menus) within a group of items: a list of tabs, a menu, a picker. |
-| `icon` | One of the app's icons by name (`IconName`). |
+| `icon` | One of the app's icons by name (`IconName`): one set of line drawings at 16 px. |
 | `downloadBlob`, `safeFileName` | Save a file the browser downloads; a file name made safe. |
 
 ## `@ngplatform/sdk/testing`
@@ -75,7 +76,7 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 
 | Module | Main exports | What |
 |---|---|---|
-| `format` | `csv`, `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes` | Numbers, sizes and tables as text. |
+| `format` | `csv`, `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes`, `splitAddress` | Numbers, sizes and tables as text; an address as where it is, the path and the store's name. |
 | `mat4` | `Mat4`, `Vec3`, `identity4`, `multiply4`, `apply4`, `invert4` | 4 × 4 matrices. |
 | `ome` | `summariseOme`, `describeTransform` | OME-Zarr metadata and transforms in words. |
 | `sources` | `precomputedUrl`, `layerSourceUrl` | A layer's source as a URL. |

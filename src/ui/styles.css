@@ -3,78 +3,99 @@
    The left column holds the layers (Layers, Plugins) and, below a divider,
    the Tools section while a tool is on.  The views column holds
    Neuroglancer's data panels and nothing else; its status messages sit in a
-   strip beneath it.  Neuroglancer's look: black and neutral greys with
-   square corners.  The accent is light grey (what is selected, the primary
-   action, the focus); green only for a switch that is on, red and amber (as
-   text and an edge) for states.
+   strip beneath it.  Neuroglancer's materials: black panels divided by 1 px
+   lines, white at fixed opacities, square corners.  What is chosen or on is
+   inverted (white, black words) or outlined in white; the one hue is
+   Neuroglancer's error red, for errors and what deletes (DESIGN.md).
    One theme, dark.  Text in Source Sans 3 with tabular figures; monospace
    only for what a person types or copies (an address, a path, code, a log).
 
    Everything below takes its colours, sizes and spacing from these tokens;
    a plugin's own styles should too. */
 :root {
+  /* Neuroglancer's materials: black panels separated by 1 px lines, not grey fills; white
+     at fixed opacities for text, lines and states; one hue, Neuroglancer's error red, for
+     errors and what deletes.  What is selected or on is inverted (a white fill, black
+     text) or outlined in white; nothing is green. */
   --ink-0: #000;         /* behind the engine, wells: fields, the log */
-  --ink-1: #0c0c0c;      /* bars, an open card */
-  --ink-2: #141414;      /* docks */
-  --ink-3: #1f1f1f;      /* raised: a card's head, a secondary button */
-  --ink-card: #1a1a1a;   /* a card's body: a step above the dock, below its head */
-  --ink-4: #292929;      /* pressed */
-  /* What floats over the rest (menus, tips, toasts, sheets): a step lighter, with --line-strong. */
-  --surface-overlay: #1c1c1c;
-  --line: #242424;       /* between parts */
-  --line-strong: #333;
-  --line-control: #3a3a3a; /* a field's edge; its well and its label mark it too */
-  --line-hover: #666;    /* a field or a split under the pointer */
-  --line-focus: #8a8a8a; /* a field with the focus, a pressed toggle */
-  /* Text: each at least 4.5:1 on the docks (--ink-2) and on raised parts (--ink-3). */
-  --text: #e6e6e6;
+  --ink-1: #000;         /* bars, an open card */
+  --ink-2: #000;         /* docks */
+  --ink-3: #000;         /* raised parts (a card's head, a secondary button): drawn by their lines */
+  --ink-card: #000;      /* a card's body */
+  --ink-4: rgba(255, 255, 255, 0.10); /* pressed */
+  /* What floats over the rest (menus, tips, toasts, sheets, a view's card), with --line-strong. */
+  --surface-overlay: #141414;
+  --line: rgba(255, 255, 255, 0.10);         /* between parts */
+  --line-strong: rgba(255, 255, 255, 0.20);  /* a control's edge, a section's */
+  --line-control: rgba(255, 255, 255, 0.20); /* a field's edge */
+  --line-hover: rgba(255, 255, 255, 0.36);   /* a field or a split under the pointer */
+  --line-focus: rgba(255, 255, 255, 0.92);   /* a field with the focus */
+  /* Text: 92, 64 and 46 % white, each at least 4.5:1 on black and on the overlay grey. */
+  --text: rgba(255, 255, 255, 0.92);
   --text-strong: #fff;
-  --muted: #a3a3a3;
-  --faint: var(--muted); /* one secondary grey */
-  /* The accent, light grey: the primary action, tick boxes, sliders, the
-     chosen tab, progress and the focus ring. */
-  --accent: #d0d0d0;
-  --accent-hover: #f0f0f0;
+  --muted: rgba(255, 255, 255, 0.64);
+  --faint: rgba(255, 255, 255, 0.46);
+  /* What is chosen, on or primary: inverted, a white fill with black text (as Neuroglancer's
+     chosen tab).  Also tick boxes and sliders (the browser's own, in this white). */
+  --accent: #ebebeb;
+  --accent-hover: #fff;
   --accent-ink: #000;
-  --accent-line: #e6e6e6; /* the line under a chosen tab */
-  --accent-soft: rgba(255, 255, 255, 0.07);
-  --focus: #d0d0d0;
+  --accent-line: #fff;
+  --accent-soft: rgba(255, 255, 255, 0.08);
+  /* The focus: a 1 px white outline, 2 px out. */
+  --focus: #fff;
   /* Hover and pressed: white layers over whatever is beneath. */
-  --state-hover: rgba(255, 255, 255, 0.08);
-  --state-press: rgba(255, 255, 255, 0.12);
+  --state-hover: rgba(255, 255, 255, 0.06);
+  --state-press: rgba(255, 255, 255, 0.10);
   --hover: var(--state-hover);
-  /* What is selected: a light-grey bar down the left and a tint. */
-  --select: #d0d0d0;
+  /* What is selected in a list: a white tint and the strong text. */
+  --select: #fff;
   --select-strong: #fff;
-  --select-soft: rgba(255, 255, 255, 0.06);
-  --ok: #5fb37a;
-  --ok-line: #2c4a36;
-  /* An on/off switch, grey off and green on (the one green control), and its knob. */
-  --off: #5c5c5c;
-  --on: #3f9f48;
-  --knob: #e6e6e6;
-  --warn: #d9a94a;
-  --err: #e5736c;
-  --err-line: #5c3330;
-  /* An action that deletes: red words, a red fill under the pointer. */
-  --danger: #8e3a36;
-  --danger-hover: #a64540;
-  --danger-ink: #fff;
+  --select-soft: rgba(255, 255, 255, 0.08);
+  /* Text selected with the pointer. */
+  --selection: rgba(255, 255, 255, 0.30);
+  /* Done and well: the text's own white (a state is told by words and shape, not hue). */
+  --ok: var(--text);
+  --ok-line: var(--line-strong);
+  /* An on/off switch: a quiet track off, white on, its knob the other way. */
+  --off: rgba(255, 255, 255, 0.20);
+  --on: #ebebeb;
+  --knob: rgba(255, 255, 255, 0.92);
+  --warn: var(--text);
+  --warn-line: var(--line-strong);
+  /* The one hue: Neuroglancer's error red, for errors and what deletes (4.9:1 on black). */
+  --err: #db4437;
+  --err-line: rgba(219, 68, 55, 0.6);
+  /* An action that deletes: red words, a red tint under the pointer. */
+  --danger: rgba(219, 68, 55, 0.18);
+  --danger-hover: rgba(219, 68, 55, 0.28);
+  --danger-ink: #db4437;
   /* Direction-encoded colour, as tractography draws x, y and z (the logo). */
   --dec-x: #e0574b;
   --dec-y: #5cb46c;
   --dec-z: #4f88dc;
+  /* The views' own chrome (Neuroglancer's, restyled; src/core/view_defaults.ts sets the
+     first two as defaults of a new scene): the margin around the sections (a black stage,
+     the data floats on it), a layer's bounding box, and the axis labels a step quieter
+     than --dec-x/y/z (each at least 5:1 on the margin). */
+  --view-margin: #0c0c0c;
+  --view-outline: #666; /* 40 % white */
+  --view-x: #ce6e65;
+  --view-y: #71af7c;
+  --view-z: #6890cb;
   /* Overlays: the dimmed page behind a sheet, and the shadows that lift things off it. */
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-sheet: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.4);
-  --shadow-menu: 0 10px 28px rgba(0, 0, 0, 0.45);
-  --shadow-float: 0 6px 18px rgba(0, 0, 0, 0.35);
+  /* What floats over the page without dimming it (menus, the command palette, toasts, tips,
+     a view's floating card): one shadow; --shadow-menu is the same, for the plugins that name it. */
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-menu: var(--shadow-float);
   --shadow-dock: 0 0 40px rgba(0, 0, 0, 0.6);
   /* The outline of a colour swatch, and a line struck through quiet text. */
   --swatch-line: rgba(255, 255, 255, 0.25);
   /* Bars in a small plot, and those of the part that is on. */
-  --plot: #737373;
-  --plot-on: #c4c4c4;
+  --plot: rgba(255, 255, 255, 0.18);
+  --plot-on: rgba(255, 255, 255, 0.92);
 
   --ui: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Source Code Pro", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -100,6 +121,8 @@
   --sp-7: 24px;          /* between sections */
   /* The least a pointer target is (WCAG 2.5.8); what is drawn can be smaller. */
   --hit: 24px;
+  /* An icon's size (src/sdk/icons.ts). */
+  --icon: 16px;
   /* Controls: buttons, fields and selects are one height in the docks and
      panels, a larger one in sheets.  A container sets --ctl-h and --ctl-fs;
      a button never does. */
@@ -108,6 +131,11 @@
   --ctl-h: var(--ctl-h-panel);
   --ctl-fs: var(--fs-body);
   --r: 0;
+  /* Motion: only to show a change of state, briefly, easing out; none at all when the
+     system asks for less motion (below). */
+  --t-fast: 120ms;       /* a control's own change: a switch, a chevron */
+  --t: 200ms;            /* a part that grows or moves: a progress bar */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
   color-scheme: dark;
 }
 /* Sheets and the top bar are the larger context. */
@@ -126,14 +154,29 @@ body, body *:not(.ng-host *, .ins-embed *, [class*="neuroglancer-"], [class*="ne
 /* Every control in the UI font; addresses and code ask for --mono themselves.
    Without weight, so the field and button rules below set their own size. */
 :where(button, input, textarea, select) { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
+/* ---------------------------------------------------------- browser surfaces
+   What the browser draws for the app, in its greys: selected text, the
+   caret, scrollbars (thin; the thumb at 3:1 on the docks), placeholders,
+   and the focus ring above (2 px, the accent).  Number fields have no
+   spinners (the arrow keys step them; a slider stands beside most); ranges
+   and tick boxes are the browser's own in the accent. */
+::selection { background: var(--selection); color: var(--text-strong); }
+:root { scrollbar-width: thin; scrollbar-color: var(--line-hover) transparent; }
+:where(input, textarea, [contenteditable]) { caret-color: var(--text-strong); }
+::placeholder { color: var(--muted); opacity: 0.85; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="range"] { accent-color: var(--accent); }
+option { background: var(--ink-2); color: var(--text); }
 [hidden] { display: none !important; }
 code { font-family: var(--mono); font-size: var(--fs-body); }
 :where(a:not(.btn)) { color: var(--muted); text-decoration-color: var(--faint); text-underline-offset: 2px; }
 :where(a:not(.btn)):hover { color: var(--text); text-decoration-color: currentColor; }
 
 /* A switch turns a feature on (a plugin, Render, a layer's drawing): a
-   round knob in a round track (the one rounded control), grey when off and green when on (toggle()
+   round knob in a round track (the one rounded control), a quiet track when off and white when on (toggle()
    in @ngplatform/sdk/dom).  A tick box picks items or options (checkbox()),
    as in Neuroglancer. */
 input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
@@ -141,14 +184,14 @@ input[type="checkbox"].switch {
   appearance: none; -webkit-appearance: none; flex: none; margin: 0;
   width: 34px; height: 20px; border-radius: 10px; position: relative; vertical-align: middle;
   background: var(--off); border: 0; cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--t-fast) var(--ease-out);
 }
 input[type="checkbox"].switch::after {
   content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--knob); box-shadow: var(--shadow-float); transition: transform 0.15s, background 0.15s;
+  background: var(--knob); box-shadow: var(--shadow-float); transition: transform var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
 }
 input[type="checkbox"].switch:checked { background: var(--on); }
-input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: var(--text-strong); }
+input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: var(--accent-ink); }
 input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 
 .app {
@@ -202,7 +245,7 @@ button.link:hover { color: var(--text); text-decoration-color: currentColor; }
 button.link:disabled { color: var(--faint); cursor: default; text-decoration: none; }
 
 /* Buttons: four kinds, quiet (the default, also .quiet: words only),
-   outline (a raised grey), primary (light grey, at most one per panel) and
+   outline (a 1 px line), primary (inverted, at most one per panel) and
    icon, plus danger for a delete (red words, red under the pointer).  The height
    and the text size come from the container: 24 px in docks and panels,
    28 px in sheets.  .small is kept for the plugins that still ask for it and
@@ -226,16 +269,21 @@ a.btn { text-decoration: none; }
 .btn:hover:not(:disabled) { background: var(--hover); }
 .btn:active:not(:disabled) { background: var(--state-press); }
 .btn:disabled { color: var(--faint); cursor: default; }
-.btn.outline { background: var(--ink-3); border-color: var(--line-strong); }
-.btn.outline:hover:not(:disabled) { background: var(--ink-4); }
-.btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.btn.primary:hover:not(:disabled), .btn.primary:active:not(:disabled) { background: var(--accent-hover); }
+.btn.outline { background: transparent; border-color: var(--line-strong); }
+.btn.outline:hover:not(:disabled) { background: var(--hover); border-color: var(--line-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover:not(:disabled), .btn.primary:active:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 /* A primary or a delete that cannot be used yet: grey, its words quiet. */
-.btn.primary:disabled, .btn.danger:disabled { background: var(--ink-3); border-color: transparent; color: var(--faint); font-weight: 400; }
-.btn.danger { background: var(--ink-3); color: var(--err); border-color: var(--line-strong); }
-.btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); border-color: transparent; }
+.btn.primary:disabled, .btn.danger:disabled { background: transparent; border-color: var(--line-strong); color: var(--faint); font-weight: 400; }
+.btn.danger { background: transparent; color: var(--err); border-color: var(--line-strong); }
+.btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); border-color: var(--err-line); }
 .btn.danger:active:not(:disabled) { background: var(--danger-hover); }
-.btn svg { width: 15px; height: 15px; flex: none; }
+/* Icons (src/sdk/icons.ts): one set, drawn at 16 px with a 1 px line; inside a line of text, at the text's size. */
+.btn svg, .scene-close svg, .scene-kind-add svg, .palette-trigger svg, .ds-icon svg, .btn.icon.info-btn svg,
+.ins-star svg, .ins-head-icon svg, .history-mark svg, .runner-up-button svg { width: var(--icon); height: var(--icon); flex: none; }
+.inline-icon, .empty.error svg { width: 1em; height: 1em; vertical-align: -0.15em; }
+/* A mark that is a shape, not a line: filled. */
+.history-mark svg path, .ins-star.on svg path { fill: currentColor; }
 /* An icon button is square. */
 .btn.icon { min-width: var(--ctl-h); padding: 0 var(--sp-1); justify-content: center; }
 
@@ -243,12 +291,13 @@ a.btn { text-decoration: none; }
 .segmented { display: flex; flex-wrap: wrap; }
 .segmented button {
   height: var(--ctl-h); box-sizing: border-box; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); border-radius: var(--r);
-  background: var(--ink-3); color: var(--muted); font-size: var(--ctl-fs); cursor: pointer;
+  background: transparent; color: var(--muted); font-size: var(--ctl-fs); cursor: pointer;
 }
 .segmented button + button { margin-left: -1px; }
-.segmented button:hover { color: var(--text); background: var(--ink-4); }
+.segmented button:hover { color: var(--text); background: var(--hover); border-color: var(--line-hover); position: relative; z-index: 1; }
+/* The pressed one inverted: a white fill, black words. */
 .segmented button[aria-pressed="true"], .segmented button[aria-selected="true"] {
-  background: var(--ink-4); color: var(--text-strong); box-shadow: inset 0 -2px 0 var(--accent-line); position: relative; z-index: 1;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); position: relative; z-index: 2;
 }
 
 /* scene tabs */
@@ -262,12 +311,11 @@ a.btn { text-decoration: none; }
 .scene-tab .scene-tab-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .scene-tab:hover { color: var(--text); background: var(--hover); }
 /* The scene shown: the dock's grey under it, underlined. */
-.scene-tab[aria-selected="true"] { color: var(--text-strong); background: var(--ink-2); box-shadow: inset 0 -2px 0 var(--accent-line); }
+.scene-tab[aria-selected="true"] { color: var(--text-strong); box-shadow: inset 0 0 0 1px var(--text); }
 .scene-close {
   display: inline-grid; place-items: center; width: var(--hit); height: var(--hit); flex: none;
   border: 0; padding: 0; background: transparent; color: var(--faint); cursor: pointer; visibility: hidden;
 }
-.scene-close svg { width: 11px; height: 11px; }
 .scene-tab:hover .scene-close, .scene-tab[aria-selected="true"] .scene-close { visibility: visible; }
 .scene-close:hover { color: var(--text); background: var(--hover); }
 .scene-add { color: var(--muted); }
@@ -287,13 +335,15 @@ a.btn { text-decoration: none; }
 .dock.collapsed .dock-status { display: block; }
 /* Open, the dock shows the jobs and the log themselves */
 .dock-bottom:not(.collapsed) .dock-status { visibility: hidden; }
-/* Items on the right of the status line (src/ui/statusbar.ts): values in mono, each cut
+/* Items on the right of the status line (src/ui/statusbar.ts): readouts, each cut
    short with an ellipsis once the line is full, a line between them. */
 .status-items { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 60%; height: var(--ctl-h); overflow: hidden; padding: 0 var(--sp-4); }
 .status-items[hidden] { display: none; }
-.status-item { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; color: var(--muted); font: var(--fs-body)/var(--ctl-h) var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.status-item { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; color: var(--text); font: var(--fs-body)/var(--ctl-h) var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .status-item > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-item + .status-item { margin-left: var(--sp-5); padding-left: var(--sp-5); border-left: 1px solid var(--line-strong); }
+/* An item is a readout: its value in the text's colour, a label (.status-label) and a unit (.readout-unit) quiet. */
+.status-item :is(.status-label, .readout-unit) { color: var(--muted); }
 .status-item .status-label { font-family: var(--ui); }
 .activity-jobs:empty { display: none; }
 .activity-jobs { padding-bottom: var(--sp-3); }
@@ -305,7 +355,6 @@ a.btn { text-decoration: none; }
 /* The minor heading in a panel: a folded part's summary and a section's sub-heading, one style. */
 .ins-details > summary { cursor: pointer; color: var(--muted); font: 600 var(--fs-body)/1.2 var(--ui); margin: var(--sp-3) 0; }
 /* Over an empty scene */
-.scene-kind-add svg { width: 11px; height: 11px; }
 .plugin-sheet { display: grid; gap: var(--sp-5); }
 
 .palette-trigger {
@@ -315,7 +364,6 @@ a.btn { text-decoration: none; }
   background: var(--ink-0); color: var(--muted); cursor: pointer;
 }
 .palette-trigger:hover { border-color: var(--line-hover); color: var(--text); }
-.palette-trigger svg { width: 15px; height: 15px; flex: none; }
 .palette-trigger .grow { flex: 1; text-align: left; white-space: nowrap; }
 kbd {
   font: var(--fs-caption)/1 var(--mono);
@@ -342,6 +390,7 @@ kbd {
  * still at half strength rather than sweeping.
  */
 @media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0s; --t: 0s; }
   *, *::before, *::after { transition-duration: 0s !important; transition-delay: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
   .dot.busy { animation: none; }
   .job .bar.indeterminate .fill { animation: none; width: 100% !important; transform: none; opacity: 0.45; }
@@ -418,7 +467,10 @@ kbd {
 }
 .tab:hover { color: var(--text); background: var(--hover); }
 /* The chosen tab: a line under it, on the line under the tabs. */
-.tab[aria-selected="true"] { color: var(--text-strong); box-shadow: inset 0 -2px 0 var(--accent-line); }
+/* The chosen tab inverted, as Neuroglancer's; the left column's own two (Layers, Plugins) only in the strong text. */
+.tab[aria-selected="true"] { color: var(--accent-ink); background: var(--accent); }
+.dock-left > .dock-head .tab[aria-selected="true"] { color: var(--text-strong); background: transparent; }
+.dock-left > .dock-head .tab:not([aria-selected="true"]) { color: var(--faint); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
 .dock.collapsed .dock-body, .dock.collapsed .dock-tabs { display: none; }
@@ -435,7 +487,7 @@ kbd {
   display: block; order: -1; writing-mode: horizontal-tb; transform: none; margin: 0 var(--sp-3) 0 var(--sp-1);
   font-size: var(--fs-caption); line-height: var(--ctl-h); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted);
 }
-.dock-tools .dock-toggle svg { transition: transform 0.12s; }
+.dock-tools .dock-toggle svg { transition: transform var(--t-fast) var(--ease-out); }
 .dock-tools.collapsed .dock-toggle svg { transform: rotate(-90deg); }
 
 .resizer { background: transparent; position: relative; z-index: 2; }
@@ -461,6 +513,10 @@ kbd {
 :where(.dock-pane) :where(h3, h4):where(:not([class])),
 .capture-more > summary, .keys-all > summary {
   margin: 0 0 var(--sp-4);
+}
+.section-title, .ins-section-title,
+:where(.dock-pane) :where(h3, h4):where(:not([class])),
+.capture-more > summary, .keys-all > summary {
   font: 600 var(--fs-heading)/1.2 var(--ui);
   color: var(--text);
 }
@@ -471,7 +527,7 @@ kbd {
 .empty { color: var(--muted); margin: 0; }
 .empty strong { color: var(--text); font-weight: 500; }
 .empty.error, .error { color: var(--err); }
-.empty.error svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: var(--sp-2); }
+.empty.error svg { margin-right: var(--sp-2); }
 .note { color: var(--faint); font-size: var(--fs-body); margin: var(--sp-5) 0 0; }
 .row-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-4); }
 
@@ -488,8 +544,9 @@ kbd {
   background: transparent; text-align: left; width: 100%; box-sizing: border-box; color: inherit;
 }
 .ds-row:hover { background: var(--hover); }
-/* Selected: a light-grey bar down the left and a tint. */
-.ds-row.selected { background: var(--select-soft); box-shadow: inset 2px 0 0 var(--select); }
+/* Selected: a tint, its name in the strong text (no bar down the left). */
+.ds-row.selected { background: var(--select-soft); }
+:is(.ds-row, .layer-row).selected .ds-name { color: var(--text-strong); }
 .ds-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ds-row .sub {
   grid-column: 3 / 6; color: var(--faint); font: var(--fs-caption)/1.3 var(--ui); font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
@@ -511,13 +568,20 @@ kbd {
   --eye: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 3l18 18M10.6 5.6A10 10 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.3 6.9C3.9 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9.6 9.6 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2'/%3E%3C/svg%3E");
 }
 :is(.ds-row, .layer-row) > .choice input[type="checkbox"]:focus-visible { outline-offset: 3px; }
+/* A layer's number, as Neuroglancer's layer bar shows it: a small square in the mono face,
+   white while the layer is shown, quiet while it is hidden. */
+.layer-chip {
+  display: inline-grid; place-items: center; flex: none; min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 var(--sp-1);
+  border: 1px solid var(--text); color: var(--text); font: 500 var(--fs-caption)/1 var(--mono); font-variant-numeric: tabular-nums;
+}
+:is(.ds-row, .layer-row):has(> .choice input:not(:checked)) .layer-chip { border-color: var(--line-strong); color: var(--faint); }
 /* Hidden, its name is quiet. */
 :is(.ds-row, .layer-row):has(> .choice input:not(:checked)) .ds-name { color: var(--muted); font-weight: 400; }
 .ds-row:hover .btn.icon, .ds-row.selected .btn.icon { opacity: 1; }
 .ds-row.other { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .ds-row.other .sub { grid-column: 2 / -1; }
-/* A notice to act on: raised grey with an amber edge down the left. */
-.note-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: var(--sp-4); background: var(--ink-3); box-shadow: inset 2px 0 0 var(--warn); color: var(--text); font-size: var(--fs-body); }
+/* A notice to act on: a 1 px edge around it. */
+.note-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: var(--sp-4); background: var(--ink-3); border: 1px solid var(--warn-line); color: var(--text); font-size: var(--fs-body); }
 .panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .ds-row.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 /* Open from this computer: a tick box naming each dataset found, its format, and where it is. */
@@ -526,7 +590,6 @@ kbd {
 .ds-row.local-pick .choice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ds-row.local-pick .sub { grid-column: 1 / -1; }
 .ds-icon { display: inline-flex; color: var(--muted); }
-.ds-icon svg { width: 15px; height: 15px; }
 .ds-group { display: grid; gap: var(--sp-1); }
 .ds-layers { display: grid; gap: var(--sp-1); margin-left: 22px; padding-left: var(--sp-4); border-left: 1px solid var(--line); }
 .layer-row {
@@ -534,7 +597,7 @@ kbd {
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r); cursor: pointer; border: 1px solid transparent; font-size: var(--fs-body);
 }
 .layer-row:hover { background: var(--hover); }
-.layer-row.selected { background: var(--select-soft); box-shadow: inset 2px 0 0 var(--select); }
+.layer-row.selected { background: var(--select-soft); }
 .layer-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A view's tick box keeps its row as low as the name beside it. */
 .layer-row .choice { min-height: 0; }
@@ -588,13 +651,15 @@ kbd {
    own), the settings below a line, darker than the dock; the selected dataset's card with the selection's bar. */
 .ds-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-radius: var(--r); }
 .ds-card.open { background: var(--ink-1); padding-bottom: var(--sp-4); }
-.ds-card.open.selected { box-shadow: inset 2px 0 0 var(--select); }
-.ds-card.open.selected .ds-row.card-row { background: var(--select-soft); box-shadow: none; }
+.ds-card.open.selected .ds-row.card-row { background: var(--select-soft); }
+/* More room between datasets than within one: an open card stands apart from its neighbours. */
+.ds-card.open:not(:first-child) { margin-top: var(--sp-3); }
+.ds-card.open:not(:last-child) { margin-bottom: var(--sp-3); }
 .ds-row.card-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
 .ds-row.card-row .sub { grid-column: 3 / 6; }
 /* The card's arrow, as the cards' (.card-head::before): right closed, down open. */
 .ds-expand { width: var(--hit); height: var(--hit); padding: 0; border: 0; background: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: var(--r); }
-.ds-expand::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 0.12s; }
+.ds-expand::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast) var(--ease-out); }
 .ds-expand[aria-expanded="true"]::before { transform: rotate(45deg); }
 .ds-expand:hover { background: var(--hover); }
 /* Each level as wide as the panel, no wider: the controls shrink with it. */
@@ -623,7 +688,7 @@ kbd {
 .plugin-name { font-weight: 600; }
 
 .plugin .note { margin: 0; }
-.plugin-groups { display: grid; gap: var(--sp-6); }
+.plugin-groups { display: grid; gap: var(--sp-7); }
 .plugin-group .section-title { margin-top: 0; }
 .plugin-head .link { font-size: var(--fs-body); }
 
@@ -704,7 +769,7 @@ kbd {
 .jobs { display: grid; gap: var(--sp-4); }
 .job { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2) var(--sp-5); }
 .job .bar { grid-column: 1 / -1; height: 4px; background: var(--ink-3); border-radius: 0; overflow: hidden; }
-.job .fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+.job .fill { height: 100%; background: var(--accent); transition: width var(--t) var(--ease-out); }
 .job.failed .fill { background: var(--err); }
 .job.done .fill { background: var(--plot-on); }
 .job .bar.indeterminate .fill { width: 30% !important; animation: slide 1.2s ease-in-out infinite; }
@@ -727,6 +792,7 @@ kbd {
 .runner-files li { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-1) var(--sp-3); }
 .runner-files li.chosen { background: var(--accent-soft); }
 .runner-files li.store > button { font-weight: 500; }
+.runner-up-button { display: inline-flex; align-items: center; gap: var(--sp-2); }
 .runner-drop-choices { margin: var(--sp-4) 0 0; padding-left: 18px; display: grid; gap: var(--sp-3); color: var(--muted, inherit); }
 .runner-serves { display: grid; gap: var(--sp-2); }
 .runner-serves .runner-entry { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
@@ -809,7 +875,8 @@ textarea.py-in {
 .ins-section:last-child { border-bottom: 0; }
 .ins-section[hidden], .ins-row[hidden] { display: none; }
 .ins-section-head { display: flex; align-items: center; gap: var(--sp-4); }
-.ins-section-title { margin: 0 0 var(--sp-1); font: 600 var(--fs-heading)/1.2 var(--ui); color: var(--text); flex: 1; }
+/* A section of the inspector: the panels' one section title (.section-title), closer to its rows. */
+.ins-section-title { margin: 0 0 var(--sp-1); flex: 1; }
 .ins-subhead { margin: var(--sp-4) 0 var(--sp-1); font: 600 var(--fs-body)/1.2 var(--ui); color: var(--muted); }
 .ins-ome-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-1) 10px; font-size: var(--fs-body); }
 .ins-ome-value { font-size: var(--fs-caption); font-variant-numeric: tabular-nums; color: var(--text); overflow-wrap: anywhere; }
@@ -830,7 +897,7 @@ textarea.py-in {
 .ins-root .num-input.wide { width: 110px; }
 .ins-check { margin: 0; accent-color: var(--accent); width: 14px; height: 14px; flex: none; }
 /* A toggle (Code, Taller) pressed reads as the pressed part of a segmented row. */
-.ins-root .btn.outline[aria-pressed="true"] { background: var(--ink-3); }
+.ins-root .btn.outline[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 /* The small × that removes a link, a range or an annotation: red under the pointer. */
 .btn.icon.ins-remove { height: var(--hit); min-width: var(--hit); color: var(--muted); }
 .btn.ins-remove:hover:not(:disabled) { color: var(--err); }
@@ -856,6 +923,8 @@ textarea.py-in {
 /* The resolution histograms: the whole row's width, the readouts beneath. */
 .ins-render-scale .neuroglancer-render-scale-widget { width: 100%; flex-direction: column; align-items: stretch; margin: 0; }
 .ins-render-scale .neuroglancer-render-scale-widget > canvas { width: 100%; flex: none; height: 40px; background: var(--ink-0); border: 1px solid var(--line); box-sizing: border-box; cursor: ew-resize; }
+/* Neuroglancer draws the histograms' bars in red and orange: shown in greys (their brightness keeps them apart). */
+.ins-render-scale .neuroglancer-render-scale-widget > canvas { filter: grayscale(1); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend { width: auto; display: flex; justify-content: space-between; gap: var(--sp-4); color: var(--muted); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend > div { height: auto; }
 .ins-code { border: 1px solid var(--line); }
@@ -914,7 +983,6 @@ textarea.ins-grow.ins-clipped {
 }
 .ins-completions {
   position: absolute; z-index: 30; left: 0; right: 0; top: 100%; max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none;
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
 }
 .ins-completions[hidden] { display: none; }
 .ins-completion { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); cursor: pointer; font: var(--fs-body)/1.3 var(--mono); }
@@ -965,7 +1033,8 @@ textarea.ins-grow.ins-clipped {
 .ins-seg-row .num { text-align: right; font-family: var(--mono); font-size: var(--fs-caption); overflow: hidden; }
 .ins-seg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .ins-seg-row.shown .ins-seg-label { color: var(--text); }
-.ins-star { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; font-size: var(--fs-control); line-height: 1; }
+.ins-star { display: inline-grid; place-items: center; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; }
+.ins-head-icon { display: inline-grid; place-items: center; }
 .ins-star.on { color: var(--text); }
 .ins-swatch { width: 14px; height: 14px; border: 1px solid var(--swatch-line); padding: 0; cursor: pointer; position: relative; }
 /* Drawn at 14 px, a target of 24 (its colour is set inline, so not by padding). */
@@ -994,6 +1063,16 @@ textarea.ins-grow.ins-clipped {
 .boot-failed p { margin: 0; }
 
 /* --------------------------------------------------------------- overlays */
+/* The floating surface: whatever floats over the page without dimming it, one style.  The
+   menus, the command palette, toasts, tips, completions, Neuroglancer's dropdowns over the
+   views, and a view's floating card (class float-surface, for plugins and in-view tools):
+   the overlay grey, a 1 px strong line, square, one shadow. */
+.float-surface, .menu, .toast, .info-tip, .ins-completions,
+.engine :is(.neuroglancer-position-dimension-dropdown, .neuroglancer-position-dimension-coordinate-dropdown) {
+  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: 0; box-shadow: var(--shadow-float);
+}
+/* The command palette is a sheet over the dimmed page that floats like a menu. */
+.sheet.float-surface { box-shadow: var(--shadow-float); }
 .scrim {
   position: fixed; inset: 0; z-index: 100;
   background: var(--scrim);
@@ -1050,9 +1129,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .result.unavailable { opacity: 0.45; }
 
 .menu {
-  position: fixed; z-index: 130; min-width: 190px; padding: var(--sp-2);
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: var(--r);
-  box-shadow: var(--shadow-menu); display: grid;
+  position: fixed; z-index: 130; min-width: 190px; padding: var(--sp-2); display: grid;
 }
 .menu-item {
   text-align: left; height: 30px; padding: 0 10px; border: 0; border-radius: 0;
@@ -1066,7 +1143,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .menu-item.with-detail { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 300px; }
 .menu-detail { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--fs-body); }
 .menu-item.muted .menu-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--swatch-line); }
-.menu-item.current { box-shadow: inset 2px 0 0 var(--accent); }
+.menu-item.current { background: var(--select-soft); color: var(--text-strong); }
 .menu-item.current .menu-label { font-weight: 600; }
 .menu-sep { height: 1px; background: var(--line); margin: var(--sp-2) var(--sp-1); }
 
@@ -1077,20 +1154,21 @@ textarea.state-input.tall { min-height: 50vh; }
 .history-filter { max-width: 220px; }
 .history-rows { overflow-y: auto; padding: var(--sp-2); display: grid; }
 .history-row {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3);
+  display: grid; grid-template-columns: var(--icon) minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3);
   min-height: 28px; padding: 0 10px 0 calc(4px + var(--depth, 0) * 16px); border: 0; background: transparent;
   color: var(--text); text-align: left; font-size: var(--fs-control); cursor: pointer;
 }
 .history-row:hover, .history-row:focus-visible { background: var(--hover); outline: none; }
 .history-row:focus-visible { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .history-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-mark { color: var(--accent); font-size: var(--fs-caption); text-align: center; }
+.history-mark { display: inline-grid; place-items: center; color: var(--accent); }
 .history-datasets { color: var(--muted); }
-.history-row.current { box-shadow: inset 2px 0 0 var(--accent); }
+.history-row.current { background: var(--select-soft); color: var(--text-strong); }
 .history-row.current .history-label { font-weight: 600; }
 .history-row.undone .history-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
 .history-row.branch .history-label { color: var(--muted); }
-.history-row.fold { grid-template-columns: 14px minmax(0, 1fr); color: var(--muted); font-size: var(--fs-body); }
+.history-row.fold { grid-template-columns: var(--icon) minmax(0, 1fr); color: var(--muted); font-size: var(--fs-body); }
+.history-row.fold .history-mark { color: var(--muted); }
 .history-row.fold .history-label { grid-column: 2; }
 .history-empty { padding: 10px var(--sp-5); color: var(--faint); font-size: var(--fs-body); }
 
@@ -1101,12 +1179,10 @@ textarea.state-input.tall { min-height: 50vh; }
   display: grid; gap: var(--sp-4); justify-items: end;
 }
 .toast {
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: var(--r);
   padding: var(--sp-4) var(--sp-5); max-width: min(380px, calc(100vw - 32px));
-  box-shadow: var(--shadow-float);
 }
-/* An error: red words and a red edge down the left. */
-.toast.error { box-shadow: inset 2px 0 0 var(--err), var(--shadow-float); }
+/* An error: red words in a red edge. */
+.toast.error { border-color: var(--err-line); color: var(--err); }
 .toast.offer { display: grid; gap: var(--sp-2); }
 .toast.offer .row-actions { justify-content: flex-end; margin-top: var(--sp-2); }
 .overview-list { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: var(--sp-2) var(--sp-5); align-items: center; font-size: var(--fs-body); margin: var(--sp-4) 0 0; }
@@ -1149,6 +1225,34 @@ textarea.state-input.tall { min-height: 50vh; }
   .dock-bottom { height: min(var(--bh), 30vh); }
 }
 
+
+/* ------------------------------------------------- Neuroglancer's view chrome
+   What Neuroglancer draws as DOM over its views, in the system: each panel in a
+   1 px frame, the one with the focus in the accent; the axis labels (top left
+   of each panel, its scales and depth on hover) as captions in the readouts'
+   face, the names in the quieter axis colours.  The margin, the bounding boxes
+   and the scale bar are drawn in WebGL: the first two are a new scene's
+   defaults (src/core/view_defaults.ts), the scale bar's face and size are set
+   by the engine; the axis lines keep Neuroglancer's red, green and blue. */
+.engine .neuroglancer-show-panel-borders .neuroglancer-panel { border-width: 1px; border-color: var(--line-strong); }
+.engine .neuroglancer-show-panel-borders .neuroglancer-panel:focus-within { border-color: var(--accent); }
+.engine .neuroglancer-display-dimensions-widget {
+  top: var(--sp-2); left: var(--sp-2); padding: var(--sp-1) var(--sp-2);
+  background: rgba(0, 0, 0, 0.55); color: var(--muted); font: var(--fs-caption)/1.3 var(--mono); font-variant-numeric: tabular-nums;
+}
+.engine .neuroglancer-display-dimensions-widget:is(:hover, [data-active="true"]) { background: var(--surface-overlay); outline: 1px solid var(--line-strong); }
+.engine .neuroglancer-display-dimensions-input-base { font: var(--fs-caption)/1.3 var(--mono); color: var(--text); padding: 1px var(--sp-1); }
+.engine .neuroglancer-display-dimensions-input-base:hover { border-color: var(--line-hover); }
+.engine .neuroglancer-display-dimensions-input-base:focus { background: var(--ink-0); border-color: var(--line-focus); }
+.engine .neuroglancer-display-dimensions-widget-scale-unit,
+.engine .neuroglancer-display-dimensions-input-wrapper::before,
+.engine .neuroglancer-display-dimensions-input-wrapper::after,
+.engine .neuroglancer-display-dimensions-widget-scale-factor::after { color: var(--muted); }
+/* Neuroglancer colours the three names inline (#f00, #0f0, #99f). */
+.engine .neuroglancer-display-dimensions-widget-dimension:nth-child(1) .neuroglancer-display-dimensions-widget-name { color: var(--view-x) !important; }
+.engine .neuroglancer-display-dimensions-widget-dimension:nth-child(2) .neuroglancer-display-dimensions-widget-name { color: var(--view-y) !important; }
+.engine .neuroglancer-display-dimensions-widget-dimension:nth-child(3) .neuroglancer-display-dimensions-widget-name { color: var(--view-z) !important; }
+.engine .neuroglancer-display-dimensions-widget :is(label, .neuroglancer-display-dimensions-widget-default) { font: var(--fs-caption)/1.3 var(--ui); color: var(--muted); }
 
 /* Neuroglancer's own bar inside the viewer: position, left; tool status. */
 .engine .neuroglancer-viewer-top-row { background: var(--ink-1); border-bottom: 1px solid var(--line); margin-bottom: 0; min-height: 26px; }
@@ -1225,16 +1329,16 @@ textarea.state-input.tall { min-height: 50vh; }
 /* No outline: its head is raised, its body on the panel. */
 /* A card is one block, raised off the dock: its head (ink-3) over its body (ink-card), within one
    edge, so an open card's settings read as its own and not the dock's. */
-.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line-strong); background: var(--ink-card); height: max-content; }
+.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line); background: var(--ink-card); height: max-content; }
 /* The card title: the panel's heading style. */
 .card > .card-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); font-weight: 600; font-size: var(--fs-heading); color: var(--text); background: var(--ink-3); cursor: pointer; list-style: none; user-select: none; }
 .card > .card-head::-webkit-details-marker { display: none; }
-.card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 0.12s; flex: none; }
+.card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast) var(--ease-out); flex: none; }
 .card[open] > .card-head::before { transform: rotate(45deg); }
-.card > .card-head:hover { background: var(--ink-4); }
+.card > .card-head:hover { background: var(--hover); }
 .card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-badge { font: 400 var(--fs-caption) var(--ui); font-variant-numeric: tabular-nums; color: var(--muted); }
-.card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-5) var(--sp-5) var(--sp-5); border-top: 1px solid var(--line-strong); }
+.card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-5) var(--sp-5) var(--sp-5); border-top: 1px solid var(--line); }
 .card .section-title:first-child { margin-top: 0; }
 .card[data-card="compute.this"] .runner-section > .section-head > .section-title { display: none; }
 
@@ -1259,6 +1363,48 @@ textarea.state-input.tall { min-height: 50vh; }
 .hint { color: var(--faint); font-size: var(--fs-caption); line-height: 1.4; margin: 0; }
 .readout { font: var(--fs-caption)/1.4 var(--ui); color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
+/* ---------------------------------------------------------------- readouts
+   readout() (@ngplatform/sdk/dom): a value shown, not edited here (the
+   coordinates over the views, the status line's items, sizes and counts in a
+   panel), in Source Code Pro with tabular digits; its unit in the muted grey
+   after a thin space. */
+/* Every number in a field, too, in the mono face (as Neuroglancer's). */
+:where(input[type="number"], .num-input, .text-input.num) { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.readout-value { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.readout-unit, .readout-value .status-label { color: var(--muted); }
+/* Numbers the app shows in its panels: card counts, sizes in the browser's storage, the resolution histograms' legend. */
+.card-badge, .overview-list .num { font-family: var(--mono); }
+.ins-render-scale .neuroglancer-render-scale-widget-legend { font: var(--fs-caption)/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+/* Neuroglancer's coordinates over the views: each name quiet, its unit (in brackets) quiet, the coordinate in the text's colour. */
+.engine .neuroglancer-viewer-top-row { padding-inline: var(--sp-2); }
+.engine :is(.neuroglancer-position-dimension-coordinate, .neuroglancer-position-dimension-name, .neuroglancer-position-dimension-scale) {
+  font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums;
+}
+.engine .neuroglancer-position-dimension-name { color: var(--muted); }
+.engine .neuroglancer-position-dimension-scale,
+.engine .neuroglancer-position-dimension-scale-container[data-is-empty="false"]::before,
+.engine .neuroglancer-position-dimension-scale-container[data-is-empty="false"]::after { color: var(--muted); }
+.engine .neuroglancer-position-dimension-coordinate { color: var(--text); }
+.engine .neuroglancer-position-dimension + .neuroglancer-position-dimension { margin-left: var(--sp-5); }
+.engine :is(.neuroglancer-position-dimension:focus-within, .neuroglancer-position-dimension[data-dropdown-visible="true"]) { border-color: var(--line-focus); background: var(--ink-0); }
+.engine :is(.neuroglancer-dimension-dropdown-coordinate-label, .neuroglancer-position-dimension-coordinate-label) { color: var(--muted); }
+/* The pointer's position after it (one line of text, names and values together): a readout, quieter than the view's. */
+.engine .neuroglancer-mouse-position-widget { margin-left: var(--sp-6); font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.engine .neuroglancer-dimension-dropdown-coordinate-entry:hover { background: var(--hover); }
+
+/* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it
+   where it is (quiet) and the path between, cut short at its start; copy and edit beside it. */
+.source-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 0 var(--sp-1); }
+.source-text { display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); border: 1px solid transparent; cursor: text; }
+.source-text:hover { border-color: var(--line-hover); background: var(--ink-0); }
+.source-name { font: var(--fs-body)/1.5 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-at { display: flex; min-width: 0; font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
+.source-where { flex: 0 0.5 auto; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
+.source-path { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.source-path:empty { display: none; }
+.source-line .btn.icon { color: var(--muted); }
+.source-line .btn.icon:hover { color: var(--text); }
+
 /* toggle() and checkbox(): the control, then its label. */
 .choice { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--text); font-size: var(--fs-body); cursor: pointer; min-height: var(--ctl-h); }
 .choice:has(input:disabled) { color: var(--faint); cursor: default; }
@@ -1272,11 +1418,9 @@ textarea.state-input.tall { min-height: 50vh; }
    in a line of text than its icon. */
 .info { display: inline-flex; flex: none; }
 .btn.icon.info-btn { color: var(--muted); margin-block: calc((var(--ctl-h) - 16px) / -2); }
-.btn.icon.info-btn svg { width: 13px; height: 13px; }
 .btn.icon.info-btn:hover, .btn.icon.info-btn[aria-expanded="true"] { color: var(--text); }
 .info-tip {
   position: fixed; z-index: 140; max-width: 260px; padding: var(--sp-3) var(--sp-4);
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
   color: var(--text); font: 400 var(--fs-body)/1.45 var(--ui); text-transform: none; letter-spacing: 0; white-space: normal; cursor: auto;
 }
 .info-tip[hidden] { display: none; }

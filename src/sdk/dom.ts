@@ -12,6 +12,8 @@
  * - `slider()` is the one slider, with its number beside it.
  * - `emptyState()` is one line and the action that fills it.
  * - `statusLine()` reports progress and errors, nothing else.
+ * - `readout()` shows a value (a coordinate, a size, a count) in the
+ *   readouts' face: Source Code Pro, tabular digits, its unit quieter.
  * - `region()` and each control's `set()` update a panel in place, so a
  *   change of state does not draw the whole panel again.
  */
@@ -157,6 +159,33 @@ export function button(label: string, onclick: () => void, title?: string, cls =
 /** An icon-only button: `label` is its name, read out and shown on hover. */
 export function iconButton(name: string, label: string, onClick: (e: MouseEvent) => void, extra: Attrs = {}): HTMLButtonElement {
   return el("button", { class: "btn icon", type: "button", title: label, "aria-label": label, ...extra, onclick: onClick as EventListener }, icon(name));
+}
+
+/** What `readout()` shows: a value and, optionally, its unit. */
+export type ReadoutValue = string | number | { value: string | number; unit?: string };
+
+/**
+ * A value as the app shows one it does not let you edit here (the
+ * coordinates over the views, the status line's items, sizes and counts in
+ * a panel): in Source Code Pro with tabular digits, the unit in the muted
+ * grey after a thin space.  `set()` shows another value in place.
+ *
+ *     const size = readout(12.5, "mm");
+ *     size.set({ value: 3, unit: "µm" });
+ */
+export function readout(value: string | number, unit?: string, attrs: Attrs = {}): Settable<HTMLSpanElement, ReadoutValue> {
+  const unitEl = el("span", { class: "readout-unit" });
+  const text = document.createTextNode("");
+  const span = el("span", { ...attrs, class: `readout-value${attrs.class ? ` ${String(attrs.class)}` : ""}` }, text, unitEl) as Settable<HTMLSpanElement, ReadoutValue>;
+  span.set = (v: ReadoutValue) => {
+    const { value, unit } = typeof v === "object" ? v : { value: v, unit: undefined };
+    text.data = typeof value === "number" ? String(value) : value;
+    // A thin space (U+2009) between the value and its unit, part of the unit.
+    unitEl.textContent = unit ? `\u2009${unit}` : "";
+    unitEl.hidden = !unit;
+  };
+  span.set({ value, unit });
+  return span;
 }
 
 /** A select of [value, label] pairs; `set` shows another value. */

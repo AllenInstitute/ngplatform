@@ -396,14 +396,26 @@ element to append; the controls also have `set(value)`.
 | `info(text, label)` | An explanation behind a small (i): shown on click, Enter or Space and on hover, read by screen readers. Use it rather than `title`, which keyboard and touch cannot reach. |
 | `emptyState(text, {label, run})` | What a panel shows with nothing to work on: one line and the action that supplies it ("Open data…"). |
 | `statusLine()` | `progress(text)`, `error(text, {label, run})` and `clear()`: progress and errors only, hidden otherwise. |
+| `readout(value, unit, attrs)` | A value shown, not edited (a size, a count, a coordinate, a status line item): Source Code Pro with tabular digits, the unit in the muted grey after a thin space. `set(value)` or `set({value, unit})` shows another. |
 | `region(render, attrs)` | A part drawn again only when its key changes: `update(key)`. |
 
 Shared classes, in the app's stylesheet: `row` (controls on a line),
 `stack`, `grid-2`, `spacer`, `muted`, `faint`, `hint` (a short note),
-`readout` (a changing number or path), `list`, `empty`.
+`readout` (a caption line of changing numbers or a path), `list`, `empty`,
+and `float-surface` (anything that floats over the views or the page
+without dimming it, such as a card beside a handle in a view: the overlay
+grey, a 1 px line, the one floating shadow).
+
+**Colours.** A panel's chrome is black and white at the stylesheet's
+opacities (`--text`, `--muted`, `--faint`, `--line`, `--line-strong`); the
+one hue is `--err`, for errors and what deletes. What is chosen or on is
+inverted (`--accent` fill, `--accent-ink` words) or outlined in white, never
+green. Colour on screen is the data's.
 
 The rules the parts keep:
 - A switch turns a feature on; a checkbox picks items or options.
+- Icons come from `icon()`, never a character (×, ⋯, ▸, ✓) standing in for one; an icon-only button has a name (`iconButton()`).
+- A value shown and not edited is a `readout()`.
 - A control has a label (`field()`, or the label of `toggle()` and `checkbox()`).
 - Explanations go behind an `info()`, not in the panel or in `title`.
 - An empty state is one line plus its action.

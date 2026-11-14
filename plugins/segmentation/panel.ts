@@ -10,7 +10,7 @@
  * by it), so a change to the segments does not redraw the tool's settings.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { button, card, checkbox, el, emptyState, field, info, numberInput, region, select, statusLine } from "@ngplatform/sdk/dom";
+import { button, card, checkbox, el, emptyState, field, icon, info, numberInput, region, select, statusLine } from "@ngplatform/sdk/dom";
 import { voxelEdges, voxelVolume } from "../annotations/geometry.js";
 import { physical } from "../annotations/ui.js";
 import { layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
@@ -439,7 +439,7 @@ export class Panel {
       const h = el(
         "div",
         { class: "sg-group-head", role: "listitem", "data-group": group.id, title: "A group of segments: drag segments here to add them" },
-        el("button", { type: "button", class: "sg-caret", title: group.collapsed ? "Show its segments" : "Fold its segments away", "aria-expanded": String(!group.collapsed), onclick: () => e.foldGroup(group.id, !group.collapsed) }, group.collapsed ? "▸" : "▾"),
+        el("button", { type: "button", class: "sg-caret", title: group.collapsed ? "Show its segments" : "Fold its segments away", "aria-expanded": String(!group.collapsed), onclick: () => e.foldGroup(group.id, !group.collapsed) }, icon(group.collapsed ? "chevron-right" : "chevron-down")),
         eye,
         colour,
         name,

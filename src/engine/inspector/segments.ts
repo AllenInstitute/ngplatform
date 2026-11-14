@@ -20,7 +20,8 @@ import {
   updatePropertyHistograms,
 } from "../neuroglancer.js";
 import { signal } from "./render.js";
-import { button, el, fromHex, type Scope, section, toHex, type Watch } from "./ui.js";
+import { icon } from "../../sdk/dom.js";
+import { button, el, fromHex, removeButton, type Scope, section, toHex, type Watch } from "./ui.js";
 
 const ROW = 24;
 
@@ -243,7 +244,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
           el("span", { class: "ins-label" }, p.id),
           histogramSvg(hist?.histogram),
           el("div", { class: "ins-inline" }, num(lo, (x) => setRange(x, hi)), el("span", { class: "ins-faint" }, "to"), num(hi, (x) => setRange(lo, x))),
-          constraint ? button("×", () => setRange(-Infinity, Infinity), "Remove this range", "icon ins-remove") : el("span"),
+          constraint ? removeButton("Remove this range", () => setRange(-Infinity, Infinity)) : el("span"),
         );
       }),
     );
@@ -275,8 +276,8 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
 
   const renderHeader = (db: PreprocessedSegmentPropertyMap | undefined) => {
     header.replaceChildren(
-      el("span", { title: "Shown" }, "👁"),
-      el("span", { title: "Starred" }, "★"),
+      el("span", { class: "ins-head-icon", title: "Shown", "aria-label": "Shown" }, icon("eye")),
+      el("span", { class: "ins-head-icon", title: "Starred", "aria-label": "Starred" }, icon("star")),
       el("span"),
       el("span", {}, "id"),
       el("span", {}, db?.labels ? "label" : ""),
@@ -307,7 +308,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
       shown.checked = visible.has(id);
       shown.addEventListener("change", () => visible.set(id, shown.checked));
       const isStarred = starred.has(id);
-      const star = el("button", { type: "button", class: `ins-star${isStarred ? " on" : ""}`, title: isStarred ? "Unstar" : "Star" }, isStarred ? "★" : "☆");
+      const star = el("button", { type: "button", class: `ins-star${isStarred ? " on" : ""}`, title: isStarred ? "Unstar" : "Star", "aria-label": "Star", "aria-pressed": isStarred ? "true" : "false" }, icon("star"));
       star.addEventListener("click", () => starred.set(id, !isStarred));
       const stated = colours().segmentStatedColors.has(id);
       const swatch = el("button", {

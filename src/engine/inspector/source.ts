@@ -24,6 +24,8 @@ import {
   type WatchableCoordinateSpaceTransform,
 } from "../neuroglancer.js";
 import { signal } from "./render.js";
+import { icon, iconButton } from "../../sdk/dom.js";
+import { splitAddress } from "../../sdk/format.js";
 import { button, el, growingInput, messagesView, type Scope, textInput, type Watch } from "./ui.js";
 
 /** What kind of data a subsource holds, in words. */
@@ -158,8 +160,29 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     if (value !== "" && value === existing.url) return;
     source.spec = { ...existing, url: value, setManually: true } as never;
   };
-  // Two rows at most until it is edited: a long URL does not push the layer's settings down.
-  const input = growingInput(source.spec.url, commit, { class: "text-input mono ins-grow", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" }, 2);
+  // The whole address while it is edited, growing to show all of it.
+  const input = growingInput(source.spec.url, commit, { class: "text-input mono ins-grow", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" });
+  const line = sourceLine(source.spec.url, () => {
+    edit(true);
+    input.focus();
+    input.select();
+  });
+  // Not edited, it is one line; empty (a new source), the box itself.
+  const edit = (on: boolean) => {
+    const editing = on || source.spec.url === "";
+    line.element.hidden = editing;
+    input.hidden = !editing;
+  };
+  // Left with Enter or Escape, the keyboard goes back to the line.
+  let byKey = false;
+  input.addEventListener("keydown", (e) => (byKey = e.key === "Enter" || e.key === "Escape"));
+  input.addEventListener("blur", () =>
+    setTimeout(() => {
+      edit(false);
+      if (byKey && !line.element.hidden) line.element.querySelector<HTMLElement>(".source-edit")?.focus();
+      byKey = false;
+    }),
+  );
   const menu = el("ul", { class: "ins-completions", role: "listbox" });
   menu.hidden = true;
   let controller: AbortController | undefined;
@@ -211,13 +234,58 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     controller?.abort();
     clearTimeout(timer);
   });
+  edit(false);
   return {
-    element: el("div", { class: "ins-url-field" }, input, menu),
-    input,
+    element: el("div", { class: "ins-url-field" }, line.element, input, menu),
+    input: {
+      focus: () => {
+        edit(true);
+        input.focus();
+      },
+    },
     sync: () => {
-      if (document.activeElement !== input) (input as unknown as { setValue(v: string): void }).setValue(source.spec.url);
+      if (document.activeElement === input) return;
+      (input as unknown as { setValue(v: string): void }).setValue(source.spec.url);
+      line.set(source.spec.url);
+      edit(false);
     },
   };
+}
+
+/**
+ * A source, compact: the end of its path (the store's name) on one line,
+ * under it where it is (schemes and host, quiet) and the path between, cut
+ * short at its start; a button to copy the whole address and one to edit
+ * it (as a click on the text does).  The whole address is its tooltip.
+ */
+function sourceLine(url: string, onEdit: () => void): { element: HTMLElement; set(url: string): void } {
+  const name = el("span", { class: "source-name" });
+  const where = el("span", { class: "source-where" });
+  const path = el("span", { class: "source-path" });
+  // A click on the text edits it; from the keyboard, the Edit button does.
+  const text = el("div", { class: "source-text", onclick: onEdit }, name, el("span", { class: "source-at" }, where, path));
+  let current = url;
+  const copy = iconButton("copy", "Copy the address", () => {
+    void navigator.clipboard?.writeText(current).then(
+      () => {
+        copy.replaceChildren(icon("check"));
+        setTimeout(() => copy.replaceChildren(icon("copy")), 1200);
+      },
+      () => {},
+    );
+  });
+  const editButton = iconButton("edit", "Edit the address", onEdit, { class: "btn icon source-edit" });
+  const set = (u: string) => {
+    current = u;
+    const parts = splitAddress(u);
+    name.textContent = parts.name;
+    where.textContent = parts.where;
+    // Cut short at its start (right to left), the marks keeping the slashes where they are.
+    path.textContent = parts.path === "" ? "" : `\u200e${parts.path}\u200e`;
+    text.title = u;
+  };
+  set(url);
+  return { element: el("div", { class: "source-line" }, text, copy, editButton), set };
 }
 
 function loadedSource(scope: Scope, loaded: LoadedLayerDataSource): HTMLElement[] {

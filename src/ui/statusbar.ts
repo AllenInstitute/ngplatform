@@ -3,9 +3,11 @@
  * while it is collapsed): the activity message keeps the left and the
  * room left over; the items follow it in their order, each as wide as its
  * content until the line is full, then cut short with an ellipsis (its
- * whole text in its tooltip).  Values are in the mono face, as the
- * position is; an element marked `.status-label` inside an item is in the
- * interface's.  A scale breadcrumb and the level on screen go here.
+ * whole text in its tooltip).  Items are readouts (readout() in
+ * @ngplatform/sdk/dom): values in the mono face with tabular digits, as the
+ * coordinates over the views are, a unit (`.readout-unit`) quiet; an
+ * element marked `.status-label` inside an item is in the interface's face,
+ * quiet.  A scale breadcrumb and the level on screen go here.
  */
 import type { Disposer } from "../sdk/types.js";
 import { h } from "./dom.js";

@@ -63,8 +63,13 @@ interface Row {
   where: string;
   url: string;
   sub: string;
-  views: { name: string; visible: boolean; selected: boolean; status: Status; where: string }[];
+  /** Its (first) layer's number in the scene, as Neuroglancer numbers layers (1, 2, … in draw order). */
+  number: number | undefined;
+  views: { name: string; number: number | undefined; visible: boolean; selected: boolean; status: Status; where: string }[];
 }
+
+/** A layer's number, as Neuroglancer's layer bar shows it: a small square, white while the layer is shown. */
+const layerChip = (n: number | undefined) => (n === undefined ? null : h("span", { class: "layer-chip", "aria-hidden": "true" }, String(n)));
 
 /** The Add menu: a dataset by URL, local data, or a new annotation layer. */
 export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => void {
@@ -127,7 +132,9 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
 
   /** What the list shows, as plain data. */
   const rows = (): Row[] => {
-    const layerInfo = new Map(engine.layers().map((l) => [l.name, l]));
+    const all = engine.layers();
+    const layerInfo = new Map(all.map((l) => [l.name, l]));
+    const numberOf = new Map(all.map((l, i) => [l.name, i + 1]));
     const selected = engine.selectedLayer();
     return store.sceneDatasets().map((entry) => {
       const { dataset } = entry;
@@ -144,10 +151,11 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         where: where(url),
         url,
         sub: layers[0]?.error ?? sourceName(url),
+        number: numberOf.get(entry.layers[0]),
         views:
           entry.layers.length <= 1
             ? []
-            : layers.map((layer) => ({ name: layer.name, visible: layer.visible, selected: layer.name === selected, status: statusOf([layer]), where: where(layer.sources[0] ?? "") })),
+            : layers.map((layer) => ({ name: layer.name, number: numberOf.get(layer.name), visible: layer.visible, selected: layer.name === selected, status: statusOf([layer]), where: where(layer.sources[0] ?? "") })),
       };
     });
   };
@@ -353,7 +361,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
       },
       arrow,
       shown,
-      h("span", { class: "ds-name-cell" }, h("span", { class: "ds-name" }, row.name), statusDot(row.status)),
+      h("span", { class: "ds-name-cell" }, layerChip(row.number), h("span", { class: "ds-name" }, row.name), statusDot(row.status)),
       h("span", { class: "type" }, row.where),
       focusKey(
         iconButton("more", "More actions", (e) => {
@@ -383,7 +391,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
               oncontextmenu: (e: Event) => viewMenu(row.id, view.name, at(e)),
             },
             viewShown,
-            h("span", { class: "ds-name-cell" }, h("span", { class: "ds-name" }, view.name), statusDot(view.status)),
+            h("span", { class: "ds-name-cell" }, layerChip(view.number), h("span", { class: "ds-name" }, view.name), statusDot(view.status)),
             h("span", { class: "type" }, view.where),
           ),
           `view:${view.name}`,

@@ -1,8 +1,8 @@
 {
  "summary": {
   "Font sizes": 5,
-  "Button styles": 13,
-  "Input and select styles": 5,
+  "Button styles": 11,
+  "Input and select styles": 4,
   "Heading styles": 3,
   "Corner radii": 3,
   "Text in the browser's default font": 0,
@@ -17,26 +17,29 @@
   "Layers (image)": {
    "fontSizes": {
     "13px": 4,
-    "12px": 49,
-    "11px": 24
+    "11px": 27,
+    "12px": 50
    },
    "fonts": {
-    "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 53,
-    "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 24
+    "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 50,
+    "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 31
    },
    "colors": {
-    "rgb(230, 230, 230)": 33,
-    "rgb(163, 163, 163)": 42,
-    "rgb(255, 255, 255)": 2
+    "rgba(255, 255, 255, 0.92)": 33,
+    "rgb(255, 255, 255)": 2,
+    "rgba(255, 255, 255, 0.64)": 34,
+    "rgba(255, 255, 255, 0.46)": 10,
+    "rgb(0, 0, 0)": 2
    },
    "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 4,
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(230, 230, 230)": 1,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 4,
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(36, 36, 36)": 3
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 5,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.92)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 3,
+    "12px | 24px | 0px | rgb(235, 235, 235) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.1)": 3
    },
    "inputs": {
-    "12px | 104px | 0px | rgb(0, 0, 0)": 1,
     "12px | 24px | 0px | rgb(0, 0, 0)": 22,
     "12px | 22px | 0px | rgb(0, 0, 0)": 4
    },
@@ -46,15 +49,15 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 4,
-    "12px | 600 | none | rgb(163, 163, 163) | normal": 5
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 4,
+    "12px | 600 | none | rgba(255, 255, 255, 0.64) | normal": 5
    },
    "radii": {
     "50%": 2
    },
    "inlineStyled": 0,
-   "words": 72,
-   "controls": 44,
+   "words": 97,
+   "controls": 45,
    "access": {
     "unnamed": 0,
     "roles": 0,
@@ -72,13 +75,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 42
    },
    "colors": {
-    "rgb(230, 230, 230)": 18,
-    "rgb(163, 163, 163)": 24
+    "rgba(255, 255, 255, 0.92)": 18,
+    "rgba(255, 255, 255, 0.64)": 24
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1,
-    "12px | 17.3906px | 0px | rgba(0, 0, 0, 0) | rgb(163, 163, 163)": 12
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1,
+    "12px | 17.3906px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.64)": 12
    },
    "inputs": {},
    "checkboxes": {
@@ -86,7 +89,7 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 5
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 5
    },
    "radii": {
     "10px": 12
@@ -110,11 +113,11 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 2
    },
    "colors": {
-    "rgb(163, 163, 163)": 1,
-    "rgb(230, 230, 230)": 1
+    "rgba(255, 255, 255, 0.64)": 1,
+    "rgba(255, 255, 255, 0.92)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {},
    "checkboxes": {},
@@ -142,8 +145,8 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 16
    },
    "colors": {
-    "rgb(230, 230, 230)": 6,
-    "rgb(163, 163, 163)": 10
+    "rgba(255, 255, 255, 0.92)": 6,
+    "rgba(255, 255, 255, 0.64)": 10
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 3
@@ -156,7 +159,7 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 8
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 8
    },
    "radii": {
     "10px": 2
@@ -179,17 +182,18 @@
     "11px": 2
    },
    "fonts": {
-    "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 9
+    "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 8,
+    "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
    },
    "colors": {
-    "rgb(230, 230, 230)": 3,
-    "rgb(163, 163, 163)": 5,
+    "rgba(255, 255, 255, 0.92)": 3,
+    "rgba(255, 255, 255, 0.64)": 5,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1,
-    "12px | 24px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1,
+    "12px | 24px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 3
@@ -197,7 +201,7 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 4
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 4
    },
    "radii": {},
    "inlineStyled": 0,
@@ -221,11 +225,11 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 66
    },
    "colors": {
-    "rgb(230, 230, 230)": 35,
-    "rgb(163, 163, 163)": 31
+    "rgba(255, 255, 255, 0.92)": 35,
+    "rgba(255, 255, 255, 0.64)": 31
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 17,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 17,
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 17
    },
    "inputs": {
@@ -237,7 +241,7 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 20
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 20
    },
    "radii": {
     "10px": 1
@@ -263,13 +267,14 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 41
    },
    "colors": {
-    "rgb(163, 163, 163)": 34,
-    "rgb(230, 230, 230)": 6,
-    "rgb(255, 255, 255)": 1
+    "rgba(255, 255, 255, 0.64)": 19,
+    "rgba(255, 255, 255, 0.92)": 6,
+    "rgb(0, 0, 0)": 1,
+    "rgba(255, 255, 255, 0.46)": 15
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(41, 41, 41) | rgb(51, 51, 51)": 1,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 13,
+    "12px | 24px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 13,
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 13
    },
    "inputs": {
@@ -281,7 +286,7 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 10
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 10
    },
    "radii": {
     "10px": 1
@@ -306,11 +311,12 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 3
    },
    "colors": {
-    "rgb(163, 163, 163)": 2,
-    "rgb(230, 230, 230)": 1
+    "rgba(255, 255, 255, 0.64)": 1,
+    "rgba(255, 255, 255, 0.92)": 1,
+    "rgba(255, 255, 255, 0.46)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {},
    "checkboxes": {},
@@ -338,12 +344,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 21
    },
    "colors": {
-    "rgb(230, 230, 230)": 10,
-    "rgb(163, 163, 163)": 11
+    "rgba(255, 255, 255, 0.92)": 10,
+    "rgba(255, 255, 255, 0.64)": 10,
+    "rgba(255, 255, 255, 0.46)": 1
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 11,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 7
@@ -354,7 +361,7 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 8
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 8
    },
    "radii": {
     "10px": 1
@@ -378,11 +385,11 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 2
    },
    "colors": {
-    "rgb(163, 163, 163)": 1,
-    "rgb(230, 230, 230)": 1
+    "rgba(255, 255, 255, 0.64)": 1,
+    "rgba(255, 255, 255, 0.92)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {},
    "checkboxes": {},
@@ -409,13 +416,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 8
    },
    "colors": {
-    "rgb(230, 230, 230)": 3,
-    "rgb(163, 163, 163)": 4,
+    "rgba(255, 255, 255, 0.92)": 3,
+    "rgba(255, 255, 255, 0.64)": 4,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 2
+    "12px | 24px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 2
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 4
@@ -423,7 +430,7 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 2
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 2
    },
    "radii": {},
    "inlineStyled": 0,
@@ -445,11 +452,11 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 2
    },
    "colors": {
-    "rgb(163, 163, 163)": 1,
-    "rgb(230, 230, 230)": 1
+    "rgba(255, 255, 255, 0.64)": 1,
+    "rgba(255, 255, 255, 0.92)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {},
    "checkboxes": {},
@@ -477,11 +484,12 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
    },
    "colors": {
-    "rgb(163, 163, 163)": 3,
-    "rgb(230, 230, 230)": 4
+    "rgba(255, 255, 255, 0.46)": 2,
+    "rgba(255, 255, 255, 0.92)": 4,
+    "rgba(255, 255, 255, 0.64)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 4
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 4
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 2
@@ -509,8 +517,8 @@
     "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 2
    },
    "colors": {
-    "rgb(163, 163, 163)": 1,
-    "rgb(230, 230, 230)": 1
+    "rgba(255, 255, 255, 0.46)": 1,
+    "rgba(255, 255, 255, 0.92)": 1
    },
    "buttons": {},
    "inputs": {},
@@ -539,15 +547,15 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 12
    },
    "colors": {
-    "rgb(230, 230, 230)": 8,
+    "rgba(255, 255, 255, 0.92)": 8,
     "rgb(0, 0, 0)": 1,
-    "rgb(163, 163, 163)": 3
+    "rgba(255, 255, 255, 0.64)": 2,
+    "rgba(255, 255, 255, 0.46)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 3,
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 4,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1
    },
    "inputs": {
     "12px | 120px | 0px | rgb(0, 0, 0)": 1
@@ -555,8 +563,8 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 1
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1
    },
    "radii": {},
    "inlineStyled": 0,
@@ -580,16 +588,14 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 29
    },
    "colors": {
-    "rgb(230, 230, 230)": 17,
-    "rgb(255, 255, 255)": 1,
-    "rgb(163, 163, 163)": 10,
-    "rgb(0, 0, 0)": 1
+    "rgba(255, 255, 255, 0.92)": 17,
+    "rgb(0, 0, 0)": 2,
+    "rgba(255, 255, 255, 0.64)": 10
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(41, 41, 41) | rgb(51, 51, 51)": 1,
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 6,
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 2,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 6,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 7
@@ -599,8 +605,8 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 4
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 4
    },
    "radii": {},
    "inlineStyled": 0,
@@ -627,18 +633,16 @@
     "Roboto, \"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 1
    },
    "colors": {
-    "rgb(230, 230, 230)": 14,
-    "rgb(163, 163, 163)": 11,
-    "rgb(255, 255, 255)": 1,
-    "rgb(227, 227, 227)": 1,
-    "rgb(0, 0, 0)": 1
+    "rgba(255, 255, 255, 0.92)": 14,
+    "rgba(255, 255, 255, 0.64)": 11,
+    "rgb(0, 0, 0)": 2,
+    "rgb(227, 227, 227)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 11,
-    "13px | 28px | 0px | rgb(41, 41, 41) | rgb(51, 51, 51)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 11,
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 2,
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 6,
-    "14px | 40px | 20px | rgb(19, 19, 20) | rgb(142, 145, 143)": 1,
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "14px | 40px | 20px | rgb(19, 19, 20) | rgb(142, 145, 143)": 1
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 4
@@ -646,8 +650,8 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 12
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 12
    },
    "radii": {
     "20px": 1
@@ -675,16 +679,15 @@
     "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
    },
    "colors": {
-    "rgb(230, 230, 230)": 5,
-    "rgb(163, 163, 163)": 9,
-    "rgb(255, 255, 255)": 1,
-    "rgb(0, 0, 0)": 1
+    "rgba(255, 255, 255, 0.92)": 5,
+    "rgba(255, 255, 255, 0.64)": 7,
+    "rgb(0, 0, 0)": 2,
+    "rgba(255, 255, 255, 0.46)": 2
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 7,
-    "13px | 28px | 0px | rgb(41, 41, 41) | rgb(51, 51, 51)": 1,
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 7,
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 2,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 2
@@ -692,8 +695,8 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 4
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 4
    },
    "radii": {},
    "inlineStyled": 0,
@@ -717,15 +720,14 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 16
    },
    "colors": {
-    "rgb(230, 230, 230)": 4,
-    "rgb(163, 163, 163)": 10,
-    "rgb(255, 255, 255)": 1,
-    "rgb(0, 0, 0)": 1
+    "rgba(255, 255, 255, 0.92)": 4,
+    "rgba(255, 255, 255, 0.64)": 9,
+    "rgb(0, 0, 0)": 2,
+    "rgba(255, 255, 255, 0.46)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 6,
-    "13px | 28px | 0px | rgb(41, 41, 41) | rgb(51, 51, 51)": 1,
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 6,
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 2
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 5
@@ -733,8 +735,8 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 2
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 2
    },
    "radii": {},
    "inlineStyled": 0,
@@ -760,22 +762,21 @@
     "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 40
    },
    "colors": {
-    "rgb(230, 230, 230)": 46,
-    "rgb(163, 163, 163)": 18,
-    "rgb(255, 255, 255)": 1,
-    "rgb(0, 0, 0)": 1
+    "rgba(255, 255, 255, 0.92)": 46,
+    "rgba(255, 255, 255, 0.64)": 13,
+    "rgb(0, 0, 0)": 2,
+    "rgba(255, 255, 255, 0.46)": 5
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 9,
-    "13px | 28px | 0px | rgb(41, 41, 41) | rgb(51, 51, 51)": 1,
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 9,
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 2
    },
    "inputs": {},
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 1
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1
    },
    "radii": {},
    "inlineStyled": 0,
@@ -801,19 +802,19 @@
     "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 59
    },
    "colors": {
-    "rgb(230, 230, 230)": 53,
-    "rgb(163, 163, 163)": 59,
+    "rgba(255, 255, 255, 0.92)": 53,
+    "rgba(255, 255, 255, 0.64)": 59,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1
    },
    "inputs": {},
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 2
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 2
    },
    "radii": {},
    "inlineStyled": 0,
@@ -837,13 +838,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 10
    },
    "colors": {
-    "rgb(230, 230, 230)": 4,
-    "rgb(163, 163, 163)": 5,
+    "rgba(255, 255, 255, 0.92)": 4,
+    "rgba(255, 255, 255, 0.64)": 5,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 5
@@ -853,8 +854,8 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 1
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1
    },
    "radii": {},
    "inlineStyled": 0,
@@ -878,12 +879,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
    },
    "colors": {
-    "rgb(230, 230, 230)": 2,
-    "rgb(163, 163, 163)": 4
+    "rgba(255, 255, 255, 0.92)": 2,
+    "rgba(255, 255, 255, 0.64)": 3,
+    "rgba(255, 255, 255, 0.46)": 1
    },
    "buttons": {
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgba(0, 0, 0, 0)": 1
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 3
@@ -891,7 +893,7 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1
    },
    "radii": {},
    "inlineStyled": 0,
@@ -917,13 +919,14 @@
     "\"Source Code Pro\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
    },
    "colors": {
-    "rgb(230, 230, 230)": 10,
-    "rgb(163, 163, 163)": 4,
+    "rgba(255, 255, 255, 0.92)": 10,
+    "rgba(255, 255, 255, 0.46)": 1,
+    "rgba(255, 255, 255, 0.64)": 3,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
-    "13px | 28px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 3,
+    "13px | 28px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 3,
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1
    },
    "inputs": {
@@ -934,8 +937,8 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "16px | 600 | none | rgb(230, 230, 230) | normal": 1,
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 3
+    "16px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 1,
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 3
    },
    "radii": {},
    "inlineStyled": 0,
@@ -960,7 +963,7 @@
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
-   "words": 214,
+   "words": 239,
    "controls": 0,
    "access": {
     "unnamed": 0,
@@ -972,36 +975,37 @@
   },
   "Track filtering (tracts)": {
    "fontSizes": {
-    "13px": 5,
-    "12px": 28,
+    "13px": 6,
+    "12px": 47,
     "11px": 3
    },
    "fonts": {
-    "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 36
+    "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 56
    },
    "colors": {
-    "rgb(230, 230, 230)": 19,
-    "rgb(163, 163, 163)": 14,
-    "rgb(217, 169, 74)": 3
+    "rgba(255, 255, 255, 0.92)": 28,
+    "rgba(255, 255, 255, 0.64)": 24,
+    "rgb(255, 255, 255)": 1,
+    "rgba(255, 255, 255, 0.46)": 3
    },
    "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 8,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 12
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 12,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 12
    },
    "inputs": {
-    "12px | 24px | 0px | rgb(0, 0, 0)": 14
+    "12px | 24px | 0px | rgb(0, 0, 0)": 27
    },
    "checkboxes": {
     "plain": 4
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 10
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 12
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 81,
-   "controls": 38,
+   "words": 83,
+   "controls": 55,
    "access": {
     "unnamed": 0,
     "roles": 0,
@@ -1020,8 +1024,8 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 25
    },
    "colors": {
-    "rgb(230, 230, 230)": 13,
-    "rgb(163, 163, 163)": 12
+    "rgba(255, 255, 255, 0.92)": 13,
+    "rgba(255, 255, 255, 0.64)": 12
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 5
@@ -1034,13 +1038,13 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 12
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 12
    },
    "radii": {
     "10px": 7
    },
    "inlineStyled": 0,
-   "words": 86,
+   "words": 92,
    "controls": 21,
    "access": {
     "unnamed": 0,
@@ -1060,12 +1064,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 21
    },
    "colors": {
-    "rgb(230, 230, 230)": 10,
-    "rgb(163, 163, 163)": 11
+    "rgba(255, 255, 255, 0.92)": 10,
+    "rgba(255, 255, 255, 0.64)": 10,
+    "rgba(255, 255, 255, 0.46)": 1
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 11,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 7
@@ -1076,7 +1081,7 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 8
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 8
    },
    "radii": {
     "10px": 1
@@ -1103,7 +1108,7 @@
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
-   "words": 152,
+   "words": 162,
    "controls": 0,
    "access": {
     "unnamed": 0,
@@ -1123,8 +1128,8 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 24
    },
    "colors": {
-    "rgb(230, 230, 230)": 10,
-    "rgb(163, 163, 163)": 14
+    "rgba(255, 255, 255, 0.92)": 10,
+    "rgba(255, 255, 255, 0.64)": 14
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 7
@@ -1137,13 +1142,13 @@
    },
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 12
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 12
    },
    "radii": {
     "10px": 4
    },
    "inlineStyled": 0,
-   "words": 74,
+   "words": 80,
    "controls": 21,
    "access": {
     "unnamed": 0,
@@ -1162,13 +1167,13 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 8
    },
    "colors": {
-    "rgb(230, 230, 230)": 3,
-    "rgb(163, 163, 163)": 4,
+    "rgba(255, 255, 255, 0.92)": 3,
+    "rgba(255, 255, 255, 0.64)": 4,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 2
+    "12px | 24px | 0px | rgb(235, 235, 235) | rgb(235, 235, 235)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 2
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 4
@@ -1176,7 +1181,7 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 2
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 2
    },
    "radii": {},
    "inlineStyled": 0,
@@ -1199,11 +1204,11 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
    },
    "colors": {
-    "rgb(230, 230, 230)": 3,
-    "rgb(163, 163, 163)": 3
+    "rgba(255, 255, 255, 0.92)": 3,
+    "rgba(255, 255, 255, 0.64)": 3
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 1
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 1
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 2
@@ -1211,7 +1216,7 @@
    "checkboxes": {},
    "handMadeOnOff": 0,
    "headings": {
-    "13px | 600 | none | rgb(230, 230, 230) | normal": 4
+    "13px | 600 | none | rgba(255, 255, 255, 0.92) | normal": 4
    },
    "radii": {},
    "inlineStyled": 0,
@@ -1235,11 +1240,12 @@
     "\"Source Sans 3\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
    },
    "colors": {
-    "rgb(163, 163, 163)": 3,
-    "rgb(230, 230, 230)": 4
+    "rgba(255, 255, 255, 0.46)": 2,
+    "rgba(255, 255, 255, 0.92)": 4,
+    "rgba(255, 255, 255, 0.64)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgb(31, 31, 31) | rgb(51, 51, 51)": 4
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(255, 255, 255, 0.2)": 4
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 2

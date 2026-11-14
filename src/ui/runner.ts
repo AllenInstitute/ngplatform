@@ -12,7 +12,7 @@ import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerEr
 import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
 import { emptyState, field, info } from "../sdk/dom.js";
-import { clear, h, iconButton } from "./dom.js";
+import { clear, h, icon, iconButton } from "./dom.js";
 import { diskBudget, type SpillPlan, spillPlan, storageEstimate } from "../virtual/vectors/spill.js";
 import { tractogramDiskGigabytes } from "../virtual/vectors/formats.js";
 import { closeSheet, confirmDialog, offer, sheet, showSheet, toast } from "./overlays.js";
@@ -421,7 +421,7 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
         picked = undefined;
         crumbs.textContent = folder === "" ? "The runner's folders" : folder;
         const rows: HTMLElement[] = [];
-        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "link", type: "button", onclick: () => void go(listing.parent ?? "") }, "↑ Up")));
+        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "link runner-up-button", type: "button", onclick: () => void go(listing.parent ?? "") }, icon("arrow-up"), "Up")));
         for (const entry of listing.entries) {
           const label = `${entry.name}${entry.type === "dir" ? "/" : ""}`;
           const row = h("li", { class: `runner-entry ${entry.type}`, "data-path": entry.path });

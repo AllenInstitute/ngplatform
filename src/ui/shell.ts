@@ -32,6 +32,7 @@ import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
 import { HistoryKeep, IndexedDbHistoryBackend } from "../platform/history_keep.js";
 import type { HistoryData } from "../core/history.js";
+import { withViewDefaults } from "../core/view_defaults.js";
 import {
   type Choices,
   defaultsTold,
@@ -547,7 +548,10 @@ export class Shell {
       const named = /^#example=([\w.-]+)$/.exec(location.hash)?.[1];
       const example = examples.get(named ?? defaultExample);
       if (example !== undefined) this.openExample(example.id);
-      else store.settle();
+      else {
+        engine.applyViewDefaults();
+        store.settle();
+      }
     }
     refresh();
     setTimeout(() => this.checkFormats(), 1500);
@@ -1007,7 +1011,7 @@ export class Shell {
         const { preference } = engine.panelConvention();
         showMenu(
           this.root.querySelector<HTMLElement>('.topbar button[title="Settings"]') ?? { x: window.innerWidth - 320, y: 48 },
-          conventions.map(([id, title]) => ({ label: `${preference === id ? "✓ " : ""}${title}`, current: preference === id, run: () => engine.setPanelConvention(id) })),
+          conventions.map(([id, title]) => ({ label: title, current: preference === id, run: () => engine.setPanelConvention(id) })),
         );
       },
     });
@@ -1405,7 +1409,9 @@ export class Shell {
     const example = this.wb.examples.get(id);
     if (example === undefined) throw new CommandError(`no example ${id}`);
     this.switchOnForTab(example.plugins ?? []);
-    this.wb.store.open(example.state(), `the example “${example.title}”`);
+    const state = example.state();
+    // The views' defaults where the example says nothing (src/core/view_defaults.ts).
+    this.wb.store.open({ ...state, ng: withViewDefaults(state.ng) }, `the example “${example.title}”`);
   }
 
   /** Opens whatever was pasted or linked; returns whether it worked. */
