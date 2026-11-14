@@ -47,6 +47,8 @@
   --select: #d0d0d0;
   --select-strong: #fff;
   --select-soft: rgba(255, 255, 255, 0.06);
+  /* Text selected with the pointer. */
+  --selection: #4d4d4d;
   --ok: #5fb37a;
   --ok-line: #2c4a36;
   /* An on/off switch, grey off and green on (the one green control), and its knob. */
@@ -158,6 +160,21 @@ body, body *:not(.ng-host *, .ins-embed *, [class*="neuroglancer-"], [class*="ne
    Without weight, so the field and button rules below set their own size. */
 :where(button, input, textarea, select) { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* ---------------------------------------------------------- browser surfaces
+   What the browser draws for the app, in its greys: selected text, the
+   caret, scrollbars (thin; the thumb at 3:1 on the docks), placeholders,
+   and the focus ring above (2 px, the accent).  Number fields have no
+   spinners (the arrow keys step them; a slider stands beside most); ranges
+   and tick boxes are the browser's own in the accent. */
+::selection { background: var(--selection); color: var(--text-strong); }
+:root { scrollbar-width: thin; scrollbar-color: var(--line-hover) transparent; }
+:where(input, textarea, [contenteditable]) { caret-color: var(--text-strong); }
+::placeholder { color: var(--muted); opacity: 0.75; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="range"] { accent-color: var(--accent); }
+option { background: var(--ink-2); color: var(--text); }
 [hidden] { display: none !important; }
 code { font-family: var(--mono); font-size: var(--fs-body); }
 :where(a:not(.btn)) { color: var(--muted); text-decoration-color: var(--faint); text-underline-offset: 2px; }
