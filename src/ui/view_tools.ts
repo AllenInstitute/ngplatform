@@ -236,6 +236,7 @@ export class ViewTools {
       pick: (onPick) => {
         const picker = { owner, onPick };
         this.picker = picker;
+        this.draw();
         this.updateCursors();
         return own(() => {
           if (this.picker === picker) this.picker = undefined;
@@ -394,7 +395,8 @@ export class ViewTools {
 
   /** Keeps a canvas and listeners on each panel, and draws every shape into each. */
   private draw(): void {
-    const infos = this.entries.size === 0 && this.panelStates.size === 0 ? [] : this.host.panels();
+    // Panels are watched while there are shapes or a picker (a picker's clicks are on panels with nothing drawn yet).
+    const infos = this.entries.size === 0 && this.panelStates.size === 0 && this.picker === undefined ? [] : this.host.panels();
     const seen = new Set<HTMLElement>();
     for (const info of infos) {
       seen.add(info.element);
