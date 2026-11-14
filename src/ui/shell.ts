@@ -167,6 +167,7 @@ export class Shell {
       h(
         "div",
         { class: "group" },
+        h("a", { class: "btn icon", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
         iconButton("camera", "Capture", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Picture…", run: () => this.wb.run("view.capture") },
