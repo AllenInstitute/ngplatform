@@ -271,10 +271,10 @@ a.btn { text-decoration: none; }
 .btn:disabled { color: var(--faint); cursor: default; }
 .btn.outline { background: transparent; border-color: var(--line-strong); }
 .btn.outline:hover:not(:disabled) { background: var(--hover); border-color: var(--line-hover); }
-.btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.btn.primary:hover:not(:disabled), .btn.primary:active:not(:disabled) { background: var(--accent-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover:not(:disabled), .btn.primary:active:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 /* A primary or a delete that cannot be used yet: grey, its words quiet. */
-.btn.primary:disabled, .btn.danger:disabled { background: transparent; border-color: var(--line); color: var(--faint); font-weight: 400; }
+.btn.primary:disabled, .btn.danger:disabled { background: transparent; border-color: var(--line-strong); color: var(--faint); font-weight: 400; }
 .btn.danger { background: transparent; color: var(--err); border-color: var(--line-strong); }
 .btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); border-color: var(--err-line); }
 .btn.danger:active:not(:disabled) { background: var(--danger-hover); }
@@ -291,7 +291,7 @@ a.btn { text-decoration: none; }
 .segmented { display: flex; flex-wrap: wrap; }
 .segmented button {
   height: var(--ctl-h); box-sizing: border-box; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); border-radius: var(--r);
-  background: var(--ink-3); color: var(--muted); font-size: var(--ctl-fs); cursor: pointer;
+  background: transparent; color: var(--muted); font-size: var(--ctl-fs); cursor: pointer;
 }
 .segmented button + button { margin-left: -1px; }
 .segmented button:hover { color: var(--text); background: var(--hover); border-color: var(--line-hover); position: relative; z-index: 1; }
@@ -311,7 +311,7 @@ a.btn { text-decoration: none; }
 .scene-tab .scene-tab-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .scene-tab:hover { color: var(--text); background: var(--hover); }
 /* The scene shown: the dock's grey under it, underlined. */
-.scene-tab[aria-selected="true"] { color: var(--text-strong); border-color: var(--text); }
+.scene-tab[aria-selected="true"] { color: var(--text-strong); box-shadow: inset 0 0 0 1px var(--text); }
 .scene-close {
   display: inline-grid; place-items: center; width: var(--hit); height: var(--hit); flex: none;
   border: 0; padding: 0; background: transparent; color: var(--faint); cursor: pointer; visibility: hidden;
