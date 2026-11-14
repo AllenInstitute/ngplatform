@@ -1353,7 +1353,9 @@ textarea.state-input.tall { min-height: 50vh; }
 .engine .neuroglancer-position-dimension-coordinate { color: var(--text); }
 .engine .neuroglancer-position-dimension + .neuroglancer-position-dimension { margin-left: var(--sp-5); }
 .engine :is(.neuroglancer-position-dimension:focus-within, .neuroglancer-position-dimension[data-dropdown-visible="true"]) { border-color: var(--line-focus); background: var(--ink-0); }
-.engine .neuroglancer-dimension-dropdown-coordinate-label { color: var(--muted); }
+.engine :is(.neuroglancer-dimension-dropdown-coordinate-label, .neuroglancer-position-dimension-coordinate-label) { color: var(--muted); }
+/* The pointer's position after it (one line of text, names and values together): a readout, quieter than the view's. */
+.engine .neuroglancer-mouse-position-widget { margin-left: var(--sp-6); font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .engine .neuroglancer-dimension-dropdown-coordinate-entry:hover { background: var(--hover); }
 
 /* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it
@@ -1366,7 +1368,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .source-text:hover { border-color: var(--line-hover); background: var(--ink-0); }
 .source-name { font: var(--fs-body)/1.5 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-at { display: flex; min-width: 0; font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
-.source-where { flex: 0 1 auto; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
+.source-where { flex: 0 0.5 auto; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
 .source-path { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
 .source-path:empty { display: none; }
 .source-line .btn.icon { color: var(--muted); }
