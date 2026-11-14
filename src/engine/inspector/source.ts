@@ -158,7 +158,8 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     if (value !== "" && value === existing.url) return;
     source.spec = { ...existing, url: value, setManually: true } as never;
   };
-  const input = growingInput(source.spec.url, commit, { class: "text-input mono ins-grow", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" });
+  // Two rows at most until it is edited: a long URL does not push the layer's settings down.
+  const input = growingInput(source.spec.url, commit, { class: "text-input mono ins-grow", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" }, 2);
   const menu = el("ul", { class: "ins-completions", role: "listbox" });
   menu.hidden = true;
   let controller: AbortController | undefined;

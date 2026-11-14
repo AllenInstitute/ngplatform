@@ -884,6 +884,15 @@ textarea.py-in {
 .ins-url-field { position: relative; }
 /* A URL field one line high, as the fields beside it, growing to show all of a long one. */
 textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; min-height: var(--ctl-h); line-height: 16px; padding-block: 3px; word-break: break-all; }
+/* Cut short until edited: the end of its last row fades, so it reads as more to come.  No
+   padding below it: a textarea clips at its padding's edge, so the next row's tops would show there. */
+textarea.ins-grow.ins-clipped {
+  padding-bottom: 0;
+  mask-image: linear-gradient(#000, #000), linear-gradient(to left, transparent, #000 4em);
+  mask-size: 100% calc(100% - 17px), 100% 17px;
+  mask-position: top, bottom;
+  mask-repeat: no-repeat;
+}
 .ins-completions {
   position: absolute; z-index: 30; left: 0; right: 0; top: 100%; max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none;
   background: var(--surface-overlay); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
@@ -1195,8 +1204,13 @@ textarea.state-input.tall { min-height: 50vh; }
    control), .readout (a number or a path that changes).
    ------------------------------------------------------------------ */
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+/* A button beside a labelled field lines up with the field's control, not the middle of label and control. */
+.row:has(> .field) { align-items: end; }
 .row > .field { flex: 1 1 120px; min-width: 0; }
 .stack { display: grid; gap: var(--sp-4); align-content: start; }
+/* A part with nothing in it now (a region not shown) takes no gap. */
+.stack > :empty,
+.card > .card-body > :empty { display: none; }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-4); }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
