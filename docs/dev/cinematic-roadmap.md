@@ -158,32 +158,39 @@ Several features need the same groundwork, so it comes first.
 - A new plane starts at the tissue's centre, facing the camera, as in
   Playground.
 
-**2.2 Orientation cube and realign (S).**
-- A small cube in the corner of the 3-D view, labelled from the image's
+**2.2 Orientation cube and realign (S).** Done (2026-11-14), for every
+scene, in the View aids plugin (`plugins/view-aids`, `docs/plugins/view-aids.md`).
+- [x] A small cube in the corner of the 3-D view, labelled from the image's
   axes (R/L, A/P, S/I).
-- Clicking a face, edge or corner turns the view there.
-- **Realign** snaps the nearest standard view.
+- [x] Clicking a face, edge or corner turns the view there.
+- [x] **Realign** snaps the nearest standard view.
 
-**2.3 Labels with leader lines (M).**
-- Neuroglancer point annotations, and region names from a segmentation,
-  are drawn as labels at the sides of the view, with lines to their
-  points.
-- A point hidden behind tissue is greyed. Whether it is hidden comes from
+**2.3 Labels with leader lines (M).** Partly done (2026-11-14), in the
+View aids plugin, for Neuroglancer's view (not yet the rendered frame).
+- [x] Neuroglancer point annotations (with a description) are drawn as
+  labels at the sides of the view, with lines to their points. Not yet:
+  region names from a segmentation.
+- [ ] A point hidden behind tissue is greyed. Whether it is hidden comes from
   comparing its depth with the distance channel the host already sends.
-- The labels are placed so they do not overlap (sorted by angle, then
-  spaced along each side).
+  (Neuroglancer's own 3-D view has no cheap depth for a plugin.)
+- [x] The labels are placed so they do not overlap (sorted by angle, then
+  spaced along each side, with crossing leaders swapped).
 
-**2.4 Hide graphics (S).** One switch for the overlay and Neuroglancer's
-box and axis lines in the 3-D view.
+**2.4 Hide graphics (S).** Done (2026-11-14), in the View aids plugin.
+- [x] One switch for the overlay and Neuroglancer's box and axis lines in
+  the 3-D view (and the scale bar).
 
-**2.5 Bookmarks (M).**
-- **Bookmark** saves the render scene (0.4) with a thumbnail (the current
-  frame at 128 px).
-- Bookmarks are kept per image, in the workspace (so in the link) or in
-  the browser.
-- A strip of thumbnails restores any of them.
-- **Play bookmarks** makes a movie that moves between them, which also
-  covers teaching sequences.
+**2.5 Bookmarks (M).** Partly done (2026-11-14), in the View aids plugin:
+bookmarks of Neuroglancer's camera, for every scene.
+- [ ] **Bookmark** saves the render scene (0.4) with a thumbnail (the current
+  frame at 128 px). Done for the camera (position, orientation, zoom,
+  depth, the sections' scale, the layout) with a 128 × 80 thumbnail of
+  the 3-D view; the render scene waits for 0.4.
+- [x] Bookmarks are kept per scene, in the workspace (so in the link).
+- [x] A strip of thumbnails restores any of them.
+- [ ] **Play bookmarks** makes a movie that moves between them, which also
+  covers teaching sequences. Play moves the view through them; making a
+  movie of it is not done yet.
 
 **2.6 Export and import of scenes (S).**
 - **Save scene** downloads the render scene as `.render.json`.

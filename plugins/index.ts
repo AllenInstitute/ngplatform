@@ -4,8 +4,8 @@
  * here (and, for a data type, its worker modules in ./workers.ts), and built
  * with the app. The Plugins panel switches each on or off (a tool plugin
  * switches on at once; a data type, or switching off, reloads the page with
- * the same link). Only Zarr Vectors is on by default; the others are
- * offered when data they serve is opened (./offers.ts). See ./README.md.
+ * the same link). Zarr Vectors and the view aids are on by default; the
+ * others are offered when data they serve is opened (./offers.ts). See ./README.md.
  */
 import type { Manifest, PluginModule, VirtualFormat } from "@ngplatform/sdk";
 import { ANATOMICAL_RENDERING_MANIFEST } from "./anatomical-rendering/manifest.js";
@@ -20,14 +20,16 @@ import { SEGMENTATION_MANIFEST } from "./segmentation/manifest.js";
 import { LABEL_STORE_FORMAT } from "./segmentation/store_format.js";
 import { TIME_SERIES_MANIFEST } from "./time-series/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
+import { VIEW_AIDS_MANIFEST } from "./view-aids/manifest.js";
 import { ZARR_VECTORS_MANIFEST } from "./zarr-vectors/manifest.js";
 import { type Offer, OFFERS } from "./offers.js";
 
 /** What a plugin does, for grouping the Plugins panel. */
-export type PluginGroup = "data" | "vectors" | "images" | "labels" | "annotation";
+export type PluginGroup = "data" | "views" | "vectors" | "images" | "labels" | "annotation";
 
 export const GROUP_TITLES: Record<PluginGroup, string> = {
   data: "Data types",
+  views: "Views",
   vectors: "Tractograms and other vectors",
   images: "Images",
   labels: "Segmentations and atlases",
@@ -57,6 +59,13 @@ export const CATALOGUE: CatalogueEntry[] = [
     neuroglancer: () => import("neuroglancer-zarr-vectors"),
     summary: "Opens Zarr Vectors stores, and tractograms, meshes, neurons and point tables as if they were one.",
     group: "data",
+  },
+  {
+    manifest: VIEW_AIDS_MANIFEST,
+    load: async () => (await import("./view-aids/plugin.js")).plugin,
+    summary: "An orientation cube, labels with leader lines, Hide graphics and bookmarks in the 3-D view.",
+    group: "views",
+    offer: offer(VIEW_AIDS_MANIFEST.id),
   },
   {
     manifest: TRACK_FILTERING_MANIFEST,

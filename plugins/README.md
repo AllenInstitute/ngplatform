@@ -1,15 +1,16 @@
 # Plugins
 
 Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
-lists, and the **Plugins** panel (left column) switches each on or off. Only Zarr
-Vectors is on by default; the others are offered when data they work with is
-opened (below).
+lists, and the **Plugins** panel (left column) switches each on or off. Zarr
+Vectors and the view aids are on by default; the others are offered when
+data they work with is opened (below).
 
 ```
 plugins/
   index.ts             one entry per plugin: its manifest, and how to load its code
   workers.ts           the worker modules of data-type plugins, by plugin id
   zarr-vectors/        a data type: Zarr Vectors stores in Neuroglancer (an npm package)
+  view-aids/           a tool, on by default: orientation cube, labels, Hide graphics and bookmarks in the 3-D view
   track-filtering/     a tool: TrackVis-style track groups, saved as .trk
   volume-view/         not a plugin: volume readers (OME-Zarr, precomputed, NIfTI) the tools share
   luxar/               a tool: chosen Zarr Vectors layers drawn as Luxar draws lines, in the 2-D and 3-D views
@@ -99,7 +100,7 @@ that folder plus one line in `index.ts`.
 
 ## Switching plugins on and off
 
-Only Zarr Vectors is on by default (`enabledByDefault`); every other plugin
+Zarr Vectors and the view aids are on by default (`enabledByDefault`); every other plugin
 is off until someone turns it on, from the Plugins panel or from an offer.
 The choice is kept in this browser.
 

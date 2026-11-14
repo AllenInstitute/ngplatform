@@ -1342,6 +1342,44 @@ export class Engine {
     return this.viewer.display.updateFinished.add(callback);
   }
 
+  /** A small picture of the 3-D view (else the first view) as next drawn, cropped to fill `width` × `height` (see ViewerApi.thumbnail). */
+  thumbnail(width: number, height: number): Promise<string | undefined> {
+    type Shown = { sliceView?: unknown; element?: HTMLElement; canvasRelativeClippedLeft: number; canvasRelativeClippedTop: number; renderViewport: { width: number; height: number } };
+    const display = this.viewer.display;
+    const shown = [...display.panels].filter((p) => {
+      const any = p as unknown as Shown;
+      return any.renderViewport !== undefined && any.element?.isConnected === true && "canvasRelativeClippedLeft" in any && any.renderViewport.width > 0;
+    }) as unknown as Shown[];
+    const panel = shown.find((p) => p.sliceView === undefined) ?? shown[0];
+    if (panel === undefined) return Promise.resolve(undefined);
+    return new Promise((resolve) => {
+      const off = display.updateFinished.add(() => {
+        off();
+        clearTimeout(timer);
+        // Copied at once, while the drawing buffer still holds the frame just drawn.
+        const { width: w, height: h } = panel.renderViewport;
+        const scale = Math.max(width / w, height / h);
+        const sw = width / scale;
+        const sh = height / scale;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (context === null) return resolve(undefined);
+        context.fillStyle = "#000";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(display.canvas, panel.canvasRelativeClippedLeft + (w - sw) / 2, panel.canvasRelativeClippedTop + (h - sh) / 2, sw, sh, 0, 0, width, height);
+        const webp = canvas.toDataURL("image/webp", 0.7);
+        resolve(webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/png"));
+      });
+      const timer = setTimeout(() => {
+        off();
+        resolve(undefined);
+      }, 3000);
+      display.scheduleRedraw();
+    });
+  }
+
   private readonly screenshotPainters = new Set<(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void>();
 
   /** Paints on top of Neuroglancer's screenshots (see the fork's screenshot_manager), until disposed. */

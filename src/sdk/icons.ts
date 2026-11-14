@@ -45,6 +45,9 @@ const PATHS = {
   zoomout: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4M8 11h6",
   reset: "M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4",
   copyplus: "M8 8h11v12H8zM5 16V4h11M13.5 11v6M10.5 14h6",
+  bookmark: "M6 4h12v16l-6-4.5L6 20z",
+  // A cube seen from a corner, squared to the view: realigning the 3-D view.
+  realign: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9",
   // Transport, for playing through time or frames: each its own shape.
   play: "M7 5v14l11-7z",
   pause: "M8 5v14M16 5v14",
