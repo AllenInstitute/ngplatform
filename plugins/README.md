@@ -344,18 +344,11 @@ and `float-surface` (anything that floats over the views or the page
 without dimming it, such as a card beside a handle in a view: the overlay
 grey, a 1 px line, the one floating shadow).
 
-**Colours for data.** What a plugin colours for the user (track groups,
-label classes, annotation groups, landmark pairs, plotted series) takes the
-data palette, from `@ngplatform/sdk/palette`: `dataColour(i)` is the i-th of
-eight colours, colour-blind safe and legible on black, round again after
-the eighth; `nextDataColour(taken)` the first not yet used. In CSS they are
-`--data-1` to `--data-8`. The interface itself never uses them: a control,
-a frame or a selection is grey, and colour on screen means data.
-
-```ts
-import { dataColour } from "@ngplatform/sdk/palette";
-const group = { name: "Group 3", colour: dataColour(groups.length) };
-```
+**Colours.** A panel's chrome is black and white at the stylesheet's
+opacities (`--text`, `--muted`, `--faint`, `--line`, `--line-strong`); the
+one hue is `--err`, for errors and what deletes. What is chosen or on is
+inverted (`--accent` fill, `--accent-ink` words) or outlined in white, never
+green. Colour on screen is the data's.
 
 The rules the parts keep:
 - A switch turns a feature on; a checkbox picks items or options.

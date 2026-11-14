@@ -31,7 +31,6 @@ The types, the manifest check and the parts a panel is built from.
 | `checkManifest`, `MANIFEST_SCHEMA` | Checks a manifest (the tests run it on every plugin). |
 | `PLATFORM_CONTEXT_KEYS` | The names on `ctx`, for checks. |
 | `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `readout`, `region`, `roving`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
-| `DATA_COLOURS`, `dataColour`, `nextDataColour` | The data palette, also in `@ngplatform/sdk/palette` (below). |
 
 ## `@ngplatform/sdk/dom`
 
@@ -76,7 +75,6 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 | Module | Main exports | What |
 |---|---|---|
 | `format` | `csv`, `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes`, `splitAddress` | Numbers, sizes and tables as text; an address as where it is, the path and the store's name. |
-| `palette` | `DATA_COLOURS`, `dataColour`, `nextDataColour` | The data palette: eight colour-blind safe colours for what the user makes (groups, classes, landmark pairs, series), never for the interface. |
 | `mat4` | `Mat4`, `Vec3`, `identity4`, `multiply4`, `apply4`, `invert4` | 4 × 4 matrices. |
 | `ome` | `summariseOme`, `describeTransform` | OME-Zarr metadata and transforms in words. |
 | `sources` | `precomputedUrl`, `layerSourceUrl` | A layer's source as a URL. |

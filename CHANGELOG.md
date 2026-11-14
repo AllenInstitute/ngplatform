@@ -30,15 +30,17 @@ The production polish: the work of an audit of every panel and plugin
   what they carry. Panel frames are 1 px grey (the focused one light grey),
   the axis labels and the scale bar are captions in the readouts' face.
   Neuroglancer's axis lines keep their red, green and blue.
-- One data palette, eight colour-blind safe colours (`dataColour(i)` in
-  `@ngplatform/sdk/palette`, `--data-1` to `--data-8`), for track groups,
-  annotation and segment groups, pinned series and registration's
-  landmarks. The interface never uses them.
+- Greyscale in Neuroglancer's materials: black panels divided by 1 px
+  lines, white at fixed opacities, one hue (Neuroglancer's error red) for
+  errors and what deletes. What is chosen or on is inverted, white with
+  black words; switches that are on are white, no longer green. The focus
+  is a 1 px white outline. The Layers panel numbers its layers as
+  Neuroglancer does.
 - Values are readouts (`readout()` in `@ngplatform/sdk/dom`): Source Code
   Pro, tabular digits, the unit quiet. A layer's source in the Layers panel
   is a compact line (the store's name, where it is beneath) with copy and
   edit buttons, the whole address in the box while editing.
-- What is selected is a tint and strong text, no bar down the left; one
+- What is selected in a list is a tint and strong text, no bar down the left; one
   floating style (`float-surface`) for menus, the palette, toasts and tips;
   motion tokens, none with reduced motion; one 16 px icon set in place of
   characters (×, ▸, ✓); selected text, scrollbars and number fields in the

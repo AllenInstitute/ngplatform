@@ -3,10 +3,10 @@
    The left column holds the layers (Layers, Plugins) and, below a divider,
    the Tools section while a tool is on.  The views column holds
    Neuroglancer's data panels and nothing else; its status messages sit in a
-   strip beneath it.  Neuroglancer's look: black and neutral greys with
-   square corners.  The accent is light grey (what is selected, the primary
-   action, the focus); green only for a switch that is on, red and amber (as
-   text and an edge) for states.
+   strip beneath it.  Neuroglancer's materials: black panels divided by 1 px
+   lines, white at fixed opacities, square corners.  What is chosen or on is
+   inverted (white, black words) or outlined in white; the one hue is
+   Neuroglancer's error red, for errors and what deletes (DESIGN.md).
    One theme, dark.  Text in Source Sans 3 with tabular figures; monospace
    only for what a person types or copies (an address, a path, code, a log).
 
@@ -176,7 +176,7 @@ code { font-family: var(--mono); font-size: var(--fs-body); }
 :where(a:not(.btn)):hover { color: var(--text); text-decoration-color: currentColor; }
 
 /* A switch turns a feature on (a plugin, Render, a layer's drawing): a
-   round knob in a round track (the one rounded control), grey when off and green when on (toggle()
+   round knob in a round track (the one rounded control), a quiet track when off and white when on (toggle()
    in @ngplatform/sdk/dom).  A tick box picks items or options (checkbox()),
    as in Neuroglancer. */
 input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
@@ -245,7 +245,7 @@ button.link:hover { color: var(--text); text-decoration-color: currentColor; }
 button.link:disabled { color: var(--faint); cursor: default; text-decoration: none; }
 
 /* Buttons: four kinds, quiet (the default, also .quiet: words only),
-   outline (a raised grey), primary (light grey, at most one per panel) and
+   outline (a 1 px line), primary (inverted, at most one per panel) and
    icon, plus danger for a delete (red words, red under the pointer).  The height
    and the text size come from the container: 24 px in docks and panels,
    28 px in sheets.  .small is kept for the plugins that still ask for it and
@@ -580,7 +580,7 @@ kbd {
 .ds-row:hover .btn.icon, .ds-row.selected .btn.icon { opacity: 1; }
 .ds-row.other { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .ds-row.other .sub { grid-column: 2 / -1; }
-/* A notice to act on: raised grey with an amber edge down the left. */
+/* A notice to act on: a 1 px edge around it. */
 .note-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: var(--sp-4); background: var(--ink-3); border: 1px solid var(--warn-line); color: var(--text); font-size: var(--fs-body); }
 .panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .ds-row.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; }
