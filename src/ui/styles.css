@@ -1468,23 +1468,35 @@ textarea.state-input.tall { min-height: 50vh; }
    labels).  The canvas never takes the mouse; the card does. */
 .view-tools-canvas { position: absolute; pointer-events: none; }
 .view-tools-canvas[hidden] { display: none; }
+/* The floating surface (DESIGN.md): the overlay grey, a 1 px line, the one
+   floating shadow; a heading, then the body's readouts and actions. */
 .view-card {
   position: absolute; pointer-events: auto; z-index: 1;
   width: 248px; max-width: calc(100% - 48px); max-height: calc(100% - 16px); overflow: auto;
-  background: var(--ink-card); border: 1px solid var(--line-strong); border-radius: var(--r);
-  box-shadow: var(--shadow-float); font-size: var(--fs-body);
+  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: var(--r);
+  box-shadow: var(--shadow-float); font-size: var(--fs-body); color: var(--text);
 }
 .view-card-head {
   display: flex; align-items: center; gap: var(--sp-2); min-height: var(--ctl-h);
-  padding: 0 var(--sp-1) 0 var(--sp-4); background: var(--ink-3);
+  padding: var(--sp-1) var(--sp-1) 0 var(--sp-4);
 }
-.view-card-title { flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-card-title { flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-heading); color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .view-card-head .btn.icon { color: var(--muted); }
-.view-card-body { display: grid; gap: var(--sp-3); padding: var(--sp-4); }
-/* Label and value pairs: exact numbers. */
+.view-card-body { display: grid; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4) var(--sp-4); }
+/* Label and value pairs: exact numbers, typed. */
 .view-card-grid { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--sp-2) var(--sp-3); }
 .view-card-grid > .muted { font-size: var(--fs-caption); }
 .view-card-grid .num-input { width: 100%; }
+/* Values shown (readouts): a row each, a muted label, x, y and z in tabular
+   digits under their faint names, the unit muted after them. */
+.view-card-values { display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)) auto; align-items: baseline; gap: var(--sp-1) var(--sp-3); }
+.view-card-values > .view-card-label { color: var(--muted); white-space: nowrap; }
+.view-card-values > .view-card-label.chosen { color: var(--text-strong); }
+.view-card-values > .view-card-axis { color: var(--faint); font: var(--fs-caption)/1.2 var(--mono); text-align: right; }
+.view-card-values > .readout-value { text-align: right; }
+.view-card-values > .view-card-wide { grid-column: 2 / span 3; text-align: right; }
+.view-card-values > .readout-unit { font: var(--fs-caption) var(--mono); }
+.view-card .row { flex-wrap: nowrap; }
 
 /* Files dragged over the window. */
 .drop-hint {
