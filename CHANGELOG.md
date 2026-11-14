@@ -184,7 +184,16 @@ The production polish: the work of an audit of every panel and plugin
   a strip of thumbnails along the view's bottom edge (fly to one, rename,
   replace, delete, Play), kept in the scene. Every action is in the command
   palette. See docs/plugins/view-aids.md.
-- Plugins can ask for a small picture of the 3-D view (`viewer.thumbnail`).
+- Plugins can ask for a small picture of the 3-D view (`viewer.thumbnail`;
+  with `"3d"`, of the 3-D view only, whatever the layout, once what it
+  shows has loaded): a bookmark made in a four-panel layout, or just after
+  the view changed, has its picture; with no 3-D view, its name alone.
+- The orientation cube is drawn turned a little more than the view (12°
+  to the side and from above), so face-on it still reads as a cube; its
+  edges, thin, carry the axis colours.
+- On a 3-D panel narrower than 560 px the switches beside Sections (Cube,
+  Labels, Graphics, Zoom boxes, any plugin's) fold into one View menu, so
+  the row never wraps.
 
 ### Scale navigator for nested images
 
@@ -389,7 +398,21 @@ The production polish: the work of an audit of every panel and plugin
   tissue's centre, facing the camera, selected.
 - Registration: **Place pairs**, clicks in the views alternating fixed
   and moving landmarks (as BigWarp); landmarks show as numbered points
-  that drag.
+  that drag. A landmark's card is headed *Pair 1* and shows both points
+  and the pair's error after the fit as readouts.
+- Registration moves the layer in the views: its box in each 2-D view
+  drags to translate it in the section's plane, a ring about the *Rotate
+  around* point turns it about the section's normal, and the corners scale
+  it (Shift: alike); the same transform the sliders set, one undo step a
+  drag. Selected, its card gives the rotation, translation and scale as
+  readouts, with Flip and Restore. The panel leads with the moving layer,
+  the landmarks (pair count, Place pairs, Save LTA) and Edit in views; the
+  sliders are in the Transform section, closed at first.
+- Shapes in the views can be frames (`kind: "frame"`: a box turned any
+  way, with a ring about a pivot and corner knobs, its drags reported as a
+  move, a turn or a scale) and have a card heading apart from their label
+  (`title`). The card floats on the overlay grey, 8 px right of the axis
+  labels, its values as rows of readouts.
 
 ## 0.2.0 — 2026-10-31
 

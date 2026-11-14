@@ -18,14 +18,16 @@ every scene, whatever the data.
 
 ## Orientation cube
 
-A small cube in the 3-D view's top right, turned as the view is.
+A small cube in the 3-D view's top right, turned as the view is, and a
+little more (12° to the side and from above, for the picture only), so it
+shows its depth even when the view looks straight at a face.
 
 - **Faces** are lettered by the data's sides when its space reads as
   anatomy (x, y and z in micrometres or more, taken as RAS): **R** and
   **L**, **A** and **P**, **S** and **I**. Other data is lettered by axis:
   ±x, ±y, ±z. Each letter is turned to read as upright as it can.
-- **Edges** are in the axes' colours: red along x, green along y, blue
-  along z.
+- **Edges**, thin, are in the axes' colours: red along x, green along y,
+  blue along z; the only colour on the cube.
 - **Click** a face, an edge or a corner to look at the data from there.
   The view turns over about a third of a second, and stands upright:
   superior up (anterior up when seen from above or below); for other data,
@@ -69,7 +71,8 @@ exactly what was shown before. It is in the link and undone with undo.
 - **Bookmark this view** (below the cube, or in the palette) keeps the
   camera: the position, the 3-D view's orientation, zoom and depth, the
   sections' orientation and scale, and the panel layout, with a small
-  picture of the 3-D view.
+  picture of the 3-D view, whatever the layout, taken once what it shows
+  has loaded. With no 3-D view shown, the bookmark is its name alone.
 - The bookmarks are a strip along the 3-D view's bottom edge, left of the
   switches, while there are any. Click one to fly there; right-click (or
   the context-menu key) to go to it, rename it, replace it with the view
@@ -90,6 +93,14 @@ instead of turning or flying.
 Neuroglancer shows no **Sections** switch when the 3-D view is alone (the
 layout a panel's maximise button chooses), so the three switches appear in
 a group of their own in that corner.
+
+## On a narrow panel
+
+On a 3-D panel narrower than 560 px (a phone, or four panels in a small
+window) the switches beside **Sections** (**Cube**, **Labels**,
+**Graphics**, the scale navigator's **Zoom boxes**, any plugin's) fold into
+one **View** button before **Sections**: it opens a small menu of them, so
+the row never wraps.
 
 ## Notes from users
 
