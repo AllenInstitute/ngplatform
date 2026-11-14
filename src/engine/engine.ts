@@ -10,7 +10,7 @@
  */
 import { type ColourByLook, layerColourLook } from "./colour_shader.js";
 import { setSurfaceOverlay } from "./inspector/surface.js";
-import type { Drawer3d, VisibleSegments } from "../sdk/types.js";
+import type { Drawer3d, LayerBounds, RenderedLevel, VisibleSegments } from "../sdk/types.js";
 import { draw3d } from "./draw3d.js";
 import {
   addPerspectivePanelToggle,
@@ -58,11 +58,22 @@ interface WatchableTransformLike {
   value: {
     rank: number;
     inputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[]; bounds: { lowerBounds: Float64Array; upperBounds: Float64Array } };
-    outputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[] };
+    outputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[]; bounds?: { lowerBounds: Float64Array; upperBounds: Float64Array } };
     transform: Float64Array;
   };
   defaultTransform: { transform: Float64Array; outputSpace?: { names: readonly string[]; scales: Float64Array } };
   transform: Float64Array;
+}
+
+/** What the engine reads of a layer's resolution histogram (Neuroglancer's render_scale_statistics.ts). */
+interface RenderScaleHistogramLike {
+  visibility: { visible: boolean };
+  numBins: number;
+  value: Uint32Array;
+  spatialScales: Map<number, number>;
+  /** The fork's: every level declared or seen, and the last pixel size. */
+  levels?: Set<number>;
+  pixelSize?: number;
 }
 
 interface ProjectionLike {
@@ -1329,6 +1340,106 @@ export class Engine {
     return (loaded as unknown as { transform?: WatchableTransformLike } | undefined)?.transform;
   }
 
+  /** A layer's resolution histogram for the cross-sections (image and segmentation layers). */
+  private sliceHistogram(name: string): RenderScaleHistogramLike | undefined {
+    const layer = this.managed(name)?.layer as { sliceViewRenderScaleHistogram?: RenderScaleHistogramLike } | null | undefined;
+    return layer?.sliceViewRenderScaleHistogram;
+  }
+
+  /** The levels a histogram knows, finest first. */
+  private static histogramLevels(h: RenderScaleHistogramLike): number[] {
+    return [...(h.levels ?? h.spatialScales.keys())].filter(Number.isFinite).sort((a, b) => a - b);
+  }
+
+  /**
+   * Where a layer lies in the global space, its finest voxel and its
+   * pyramid's levels (see the SDK's ViewerApi.layerBounds).  Read from each
+   * loaded source's transform: its output space's bounds (the source's box
+   * carried through the transform) and the transform's linear part, which
+   * relates physical lengths (a source voxel spans `|M[o, i]| *
+   * inputScale[i]` along output dimension o).
+   */
+  layerBounds(name: string): LayerBounds | undefined {
+    const layer = this.managed(name)?.layer;
+    const space = this.viewer.coordinateSpace.value;
+    if (layer === null || layer === undefined || !space.valid) return undefined;
+    const rank = space.rank;
+    const lower = new Array<number>(rank).fill(Infinity);
+    const upper = new Array<number>(rank).fill(-Infinity);
+    const voxelSize = new Array<number>(rank).fill(Infinity);
+    let found = false;
+    for (const source of layer.dataSources) {
+      const t = (source.loadState as unknown as { transform?: WatchableTransformLike } | undefined)?.transform;
+      if (t === undefined) continue;
+      const { rank: r, inputSpace, outputSpace, transform } = t.value;
+      const bounds = outputSpace.bounds;
+      if (bounds === undefined) continue;
+      for (let o = 0; o < r; ++o) {
+        const g = space.names.indexOf(outputSpace.names[o]);
+        if (g === -1 || outputSpace.units[o] !== space.units[g] || !(space.scales[g] > 0)) continue;
+        const k = outputSpace.scales[o] / space.scales[g];
+        const lo = bounds.lowerBounds[o] * k;
+        const hi = bounds.upperBounds[o] * k;
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue;
+        let step = 0;
+        for (let i = 0; i < r; ++i) step += Math.abs(transform[i * (r + 1) + o]) * (inputSpace.scales[i] ?? 0);
+        lower[g] = Math.min(lower[g], lo);
+        upper[g] = Math.max(upper[g], hi);
+        if (step > 0) voxelSize[g] = Math.min(voxelSize[g], step);
+        found = true;
+      }
+    }
+    if (!found) return undefined;
+    for (let g = 0; g < rank; ++g) {
+      if (lower[g] > upper[g]) {
+        lower[g] = -Infinity;
+        upper[g] = Infinity;
+      }
+      if (!Number.isFinite(voxelSize[g])) voxelSize[g] = NaN;
+    }
+    const h = this.sliceHistogram(name);
+    const levels = h === undefined ? [] : Engine.histogramLevels(h).map((v) => ({ voxelSize: v }));
+    return { lower, upper, voxelSize, units: [...space.units], levels };
+  }
+
+  /**
+   * The level Neuroglancer drew of a layer's pyramid in the cross-sections
+   * in its last frame (see the SDK's ViewerApi.renderedLevel): read from
+   * the layer's resolution histogram, which the sections fill as they draw,
+   * a row per level with the chunks on screen and those still wanted.
+   */
+  renderedLevel(name: string): RenderedLevel | undefined {
+    const managed = this.managed(name);
+    const h = this.sliceHistogram(name);
+    if (managed === undefined || h === undefined || !managed.visible || !h.visibility.visible) return undefined;
+    const levels = Engine.histogramLevels(h);
+    let drawn: number | undefined;
+    let wanted: number | undefined;
+    const { numBins, value } = h;
+    for (const [scale, row] of h.spatialScales) {
+      if (!Number.isFinite(scale)) continue;
+      let present = 0;
+      let missing = 0;
+      const base = row * numBins * 2;
+      for (let i = 0; i < numBins; ++i) {
+        present += value[base + i];
+        missing += value[base + numBins + i];
+      }
+      if (present + missing > 0 && (wanted === undefined || scale < wanted)) wanted = scale;
+      if (present > 0 && (drawn === undefined || scale < drawn)) drawn = scale;
+    }
+    const index = (scale: number | undefined) => {
+      if (scale === undefined) return undefined;
+      const i = levels.findIndex((l) => Math.abs(l - scale) <= 1e-6 * scale);
+      return i === -1 ? undefined : i;
+    };
+    const info = this.viewer.navigationState.displayDimensionRenderInfo.value;
+    // The histogram's pixel size is the last frame's that drew: the view's own when nothing did.
+    const pixelSize = (wanted !== undefined ? h.pixelSize : undefined) ?? this.viewer.crossSectionScale.value * info.canonicalVoxelPhysicalSize;
+    const target = (this.managed(name)?.layer as { sliceViewRenderScaleTarget?: { value: number } } | null | undefined)?.sliceViewRenderScaleTarget?.value ?? 1;
+    return { levels, drawn: index(drawn), wanted: index(wanted), pixelSize, renderScaleTarget: target };
+  }
+
   /** The view panels shown now, 2-D and 3-D. */
   panels(): ViewPanel[] {
     const out: ViewPanel[] = [];
@@ -1446,20 +1557,38 @@ export class Engine {
     return draw3d(this.viewer, name, drawer);
   }
 
-  /** A switch beside "Sections" in the 3-D panels. */
-  viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void } {
+  private readonly toggles: { label: string; title?: string; value: TrackableBoolean; order: number; seq: number; remove?: () => void }[] = [];
+  private toggleSeq = 0;
+
+  /**
+   * A switch beside "Sections" in the 3-D panels, in `order` (lower first,
+   * 100 when not given): Neuroglancer keeps them in the order added, so
+   * all are added again in order whenever one comes or goes.
+   */
+  viewToggle(spec: { label: string; title?: string; value: boolean; order?: number; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void } {
     const value = new TrackableBoolean(spec.value, spec.value);
     const off = value.changed.add(() => spec.onChange(value.value));
-    const remove = addPerspectivePanelToggle({ label: spec.label, title: spec.title, value });
+    const toggle: (typeof this.toggles)[number] = { label: spec.label, title: spec.title, value, order: spec.order ?? 100, seq: this.toggleSeq++ };
+    this.toggles.push(toggle);
+    this.placeToggles();
     return {
       set: (v) => {
         value.value = v;
       },
       dispose: () => {
         off();
-        remove();
+        const i = this.toggles.indexOf(toggle);
+        if (i === -1) return;
+        this.toggles.splice(i, 1);
+        toggle.remove?.();
       },
     };
+  }
+
+  private placeToggles(): void {
+    for (const t of this.toggles) t.remove?.();
+    this.toggles.sort((a, b) => a.order - b.order || a.seq - b.seq);
+    for (const t of this.toggles) t.remove = addPerspectivePanelToggle({ label: t.label, title: t.title, value: t.value });
   }
 
   /** Settings › View: the viewer's settings, as the app's fields. */

@@ -141,7 +141,7 @@ take about 0.1 MB rather than 2.3 MB.
 | Panel | What it holds |
 |---|---|
 | **Layers** | What the scene shows: one card per dataset, its row with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** opens **Open**: a file or folder on this computer, a link, another scene's datasets, the examples (a new annotation layer is in the palette). Tools are not recommended for the data; turn them on in **Plugins**. Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Selecting a dataset opens its card on its settings (see [Layer controls](#layer-controls)). |
-| **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Zarr Vectors and the View aids are on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
+| **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Zarr Vectors, the View aids and the Scale navigator are on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
 
 ## 3. The views
 
@@ -157,6 +157,13 @@ from there; **Realign** to the nearest standard view), labels at its sides
 for point annotations with a description, **Graphics** (off hides the axis
 lines, the box, the scale bar and the aids) and bookmarks of the camera in
 a strip along its bottom edge.
+
+Where an image layer lies inside a coarser one, the [Scale
+navigator](../plugins/scale-navigator.md) draws a grey box in the 2-D and
+3-D views, labelled with its name and voxel size; click its line or label
+to frame that layer (**Zoom boxes** beside **Sections** hides them), and
+++alt+arrow-up++ and ++alt+arrow-down++ step to the coarser or the finer
+layer.
 
 Neuroglancer's mouse controls apply: drag to pan, scroll to move through
 sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
@@ -332,6 +339,12 @@ progress, else the last message, on the left; on the right, what tools
 put there (in monospace, shortened with … when the line is full; the
 whole text in its tooltip). Click the message (or the icon at its end) to
 open the dock.
+
+With image layers that lie inside one another (a HiP-CT overview and its
+zooms), the [Scale navigator](../plugins/scale-navigator.md) puts two items
+there: the layers holding the position, coarse to fine with their voxel
+sizes (click one to frame it), and the level of the selected layer's
+pyramid Neuroglancer draws at this zoom (`level 4/7 · 323 µm`).
 
 | Panel | What it holds |
 |---|---|

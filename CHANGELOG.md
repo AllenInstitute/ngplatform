@@ -163,6 +163,22 @@ The production polish: the work of an audit of every panel and plugin
   palette. See docs/plugins/view-aids.md.
 - Plugins can ask for a small picture of the 3-D view (`viewer.thumbnail`).
 
+### Scale navigator for nested images
+
+- A new plugin, on by default, for image layers that lie inside one
+  another, as a HiP-CT overview and its zooms do: the status line shows the
+  layers holding the position, coarse to fine with their voxel sizes
+  (click one to frame it), and the level of the selected layer's pyramid
+  Neuroglancer draws at this zoom (`level 4/7 · 323 µm`, read from what it
+  drew; worked out and marked ≈ when no section draws the layer). The
+  views show a grey box, with its name and voxel size, where each finer
+  layer lies; clicking it frames that layer. Alt+↑ and Alt+↓ step to the
+  coarser and the finer layer. See docs/plugins/scale-navigator.md.
+- Plugins can read a layer's box, voxel size and pyramid levels
+  (`viewer.layerBounds`) and the level drawn (`viewer.renderedLevel`);
+  shapes in the views can have a caption, be links (`onClick`) and hide
+  when small (`minSize`); switches beside Sections take an `order`.
+
 ### Anatomical rendering as an object in the 3-D view
 
 - The rendered image is an object in the 3-D view, drawn in this browser

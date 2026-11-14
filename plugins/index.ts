@@ -21,6 +21,7 @@ import { LABEL_STORE_FORMAT } from "./segmentation/store_format.js";
 import { TIME_SERIES_MANIFEST } from "./time-series/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
 import { VIEW_AIDS_MANIFEST } from "./view-aids/manifest.js";
+import { SCALE_NAVIGATOR_MANIFEST } from "./scale-navigator/manifest.js";
 import { ZARR_VECTORS_MANIFEST } from "./zarr-vectors/manifest.js";
 import { type Offer, OFFERS } from "./offers.js";
 
@@ -66,6 +67,13 @@ export const CATALOGUE: CatalogueEntry[] = [
     summary: "An orientation cube, labels with leader lines, Hide graphics and bookmarks in the 3-D view.",
     group: "views",
     offer: offer(VIEW_AIDS_MANIFEST.id),
+  },
+  {
+    manifest: SCALE_NAVIGATOR_MANIFEST,
+    load: async () => (await import("./scale-navigator/plugin.js")).plugin,
+    summary: "A breadcrumb of nested image layers and the pyramid level drawn, in the status line; zoom boxes in the views.",
+    group: "views",
+    offer: offer(SCALE_NAVIGATOR_MANIFEST.id),
   },
   {
     manifest: TRACK_FILTERING_MANIFEST,

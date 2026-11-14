@@ -75,7 +75,10 @@ const LOOK = {
   ring: 34,
   ring2d: 26,
   font: '11px "Source Sans 3", system-ui, sans-serif',
+  mono: '11px "Source Code Pro", ui-monospace, monospace',
   text: "#e6e6e6",
+  /** A caption's value (a size), as a readout's unit is: quieter. */
+  quiet: "rgba(255, 255, 255, 0.64)",
 };
 /** How near a handle or a line the mouse must be to take it, px: a target of 24 px or more (WCAG 2.5.8). */
 const REACH = 12;
@@ -121,6 +124,8 @@ interface Drawn {
   centre?: Vec2;
   label?: { at: Vec2; text: string };
   point?: Vec2;
+  /** The caption's box on screen, once painted (for hit tests). */
+  caption?: { x: number; y: number; w: number; h: number };
 }
 
 /** A panel's projection, read once a frame. */
@@ -168,6 +173,17 @@ interface Drag {
 const finite = (v: unknown): v is number[] => Array.isArray(v) && v.every((x) => typeof x === "number" && Number.isFinite(x));
 const shows = (shape: ViewShape, kind: "2d" | "3d") => (shape.views ?? "both") === "both" || shape.views === kind;
 const editable = (shape: ViewShape) => shape.editable !== false;
+/** A shape that is a link: a click calls its `onClick`, it is never selected. */
+const link = (shape: ViewShape) => shape.onClick !== undefined;
+
+/** The size of what is drawn on screen: its larger side, px. */
+function screenSize(d: Drawn): number {
+  const points = d.lines.flatMap((l) => l.points);
+  if (points.length === 0) return d.point === undefined ? 0 : Infinity;
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+}
 
 /** Whether the keyboard is in something that takes keys (a field, a menu), so the arrow keys are not the views'. */
 function typing(target: Element | null): boolean {
@@ -447,6 +463,7 @@ export class ViewTools {
         if (!shows(entry.shape, lens.kind)) continue;
         const drawn = this.layout(entry, lens, entry.key === this.selectedKey);
         if (drawn === undefined) continue;
+        if (entry.shape.minSize !== undefined && screenSize(drawn) < entry.shape.minSize) continue;
         state.drawn.push(drawn);
         this.paint(context, drawn);
       }
@@ -836,6 +853,36 @@ export class ViewTools {
       context.fillStyle = LOOK.text;
       context.fillText(d.label.text, x, y);
     }
+    const caption = d.entry.shape.caption;
+    if (caption !== undefined && d.lines.length > 0) {
+      // At the top left of what is drawn, above it (inside it when that is off the top).
+      const points = d.lines.flatMap((l) => l.points);
+      const left = Math.min(...points.map((p) => p[0]));
+      const top = Math.min(...points.map((p) => p[1]));
+      context.font = LOOK.font;
+      const textWidth = context.measureText(caption.text).width;
+      context.font = LOOK.mono;
+      const value = caption.value === undefined ? "" : ` ${caption.value}`;
+      const valueWidth = value === "" ? 0 : context.measureText(value).width;
+      const h = 14;
+      // Kept in view, clear of Neuroglancer's axis labels at the panel's top left.
+      const x = Math.max(CARD_AT.left, left);
+      const y = top - h - 2 >= 0 ? top - h - 2 : Math.max(top, 0) + CARD_AT.top;
+      d.caption = { x, y, w: textWidth + valueWidth, h };
+      context.textBaseline = "middle";
+      context.lineWidth = 3;
+      context.strokeStyle = LOOK.keyline;
+      context.font = LOOK.font;
+      context.strokeText(caption.text, x, y + h / 2);
+      context.fillStyle = hovered || selected ? LOOK.hover : LOOK.text;
+      context.fillText(caption.text, x, y + h / 2);
+      if (value !== "") {
+        context.font = LOOK.mono;
+        context.strokeText(value, x + textWidth, y + h / 2);
+        context.fillStyle = hovered || selected ? LOOK.hover : LOOK.quiet;
+        context.fillText(value, x + textWidth, y + h / 2);
+      }
+    }
     for (const h of d.handles) {
       const hot = this.hover?.key === d.entry.key && this.hover.handle === h;
       const live = this.drag?.entry === d.entry && this.drag.handle.kind === h.kind && this.drag.handle.index === h.index;
@@ -883,7 +930,10 @@ export class ViewTools {
           if (segmentDistance(p, line.points[i], line.points[(i + 1) % n]) <= LINE_REACH) return { drawn: d, part: "line" };
         }
       }
-      if (d.area !== undefined && insidePolygon(p, d.area)) return { drawn: d, part: "area" };
+      const c = d.caption;
+      if (c !== undefined && x >= c.x - 2 && x <= c.x + c.w + 2 && y >= c.y - 2 && y <= c.y + c.h + 2) return { drawn: d, part: "line" };
+      // A link's inside is the view's.
+      if (d.area !== undefined && !link(d.entry.shape) && insidePolygon(p, d.area)) return { drawn: d, part: "area" };
     }
     return undefined;
   }
@@ -911,7 +961,8 @@ export class ViewTools {
   private setHover(hover: { key: string; handle?: Handle } | undefined, state: PanelState, what?: HandleKind | "shape"): void {
     const same = this.hover?.key === hover?.key && this.hover?.handle === hover?.handle;
     this.hover = hover;
-    const cursor = what === undefined ? (this.picker ? "crosshair" : undefined) : what === "move" || what === "shape" ? "move" : "grab";
+    const isLink = hover !== undefined && hover.handle === undefined && link(this.entries.get(hover.key)?.shape ?? ({} as ViewShape));
+    const cursor = what === undefined ? (this.picker ? "crosshair" : undefined) : isLink ? "pointer" : what === "move" || what === "shape" ? "move" : "grab";
     this.setCursor(state, cursor);
     if (!same) this.redraw();
   }
@@ -937,7 +988,7 @@ export class ViewTools {
     const entry = hit?.drawn.entry;
     const selected = entry !== undefined && entry.key === this.selectedKey;
     // Taken: a handle, the line of a shape (or a point), or inside the selected shape in a 2-D view.
-    const take = hit !== undefined && entry !== undefined && editable(entry.shape) && (hit.part === "handle" || hit.part === "line" || (hit.part === "area" && selected));
+    const take = hit !== undefined && entry !== undefined && editable(entry.shape) && !link(entry.shape) && (hit.part === "handle" || hit.part === "line" || (hit.part === "area" && selected));
     if (!take || state.lens === undefined) {
       this.press = { panel: state, x: e.clientX, y: e.clientY, time: performance.now(), select: entry?.key };
       const up = (u: PointerEvent) => {
@@ -983,6 +1034,14 @@ export class ViewTools {
     if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP || performance.now() - press.time > CLICK_MS) return;
     if (press.select !== undefined) {
       const entry = this.entries.get(press.select);
+      if (entry !== undefined && link(entry.shape)) {
+        try {
+          entry.shape.onClick!();
+        } catch (err) {
+          console.error(err);
+        }
+        return;
+      }
       if (entry) entry.home = press.panel.info.element;
       this.select(press.select);
       return;

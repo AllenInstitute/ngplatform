@@ -440,6 +440,19 @@ export interface ViewerApi {
   /** Sets a layer's transform matrix (same form as `layerTransform`'s), as one undo step. */
   setLayerTransform(layer: string, matrix: Float64Array): void;
   /**
+   * Where a layer's data lies in the global space, how fine it is, and its
+   * pyramid's levels: undefined until it has loaded (or for a layer with
+   * no bounds, such as local annotations).  See LayerBounds.
+   */
+  layerBounds?(layer: string): LayerBounds | undefined;
+  /**
+   * The level of an image or segmentation layer's pyramid Neuroglancer
+   * drew in the cross-sections in its last frame, as its resolution widget
+   * (Resolution (slice)) shows it; undefined while the layer is not drawn
+   * in a section.  See RenderedLevel.
+   */
+  renderedLevel?(layer: string): RenderedLevel | undefined;
+  /**
    * Has Neuroglancer read again the chunks it holds from under `url` (an
    * http(s) address): for data a plugin serves and has changed, such as a
    * label volume being drawn.  Chunks on screen are asked for at once and
@@ -489,6 +502,46 @@ export interface LayerTransform {
   defaultMatrix: Float64Array;
 }
 
+/**
+ * A layer's place and resolution in the global space (ViewerApi.layerBounds).
+ * Lengths are physical, in the global dimension's base unit (metres for
+ * a spatial one): Neuroglancer's own.
+ */
+export interface LayerBounds {
+  /**
+   * Its box in global coordinates (all global dimensions, as `position`
+   * is): the union of its sources' bounds.  A dimension it does not have
+   * is -Infinity to Infinity.
+   */
+  lower: number[];
+  upper: number[];
+  /** Its finest voxel's size along each global dimension (NaN along one it does not have). */
+  voxelSize: number[];
+  /** Each global dimension's unit (as `voxelSize` is given in). */
+  units: string[];
+  /**
+   * Its pyramid's levels, finest first, each one's voxel size as
+   * Neuroglancer's resolution widget gives it (the middle of its sizes
+   * along the displayed dimensions).  Known once the layer has been drawn
+   * in a cross-section; empty before.
+   */
+  levels: { voxelSize: number }[];
+}
+
+/** What Neuroglancer drew of a layer's pyramid in its last frame (ViewerApi.renderedLevel). */
+export interface RenderedLevel {
+  /** The levels' voxel sizes, finest first (as LayerBounds.levels). */
+  levels: number[];
+  /** The finest level drawn with data on screen (an index into `levels`); undefined when none is in view. */
+  drawn?: number;
+  /** The finest level Neuroglancer asked for at this zoom (it may still be loading). */
+  wanted?: number;
+  /** The size of a screen pixel in the cross-sections, in the same unit. */
+  pixelSize: number;
+  /** The layer's Resolution (slice) target: screen pixels per voxel it aims for (1 by default). */
+  renderScaleTarget: number;
+}
+
 export interface ViewPanelInfo {
   kind: "2d" | "3d";
   element: HTMLElement;
@@ -514,6 +567,20 @@ export interface ViewShapeBase {
   editable?: boolean;
   /** The views it is drawn in. Default "both". */
   views?: "2d" | "3d" | "both";
+  /**
+   * A small label at the shape's top left on screen: `text` in the
+   * interface's face, `value` (a size, a count) after it in the readouts'.
+   * Hovering or clicking it is hovering or clicking the shape.
+   */
+  caption?: { text: string; value?: string };
+  /**
+   * A click on the shape (its line, or its caption) calls this instead of
+   * selecting it: a shape that is a link (a zoom box framing its layer).
+   * A click inside it in a 2-D view stays the view's.
+   */
+  onClick?(): void;
+  /** Not drawn in a view where it is smaller than this, in pixels across (its larger side on screen). */
+  minSize?: number;
   /**
    * The floating card shown over the view while this shape is selected:
    * exact values, choices, delete.  Drawn when the shape is selected and
@@ -836,9 +903,10 @@ export interface PlatformContext {
     toast(message: string, kind?: "info" | "error"): void;
     /**
      * A switch beside "Sections" in the 3-D panel, for something the plugin
-     * draws there; until the disposer is called.
+     * draws there; until the disposer is called.  Switches sit in `order`
+     * (lower first, 100 when not given), so one plugin's stay together.
      */
-    viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
+    viewToggle(spec: { label: string; title?: string; value: boolean; order?: number; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
     /** An element over the views (pointer events pass through it, not its children), until disposed. */
     overlay(): { element: HTMLElement; dispose(): void };
     /** Paints over each screenshot Neuroglancer takes, in its canvas's pixels, until disposed. */

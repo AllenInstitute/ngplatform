@@ -2,8 +2,8 @@
 
 Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
 lists, and the **Plugins** panel (left column) switches each on or off. Zarr
-Vectors and the view aids are on by default; the others are offered when
-data they work with is opened (below).
+Vectors, the view aids and the scale navigator are on by default; the others
+are offered when data they work with is opened (below).
 
 ```
 plugins/
@@ -11,6 +11,7 @@ plugins/
   workers.ts           the worker modules of data-type plugins, by plugin id
   zarr-vectors/        a data type: Zarr Vectors stores in Neuroglancer (an npm package)
   view-aids/           a tool, on by default: orientation cube, labels, Hide graphics and bookmarks in the 3-D view
+  scale-navigator/     a tool, on by default: breadcrumb, pyramid level and zoom boxes for image layers nested in space (HiP-CT zooms)
   track-filtering/     a tool: TrackVis-style track groups, saved as .trk
   volume-view/         not a plugin: volume readers (OME-Zarr, precomputed, NIfTI) the tools share
   luxar/               a tool: chosen Zarr Vectors layers drawn as Luxar draws lines, in the 2-D and 3-D views
@@ -100,7 +101,7 @@ that folder plus one line in `index.ts`.
 
 ## Switching plugins on and off
 
-Zarr Vectors and the view aids are on by default (`enabledByDefault`); every other plugin
+Zarr Vectors, the view aids and the scale navigator are on by default (`enabledByDefault`); every other plugin
 is off until someone turns it on, from the Plugins panel or from an offer.
 The choice is kept in this browser.
 
@@ -298,13 +299,13 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
 | `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools section of the left column, below the layers, under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
-| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
+| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"); `order` (lower first, 100 when not given) keeps one plugin's switches together. |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
 | `ui.statusItem` | An element on the right of the status line below the views (also while the Activity dock is collapsed), `{ order, label }`, until its disposer is called or the plugin stops: a short value kept up to date in place, such as a scale breadcrumb or the level on screen. Drawn in the mono face (a child with the class `status-label` in the interface's), lower `order` further left, and shortened with … when the line is full. |
 | `views` | Shapes with handles in the 2-D and 3-D views (points, spheres, boxes, planes), dragged in place, and a floating card while one is selected; a picker for clicks in the views. See [In-view tools](#in-view-tools). |
 | `ui.toast / confirm / form / sheet` | Messages, confirmation, a dialog generated from a schema, and a sheet whose body the plugin draws. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. `undoSteps` gives the change the workspace's undo and redo would take, with when it was made (Segmentation undoes strokes and workspace changes as one history with it). |
-| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
+| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `layerBounds` gives a layer's box in global coordinates, its finest voxel and its pyramid's levels, and `renderedLevel` the level Neuroglancer drew in the sections in its last frame (the scale navigator); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
 | `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
@@ -365,6 +366,12 @@ ctx.views.select("r1");                   // a new shape, ready to drag
   while the shape is selected. It holds what the handles do not: exact
   numbers, choices (AND, OR, NOT), delete. The dock's controls for the same
   things keep working; both edit the same state.
+- **Links and captions.** `caption: { text, value }` puts a small label at
+  a shape's top left on screen (the name in the interface's face, the value
+  in the readouts'); `onClick` makes the shape a link: a click on its line
+  or caption calls it instead of selecting it (with `editable: false`, the
+  scale navigator's zoom boxes); `minSize` leaves it out of a view where it
+  is fewer pixels across.
 - **`pick(onPick)`** turns clicks in the views into points until disposed:
   a click not on a shape gives the global position under the mouse
   (Registration's Place pairs). `lookingAt()` is where the user is
