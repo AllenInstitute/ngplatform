@@ -2,7 +2,7 @@
 
 ![The Filtering panel with three groups of the S-21-46 tractogram](../images/plugins/track-filtering.png)
 
-**Kind:** tool · **Off by default** (offered when you open a tractogram or Zarr Vectors store; or turn it on in the Plugins panel) · the **Filtering** panel in the Tools dock, under *Vectors* ·
+**Kind:** tool · **Off by default** (offered when you open a tractogram or Zarr Vectors store; or turn it on in the Plugins panel) · the **Filtering** panel in the Tools section, under *Vectors* ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/track-filtering)
 
 TrackVis-style track groups. A group keeps the objects that pass through its

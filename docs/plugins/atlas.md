@@ -3,7 +3,7 @@
 ![FreeSurfer's aparc+aseg in the Atlas panel: the left precentral gyrus shown and gone to](../images/plugins/atlas.png)
 
 **Kind:** tool · **Off by default** (offered when you open a segmentation with a lookup table; or turn it on in the Plugins panel) · the
-**Atlas** panel in the Tools dock, under *Labels* ·
+**Atlas** panel in the Tools section, under *Labels* ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/atlas)
 
 The regions of a segmentation (a label image) as a tree, from its lookup

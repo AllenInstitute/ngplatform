@@ -3,7 +3,7 @@
 ![The HCP-1065 tractogram drawn Luxar-style over the SRB 2026a template, in a 2-D section and inside a volume-rendered solid](../images/plugins/luxar.png)
 
 **Kind:** tool · **Off by default** (offered when you open a tractogram or Zarr Vectors store; or turn it on in Plugins) · a
-**Luxar** panel in the Tools dock (under Vectors), and a command ·
+**Luxar** panel in the Tools section (under Vectors), and a command ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/luxar)
 
 Draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, a mesh, or a

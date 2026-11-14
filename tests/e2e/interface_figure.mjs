@@ -1,7 +1,8 @@
 // The interface figures in docs/images: the SRB example at 1440 × 900 with
-// a tool open (Filters, in the Tools dock) and the Activity dock open, once
-// plain and once with the numbers docs/guide/interface.md uses drawn over
-// it (1 top bar, 2 left dock, 3 views, 4 Tools dock, 5 Activity dock).
+// a tool open (Filters, in the Tools section below the layers) and the
+// Activity dock open, once plain and once with the numbers
+// docs/guide/interface.md uses drawn over it (1 top bar, 2 the left
+// column's layers, 3 views, 4 Tools section, 5 Activity dock).
 //
 //   npm run build && (cd dist && python3 -m http.server 4174 &)
 //   node tests/e2e/interface_figure.mjs [base-url] [out-dir]
@@ -32,7 +33,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
-// From a clean browser, with Filters on (a tool, so the Tools dock shows).
+// From a clean browser, with Filters on (a tool, so the Tools section shows).
 await page.goto(base, { waitUntil: "domcontentloaded" });
 await page.waitForFunction(() => window.workbench !== undefined, null, { timeout: 60_000 });
 await page.evaluate(() => {
@@ -60,14 +61,15 @@ await page.evaluate(() => {
   const rect = (sel) => document.querySelector(sel)?.getBoundingClientRect();
   const top = rect(".topbar");
   const left = rect(".dock-left");
-  const right = rect(".dock-right");
+  const tools = rect(".dock-tools");
   const bottom = rect(".dock-bottom");
-  const views = { left: left.right, right: right.left, top: top.bottom, bottom: bottom.top };
+  const centre = rect(".centre");
+  const views = { left: centre.left, right: centre.right, top: top.bottom, bottom: bottom.top };
   const marks = [
     [1, (top.left + top.right) / 2 + 120, (top.top + top.bottom) / 2],
-    [2, left.left + left.width * 0.8, left.top + left.height * 0.825],
+    [2, left.left + left.width * 0.8, left.top + left.height * 0.6],
     [3, (views.left + views.right) / 2, views.top + (views.bottom - views.top) * 0.5],
-    [4, (right.left + right.right) / 2, right.top + right.height * 0.62],
+    [4, tools.left + tools.width * 0.8, tools.top + tools.height * 0.55],
     [5, (bottom.left + bottom.right) / 2, (bottom.top + bottom.bottom) / 2],
   ];
   const layer = document.createElement("div");

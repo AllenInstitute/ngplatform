@@ -4,7 +4,7 @@
 extended by plugins.** It runs in the browser, with nothing to install:
 [open it live](https://alleninstitute.github.io/ngplatform/).
 
-![The ngplatform window: the Layers panel on the left with the selected layer's controls, Neuroglancer's views in the middle, the Filters tool in the Tools dock on the right and the Activity dock below](images/interface.png)
+![The ngplatform window: the Layers panel on the left with the selected layer's controls, Neuroglancer's views in the middle, the Filters tool below them in the same column and the Activity dock below](images/interface.png)
 
 ## What it does
 
