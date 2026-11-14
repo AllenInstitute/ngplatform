@@ -97,11 +97,17 @@ function viewFrustumVolume(projectionMat: mat4) {
 }
 
 /**
- * Smallest extent, in stored units, an axis is given when measuring volumes,
- * so a flat store (one plane of points) still has a density and a loaded
- * volume; both sides use it, so the plane's thickness cancels out.
+ * Smallest extent an axis is given when measuring volumes, so a flat store
+ * (one plane of points) still has a density and a loaded volume: the finest
+ * level's chunk size along it. Both sides use it, so the plane's thickness
+ * cancels out. (It was one stored unit, which inflated every chunk smaller
+ * than that: a store in millimetres in 0.5 mm chunks counted eight times
+ * its size, and a 3-D view's GPU budget ran out at an eighth of it.)
  */
-const MIN_EXTENT = 1;
+function minExtent(chunkSize: ArrayLike<number> | undefined, axis: number): number {
+  const c = chunkSize?.[axis];
+  return c !== undefined && c > 0 ? c : 1e-12;
+}
 
 /**
  * What each level would LOAD for a view, in stored units: a cross-section
@@ -124,7 +130,7 @@ function loadedVolumes(
       Math.max(
         (base.upperClipDisplayBound[i] - base.lowerClipDisplayBound[i]) /
           unitLength,
-        MIN_EXTENT,
+        minExtent(base.chunkLayout.size, i),
       ),
     );
   }
@@ -274,7 +280,7 @@ export function levelDensities(
 ): number[] {
   let volume = 1;
   for (let i = 0; i < lowerBounds.length; ++i) {
-    volume *= Math.max(upperBounds[i] - lowerBounds[i], MIN_EXTENT);
+    volume *= Math.max(upperBounds[i] - lowerBounds[i], minExtent(levels[0]?.chunkShape, i));
   }
   const n = levels.length;
   const adds = (i: number) => levels[i].refinement === "add" && i + 1 < n;
@@ -336,6 +342,8 @@ export function dense3dBudget(gpuMemoryLimit: number): number {
 export interface DenseNode {
   level: number;
   position: Float32Array;
+  /** Stored units per pixel at its nearest point, as chosen (smaller is nearer): the order it is read in. */
+  pixel?: number;
 }
 
 /** What a 3-d view draws under one of the coarsest level's chunks. */
@@ -504,7 +512,7 @@ export function refineDense3dChunks(
   };
   const volumeOf = (box: { lower: number[]; upper: number[] }) => {
     let v = 1;
-    for (let i = 0; i < 3; ++i) v *= Math.max(box.upper[i] - box.lower[i], MIN_EXTENT);
+    for (let i = 0; i < 3; ++i) v *= Math.max(box.upper[i] - box.lower[i], minExtent(chunkSizes[0], i));
     return v;
   };
   /**
@@ -536,17 +544,24 @@ export function refineDense3dChunks(
     node: DenseNode;
     volume: number;
     pixel: number;
+    /** Pixels between its level's vertices as it is seen: the coarsest-looking is refined first. */
+    gap?: number;
   }
+  const gapOf = (c: Candidate) => (c.gap ??= spacing(c.node.level, c.volume, c.pixel));
   let used = 0;
-  // Nearest (finest pixels) first: a binary heap, as a whole store in view
-  // puts thousands of the coarsest level's chunks in it (a cell atlas in
-  // 0.5 mm cells: 8,400).
+  // The chunk that looks coarsest (its vertices furthest apart on screen)
+  // first, so a tight budget leaves the view at one even level rather than
+  // the nearest at the finest and the rest at the coarsest; among chunks
+  // alike, the nearest. A binary heap, as a whole store in view puts
+  // thousands of the coarsest level's chunks in it (a cell atlas in 0.5 mm
+  // cells: 8,400).
+  const before = (a: Candidate, b: Candidate) => gapOf(a) > gapOf(b) || (gapOf(a) === gapOf(b) && a.pixel < b.pixel);
   const queue: Candidate[] = [];
   const push = (c: Candidate) => {
     let i = queue.push(c) - 1;
     while (i > 0) {
       const parent = (i - 1) >> 1;
-      if (queue[parent].pixel <= queue[i].pixel) break;
+      if (!before(queue[i], queue[parent])) break;
       [queue[parent], queue[i]] = [queue[i], queue[parent]];
       i = parent;
     }
@@ -561,8 +576,8 @@ export function refineDense3dChunks(
         const l = 2 * i + 1;
         const r = l + 1;
         let m = i;
-        if (l < queue.length && queue[l].pixel < queue[m].pixel) m = l;
-        if (r < queue.length && queue[r].pixel < queue[m].pixel) m = r;
+        if (l < queue.length && before(queue[l], queue[m])) m = l;
+        if (r < queue.length && before(queue[r], queue[m])) m = r;
         if (m === i) break;
         [queue[m], queue[i]] = [queue[i], queue[m]];
         i = m;
@@ -581,8 +596,9 @@ export function refineDense3dChunks(
     used += known ?? mean;
     // Refined once its own size says how dense it is (when sizes are known
     // at all; an empty chunk's is 0), so no finer chunk is read only to be let go.
+    root.pixel = pixelSize(box);
     if (knownBytes === undefined || known !== undefined) {
-      push({ rootIndex, node: root, volume, pixel: pixelSize(box) });
+      push({ rootIndex, node: root, volume, pixel: root.pixel });
     }
   });
   const leafSets = roots.map(() => new Map<string, DenseNode>());
@@ -623,11 +639,12 @@ export function refineDense3dChunks(
           }
           const volume = volumeOf(box);
           childBytes += bytesOf(finer, volume, position, c.rootIndex);
+          const pixel = pixelSize(box);
           children.push({
             rootIndex: c.rootIndex,
-            node: { level: finer, position },
+            node: { level: finer, position, pixel },
             volume,
-            pixel: pixelSize(box),
+            pixel,
           });
         }
       }
@@ -645,6 +662,92 @@ export function refineDense3dChunks(
   }
   roots.forEach((r, i) => (r.leaves = [...leafSets[i].values()]));
   return roots;
+}
+
+/** A node's key: its level and position. */
+export function nodeKey(node: DenseNode): string {
+  return `${node.level}:${node.position.join()}`;
+}
+
+/** The next coarser level's chunk containing a node (chunks nest, as perChunkLevels requires). */
+export function parentOf(node: DenseNode, chunkSizes: ArrayLike<ArrayLike<number>>): DenseNode {
+  const fine = chunkSizes[node.level];
+  const coarse = chunkSizes[node.level + 1];
+  const position = new Float32Array(3);
+  for (let i = 0; i < 3; ++i) {
+    // The fine chunk's centre, in the coarse level's chunks.
+    position[i] = Math.floor(((node.position[i] + 0.5) * fine[i]) / coarse[i]);
+  }
+  return { level: node.level + 1, position, pixel: node.pixel };
+}
+
+/**
+ * A region's chunks from its coarsest chunk down to those chosen to draw:
+ * each node's children, by key (the chosen leaves have none). The chunks
+ * between are what shows while finer ones load.
+ */
+export function regionTree(region: DenseRoot, chunkSizes: ArrayLike<ArrayLike<number>>): Map<string, DenseNode[]> {
+  const children = new Map<string, DenseNode[]>();
+  const rootKey = nodeKey(region.root);
+  for (const leaf of region.leaves) {
+    let node = leaf;
+    while (node.level < region.root.level) {
+      const parent = parentOf(node, chunkSizes);
+      const key = nodeKey(parent);
+      let kids = children.get(key);
+      const seen = kids !== undefined;
+      if (kids === undefined) children.set(key, (kids = []));
+      if (!kids.some((k) => nodeKey(k) === nodeKey(node))) kids.push(node);
+      // Its parent's chain is walked already (from a sibling), or it is the region's own chunk.
+      if (seen || key === rootKey) break;
+      node = parent;
+    }
+  }
+  return children;
+}
+
+/**
+ * Every chunk of a region's tree, coarsest first and, within a level,
+ * nearest first: the order a view reads them in, so detail fills in from
+ * the top down and from the camera out.
+ */
+export function regionReads(region: DenseRoot, chunkSizes: ArrayLike<ArrayLike<number>>): DenseNode[] {
+  const children = regionTree(region, chunkSizes);
+  const all = new Map<string, DenseNode>([[nodeKey(region.root), region.root]]);
+  for (const kids of children.values()) for (const k of kids) all.set(nodeKey(k), k);
+  for (const leaf of region.leaves) all.set(nodeKey(leaf), leaf);
+  return [...all.values()].sort((a, b) => b.level - a.level || (a.pixel ?? 0) - (b.pixel ?? 0));
+}
+
+/**
+ * What a region draws now: under each node, its children once every part
+ * of them can draw (all their chunks loaded, or stood in for), else the
+ * node itself when it is loaded, else what of the children is there. So a
+ * region shows the finest level loaded over each part of it, never two
+ * levels over one place, and a gap only where nothing over it is loaded.
+ * `complete`: every chosen chunk is loaded.
+ */
+export function regionDrawn(
+  region: DenseRoot,
+  chunkSizes: ArrayLike<ArrayLike<number>>,
+  loaded: (node: DenseNode) => boolean,
+): { nodes: DenseNode[]; complete: boolean } {
+  const children = regionTree(region, chunkSizes);
+  let complete = true;
+  const draw = (node: DenseNode): { nodes: DenseNode[]; covered: boolean } => {
+    const kids = children.get(nodeKey(node));
+    if (kids === undefined) {
+      const ok = loaded(node);
+      if (!ok) complete = false;
+      return { nodes: ok ? [node] : [], covered: ok };
+    }
+    const parts = kids.map(draw);
+    if (parts.every((p) => p.covered)) return { nodes: parts.flatMap((p) => p.nodes), covered: true };
+    if (loaded(node)) return { nodes: [node], covered: true };
+    return { nodes: parts.flatMap((p) => p.nodes), covered: false };
+  };
+  const { nodes } = draw(region.root);
+  return { nodes, complete };
 }
 
 /** Vertices of prior weight on a stand-in's density factor (see refineDense3dChunks). */

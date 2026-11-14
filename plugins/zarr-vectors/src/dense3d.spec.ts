@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { DenseNode, DenseRoot } from "./dense_lod.js";
-import { refineDense3dChunks } from "./dense_lod.js";
+import { nodeKey, refineDense3dChunks, regionDrawn, regionReads } from "./dense_lod.js";
 import { mat4, vec3 } from "neuroglancer/unstable/util/geom.js";
 
 // S-21-46's store: a 140 x 176 x 152 mm brain, one 23 x 21 x 20 mm cell at
@@ -220,4 +220,91 @@ describe("a sparse coarsest level (a cell atlas)", () => {
     refineDense3dChunks(roots, aview(16), adensities, 1, BUDGET, BYTES_PER_VERTEX, standIns(3));
     expect(performance.now() - t).toBeLessThan(500);
   });
+});
+
+describe("a region's chunks while they load", () => {
+  const node = (level: number, x: number, y: number, z: number, pixel = 0) => ({ level, position: Float32Array.of(x, y, z), pixel });
+  const keys = (nodes: { level: number; position: Float32Array }[]) => nodes.map(nodeKey).sort();
+
+  it("show the finest level loaded over a chain of one chunk a level (a cell atlas), never a gap under a loaded one", () => {
+    const sizes = Array.from({ length: 5 }, () => [0.5, 0.5, 0.5]);
+    const region = { root: node(4, 3, 4, 5), leaves: [node(0, 3, 4, 5)] };
+    const drawn = (loaded: number[]) => regionDrawn(region, sizes, (n) => loaded.includes(n.level));
+    expect(drawn([4, 3, 2]).nodes.map((n) => n.level)).toEqual([2]);
+    expect(drawn([4, 3, 2]).complete).toBe(false);
+    expect(drawn([4]).nodes.map((n) => n.level)).toEqual([4]);
+    expect(drawn([4, 0]).nodes.map((n) => n.level)).toEqual([0]);
+    expect(drawn([4, 0]).complete).toBe(true);
+    // Nothing over it loaded: nothing drawn (a gap only then).
+    expect(drawn([]).nodes).toEqual([]);
+  });
+
+  it("draw a coarser chunk over its finer ones until all of them are loaded, never both over one place", () => {
+    // Level 1 chunks twice level 0's: the region's chunk covers eight finer ones, four chosen.
+    const sizes = [[1, 1, 1], [2, 2, 2]];
+    const leaves = [node(0, 0, 0, 0), node(0, 1, 0, 0), node(0, 0, 1, 0), node(0, 1, 1, 0)];
+    const region = { root: node(1, 0, 0, 0), leaves };
+    const some = new Set([nodeKey(leaves[0]), nodeKey(leaves[1])]);
+    // Coarse loaded, finer partly: the coarse alone.
+    expect(keys(regionDrawn(region, sizes, (n) => n.level === 1 || some.has(nodeKey(n))).nodes)).toEqual([nodeKey(region.root)]);
+    // Coarse not loaded: what of the finer is there.
+    expect(keys(regionDrawn(region, sizes, (n) => some.has(nodeKey(n))).nodes)).toEqual(keys(leaves.slice(0, 2)));
+    // All finer loaded: the finer alone.
+    expect(keys(regionDrawn(region, sizes, () => true).nodes)).toEqual(keys(leaves));
+  });
+
+  it("are read coarsest level first and, within a level, nearest first", () => {
+    const sizes = Array.from({ length: 3 }, () => [1, 1, 1]);
+    const near = { root: node(2, 0, 0, 0, 0.1), leaves: [node(0, 0, 0, 0, 0.1)] };
+    const reads = regionReads(near, sizes);
+    expect(reads.map((n) => n.level)).toEqual([2, 1, 0]);
+    const far = { root: node(2, 5, 0, 0, 9), leaves: [node(1, 5, 0, 0, 9)] };
+    const both = [...regionReads(far, sizes), ...reads].sort((a, b) => b.level - a.level || (a.pixel ?? 0) - (b.pixel ?? 0));
+    expect(both.map((n) => `${n.level}/${n.pixel}`)).toEqual(["2/0.1", "2/9", "1/0.1", "1/9", "0/0.1"]);
+  });
+});
+
+describe("a cell atlas within a laptop's GPU", () => {
+  // The ABC atlas whole in view with Neuroglancer's GPU memory limit at 256 MiB, 128 MiB and 32 MiB
+  // (the budget a 3-D view takes is half): the view stays within it, every region drawn at some level.
+  const lower = [0, 0, 0];
+  const upper = [12.6, 8, 10.5];
+  const size = [0.5, 0.5, 0.5];
+  const nlevels = 5;
+  const densities = Array.from({ length: nlevels }, (_, l) => 3.74e6 / 8 ** l / (12.6 * 8 * 10.5));
+  const chunkVolume = size[0] * size[1] * size[2];
+  const allRoots = () => {
+    const out: DenseNode[] = [];
+    for (let x = 0; x < 26; ++x) for (let y = 0; y < 16; ++y) for (let z = 0; z < 21; ++z) out.push({ level: nlevels - 1, position: Float32Array.of(x, y, z) });
+    return out;
+  };
+  const atlasView = () => {
+    const v = view(16);
+    const fovy = Math.PI / 4;
+    const distance = 16 / (2 * Math.tan(fovy / 2) * (WIDTH / HEIGHT));
+    const projection = mat4.perspective(mat4.create(), fovy, WIDTH / HEIGHT, distance * 0.1, distance + 30);
+    const look = mat4.lookAt(mat4.create(), vec3.fromValues(6.3, 4 - distance, 5.25), vec3.fromValues(6.3, 4, 5.25), vec3.fromValues(0, 0, 1));
+    return { ...v, viewProjectionMat: mat4.multiply(mat4.create(), projection, look), chunkSizes: Array.from({ length: nlevels }, () => size), lowerClip: lower, upperClip: upper };
+  };
+  for (const limit of [256, 128, 32]) {
+    it(`stays within ${limit} MiB, coarsest first where it must`, () => {
+      const budget = (limit * 2 ** 20) / 2;
+      const known = (level: number) => (level === nlevels - 1 ? 0 : undefined);
+      const chosen = refineDense3dChunks(allRoots(), atlasView(), densities, 1, budget, BYTES_PER_VERTEX, known);
+      let bytes = 0;
+      const byLevel = new Array(nlevels).fill(0);
+      for (const { leaves } of chosen) {
+        for (const l of leaves) {
+          bytes += densities[l.level] * chunkVolume * BYTES_PER_VERTEX;
+          ++byLevel[l.level];
+        }
+      }
+      console.info(`${limit} MiB: chunks by level ${JSON.stringify(byLevel)}, ${(bytes / 2 ** 20).toFixed(1)} MiB`);
+      expect(bytes).toBeLessThanOrEqual(budget * 1.05);
+      // The whole store's regions are drawn, and none at the near-empty coarsest level: an even
+      // level across the view, not the nearest at the finest and the rest as gaps.
+      expect(chosen.filter((r) => r.leaves.length > 0).length).toBeGreaterThan(7000);
+      expect(byLevel[nlevels - 1]).toBe(0);
+    });
+  }
 });

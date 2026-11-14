@@ -42,10 +42,13 @@ import { drawBytesPerVertex, drawChunkBytes, drawLayout } from "./dense_pack.js"
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import {
   dense3dBudget,
+  type DenseNode,
   DRAWS_2D,
   DRAWS_3D,
   forEachDenseChunkToLoad,
+  nodeKey,
   perChunkLevels,
+  regionReads,
   selectDense3dChunks,
   setNodePosition,
 } from "./dense_lod.js";
@@ -647,6 +650,7 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
       const visit = (
         tsource: TransformedSource<any, any>,
         isTarget: boolean,
+        priority?: number,
       ) => {
         const chunk = (
           tsource.source as ZarrVectorsGeometryChunkSourceBackend
@@ -669,7 +673,7 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
         this.chunkManager.requestChunk(
           chunk,
           priorityTier,
-          basePriority + (isTarget ? 0 : SCALE_PRIORITY_MULTIPLIER),
+          priority ?? basePriority + (isTarget ? 0 : SCALE_PRIORITY_MULTIPLIER),
         );
       };
       const sources = transformedSources[0];
@@ -696,17 +700,25 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
             ).knownBytes.get(tsource.curPositionInChunks.join());
           },
         );
-        for (const { root, leaves } of roots) {
-          for (const leaf of leaves) {
-            const tsource = sources[leaf.level];
-            setNodePosition(tsource, leaf.position);
-            visit(tsource, true);
+        // Every chunk of each region's tree, from its coarsest chunk down to those
+        // chosen: the coarser ones stand in while the finer load. Read coarsest
+        // level first and, within a level, nearest first, as Neuroglancer's own
+        // views read their scales, so detail fills in from the top down and
+        // from the camera out, not in the queue's own order.
+        const chunkSizes = sources.map((t) => t.chunkLayout.size);
+        const reads: { node: DenseNode; target: boolean }[] = [];
+        for (const region of roots) {
+          const chosen = new Set(region.leaves.map(nodeKey));
+          for (const node of regionReads(region, chunkSizes)) {
+            reads.push({ node, target: chosen.has(nodeKey(node)) });
           }
-          if (leaves.length === 1 && leaves[0] === root) continue;
-          const tsource = sources[root.level];
-          setNodePosition(tsource, root.position);
-          visit(tsource, false);
         }
+        reads.sort((a, b) => b.node.level - a.node.level || (a.node.pixel ?? 0) - (b.node.pixel ?? 0));
+        reads.forEach(({ node, target }, rank) => {
+          const tsource = sources[node.level];
+          setNodePosition(tsource, node.position);
+          visit(tsource, target, basePriority + SCALE_PRIORITY_MULTIPLIER * node.level - rank);
+        });
         continue;
       }
       forEachDenseChunkToLoad(
