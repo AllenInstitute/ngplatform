@@ -59,7 +59,9 @@ For labels you place and style yourself, in the 2-D views too, see the
 
 **Graphics** beside **Sections**, off, hides Neuroglancer's axis lines,
 the data's bounding box (its default annotations, in the 2-D views too),
-the scale bar and these aids, for a clean picture. On again puts back
+the scale bar, these aids and every tool's shapes in the views (Track
+filtering's regions, cut planes, landmarks, zoom boxes), for a clean
+picture. On again puts back
 exactly what was shown before. It is in the link and undone with undo.
 
 ## Bookmarks
