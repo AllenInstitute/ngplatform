@@ -95,8 +95,9 @@ export type ShellRequest = "page" | "asset";
  * Whether a request is for the app itself, kept so it opens offline: its
  * page (`./`, `./index.html`, `./neuroglancer.html`; fetched from the
  * network first, the copy kept used when that fails) or a file the build
- * named by its contents (`./assets/…`, the fonts, the icon; never changed
- * under a name, so a kept copy is used first).  Anything else (data, the
+ * named by its contents (`./assets/…`, the fonts, the icon, the theme's
+ * first script; none changed within a build, whose worker starts afresh, so
+ * a kept copy is used first).  Anything else (data, the
  * worker's own jobs, the dev server's modules) is left to the network.
  */
 export function shellRequest(url: URL, scope: string, mode: string): ShellRequest | undefined {
@@ -105,7 +106,7 @@ export function shellRequest(url: URL, scope: string, mode: string): ShellReques
   const rest = url.pathname.slice(base.pathname.length);
   if (mode === "navigate") return rest === "" || rest === "index.html" || rest === "neuroglancer.html" ? "page" : undefined;
   if (/^assets\/[^/]+$/.test(rest) && !rest.endsWith(".map")) return "asset";
-  if (/^fonts\/[^/]+$/.test(rest) || rest === "favicon.svg") return "asset";
+  if (/^fonts\/[^/]+$/.test(rest) || rest === "favicon.svg" || rest === "theme.js") return "asset";
   return undefined;
 }
 
