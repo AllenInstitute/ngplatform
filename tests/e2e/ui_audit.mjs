@@ -8,7 +8,10 @@
 // Writes <out-dir>/report.json (per panel), <out-dir>/report.md (the
 // measures against the baseline) and the screenshots; exits 1 when a
 // measure is worse than the baseline.  UI_AUDIT_BASELINE=1 records this run
-// as the baseline instead.  NGP_RUNNER="<address> <token>" pairs a runner,
+// as the baseline instead.  UI_AUDIT_THEME=light (or dark, system) audits
+// that theme, and UI_AUDIT_VIEWS_FOLLOW=1 with Views follow theme on (the
+// choices of Settings › View); the baseline is the dark theme's.
+// NGP_RUNNER="<address> <token>" pairs a runner,
 // so the tools that need one show their full panels.  CHROME and
 // SWIFTSHADER as for smoke.mjs.
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -23,6 +26,7 @@ try {
   ({ chromium } = require("playwright-core"));
 }
 
+if (process.env.UI_AUDIT_BASELINE && (process.env.UI_AUDIT_THEME ?? "dark") !== "dark") throw new Error("The baseline is recorded in the dark theme: leave UI_AUDIT_THEME unset.");
 const base = process.argv[2] ?? "http://localhost:4174/";
 const out = process.argv[3] ?? "tests/e2e/ui-audit";
 const baselineFile = new URL("../../plans/ui-audit-baseline.json", import.meta.url);
@@ -49,12 +53,14 @@ await page.waitForFunction(() => window.workbench !== undefined, null, { timeout
 const plugins = await page.evaluate(() => window.workbench.pluginSwitches.manifests.map((m) => m.id));
 const runner = process.env.NGP_RUNNER?.split(/\s+/);
 await page.evaluate(
-  ({ plugins, runner }) => {
+  ({ plugins, runner, theme, viewsFollow }) => {
     localStorage.clear();
     localStorage.setItem("ngplatform.plugins.enabled", JSON.stringify(Object.fromEntries(plugins.map((id) => [id, true]))));
     if (runner) localStorage.setItem("ngplatform.runner", JSON.stringify({ address: runner[0], token: runner[1] }));
+    if (theme) localStorage.setItem("ngplatform.theme", theme);
+    if (viewsFollow) localStorage.setItem("ngplatform.viewsFollowTheme", "1");
   },
-  { plugins, runner },
+  { plugins, runner, theme: process.env.UI_AUDIT_THEME, viewsFollow: process.env.UI_AUDIT_VIEWS_FOLLOW === "1" },
 );
 
 const shots = [];
