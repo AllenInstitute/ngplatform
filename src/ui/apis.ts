@@ -132,6 +132,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       store.scheduleSettle();
     },
     onRendered: (callback) => engine.onRendered(callback),
+    thumbnail: (width, height) => engine.thumbnail(width, height),
     reloadData: (url) => {
       // Every chunk source Neuroglancer has made is in its chunk manager's
       // memo, keyed by its options, which name the store's URL; a volume's

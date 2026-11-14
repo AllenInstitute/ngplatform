@@ -418,6 +418,13 @@ export interface ViewerApi {
   /** Calls back after each frame the views draw. */
   onRendered(callback: () => void): Disposer;
   /**
+   * A small picture of the 3-D view (else of the first view shown) as it is
+   * next drawn, without the platform's overlays: a data URL (WebP where the
+   * browser writes it, else PNG), `width` × `height` pixels, the view
+   * cropped to fill it.  Undefined when no view is shown.
+   */
+  thumbnail?(width: number, height: number): Promise<string | undefined>;
+  /**
    * A layer's first data source's transform, from its source space to the
    * global one, and the transform the source itself gives (its default).
    * Matrices are homogeneous, column-major, as Neuroglancer keeps them:
