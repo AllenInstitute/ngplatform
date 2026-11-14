@@ -18,7 +18,7 @@ there yet.
 | Surface outlines on the slices (edge colour) | drawn by default, white yellow, pial red; **2-D outlines** can colour them by the overlay |
 | Vertex info (curvature, overlay, annotation name) | **Display → Surface → Under the mouse** |
 | File → Load Tract | **+ → Local file or folder…**: `.trk`, `.tck`, `.trx` |
-| Layer panel (left) | the **Layers** panel (left dock): the datasets above, the selected one's controls below |
+| Layer panel (left) | the **Layers** panel (left column): the datasets above, the selected one's controls below |
 | Colour map, window/level | the layer's **Display → Shader → Colour map** (grayscale, heat, jet, GE colour, NIH, PET, binary colour and more) and the contrast slider |
 | Lookup table (FreeSurferColorLUT) | the layer's **Display → Colour → Lookup table**: FreeSurfer's and other atlases' tables, or a file |
 | Show as outline (label volumes) | the layer's **Display → 2-D views → Draw: Outlines** |

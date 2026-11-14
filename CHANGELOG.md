@@ -11,6 +11,17 @@ you are using.
 The production polish: the work of an audit of every panel and plugin
 (`plans/`), from the crashes up to the release process.
 
+### One left column, views first
+
+- The Tools dock on the right is gone: the tools that are on are a section
+  of the left column, below Layers and Plugins, behind a divider that drags
+  (or moves with the arrow keys). The views take the width the dock took.
+  The section is there only while a tool is on (and listed for the data
+  selected), folds to its row of tabs, and opens with its column when a
+  tool is turned on.
+- The status line (the collapsed Activity dock) takes items on its right:
+  plugins add one with `ctx.ui.statusItem(element, { order })`.
+
 ### Fixes that lost data or crashed (Phase 0 and 1)
 
 - The app starts when a plugin fails to load (marked failed in Plugins),

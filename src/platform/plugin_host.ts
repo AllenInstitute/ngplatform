@@ -105,6 +105,7 @@ export interface HostServices {
     viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
     overlay(): { element: HTMLElement; dispose(): void };
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
+    statusItem(element: HTMLElement, options?: { order?: number; label?: string }): Disposer;
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
     sheet(title: string, render: (body: HTMLElement, close: () => void) => Disposer | void, options?: { wide?: boolean }): () => void;
   };
@@ -477,6 +478,7 @@ export class PluginHost {
           return { ...overlay, dispose: own(overlay.dispose) };
         },
         screenshotOverlay: (paint) => own(s.ui.screenshotOverlay(paint)),
+        statusItem: (element, options) => own(s.ui.statusItem(element, options)),
         confirm: (message) => s.ui.confirm(message),
         form: (title, schema, initial) => s.ui.form(title, schema, initial),
         sheet: (title, render, options) => s.ui.sheet(title, render, options),

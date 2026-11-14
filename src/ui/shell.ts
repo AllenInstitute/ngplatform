@@ -50,6 +50,7 @@ import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { asTool, describeSize, followDrag, type DockTab, DockManager, prefs } from "./docks.js";
+import { addStatusItem, statusItems } from "./statusbar.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
@@ -198,25 +199,18 @@ export class Shell {
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
-    const workspace = h(
-      "div",
-      { class: "workspace" },
-      this.docks.element("left"),
-      this.docks.resizer("left"),
-      centre,
-      this.docks.resizer("right"),
-      this.docks.element("right"),
-    );
+    // One column on the left: the layers, and below a divider the tools that are on; the views fill the rest.
+    const side = h("div", { class: "side" }, this.docks.element("left"), this.docks.resizer("tools"), this.docks.element("tools"));
+    const workspace = h("div", { class: "workspace" }, side, this.docks.resizer("left"), centre);
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
     this.activityLine.addEventListener("click", () => this.docks.show("activity"));
+    // The status line: the activity message on the left, then the items plugins put there (a scale, say).
+    this.docks.addToHead("bottom", statusItems.element);
     this.docks.addToHead("bottom", this.activityLine);
     const narrow = window.matchMedia("(max-width: 520px)");
     this.docks.restore(narrow.matches);
     narrow.addEventListener("change", () => {
-      if (narrow.matches) {
-        this.docks.setCollapsed("left", true, false);
-        this.docks.setCollapsed("right", true, false);
-      }
+      if (narrow.matches) this.docks.setCollapsed("left", true, false);
     });
   }
 
@@ -329,7 +323,7 @@ export class Shell {
       commands,
       keybindings,
       context: this.context,
-      // A plugin's panel in the left slot is a tool: it goes to the Tools dock, under the group its manifest names.
+      // A plugin's panel in the left (or right) slot is a tool: it goes to the Tools section, under the group its manifest names.
       docks: {
         addTab: (tab) => this.docks.addTab(asTool(tab)),
         show: (id) => this.docks.show(id),
@@ -343,6 +337,7 @@ export class Shell {
         viewToggle: (spec) => engine.viewToggle(spec),
         overlay: () => engine.addOverlay(),
         screenshotOverlay: (paint) => engine.addScreenshotOverlay(paint),
+        statusItem: (element, options) => addStatusItem(element, options),
         form: (title, schema, initial) => formDialog(title, schema, initial),
         sheet: (title, render, options) => {
           const body = h("div", { class: "plugin-sheet" });
@@ -1067,11 +1062,11 @@ export class Shell {
       add({ id: `view.toggle.${key}`, title: `Show or hide ${label}`, group: "View", run: () => c.invoke("view.toggleOption", { option: key }) });
     }
     for (const [slot, title] of [
-      ["left", "layers"],
-      ["right", "tools"],
-      ["bottom", "activity"],
+      ["left", "Show or hide the left column"],
+      ["tools", "Fold or unfold the tools"],
+      ["bottom", "Show or hide the activity dock"],
     ] as const) {
-      add({ id: `view.dock.${slot}`, title: `Show or hide the ${title} dock`, group: "View", run: () => this.docks.toggle(slot) });
+      add({ id: `view.dock.${slot}`, title, group: "View", run: () => this.docks.toggle(slot) });
     }
     for (const [tab, title] of [
       ["layers", "Layers"],

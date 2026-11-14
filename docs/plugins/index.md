@@ -3,7 +3,7 @@
 Everything in ngplatform beyond viewing is a plugin: a folder in
 [`plugins/`](https://github.com/AllenInstitute/ngplatform/tree/main/plugins)
 with a manifest (what the platform shows before loading any code) and its
-code. The **Plugins** panel (left dock) lists them by what they do, each with a one-line
+code. The **Plugins** panel (left column) lists them by what they do, each with a one-line
 description, a switch and an *About* guide.
 
 Only Zarr Vectors is on by default. The others stay out of the way until
@@ -41,7 +41,7 @@ it on in the Plugins panel.
 ## Switching, adding and writing plugins
 
 - **Turn on** a plugin in the Plugins panel, or from an offer: a tool comes
-  on at once, without a reload, and its panel opens in the Tools dock. Turning one off reloads
+  on at once, without a reload, and its panel opens in the Tools section. Turning one off reloads
   the page with the same link, so your workspace stays. The choice is kept
   in this browser.
 - **Offers.** When you open data a plugin that is off works with, the

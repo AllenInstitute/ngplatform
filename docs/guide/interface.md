@@ -2,14 +2,16 @@
 
 ![The window, numbered as the sections below](../images/interface-numbered.png)
 
-The window has a top bar (1), the left dock with the **Layers** and
-**Plugins** panels (2), Neuroglancer's views (3), the **Tools** dock on the
-right (4), there only while a tool is on, and the **Activity** dock at the
-bottom (5). The Tools and Activity docks start collapsed: the Activity dock
-is then a single line with the running job or the last message (click it to
-open the dock). Docks can be resized by dragging their edges and collapsed
-with the icon in their head; their sizes, the panel each shows and which
-are collapsed are remembered by your browser.
+The window has a top bar (1), one column on the left with the **Layers**
+and **Plugins** panels (2) and, below them, the **Tools** section (4),
+there only while a tool is on; Neuroglancer's views (3) fill the rest, and
+the **Activity** dock is at the bottom (5). The Activity dock starts
+collapsed to a status line: the running job or the last message on the
+left (click it to open the dock), and on the right what tools put there.
+The left column and the Activity dock can be resized by dragging their
+edges and collapsed with the icon in their head; the divider between the
+layers and the tools moves too. The sizes, the panel each shows and what is
+collapsed are remembered by your browser.
 
 Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
 window over the app, closed with **Done**, **Cancel** or ++escape++.
@@ -126,7 +128,7 @@ path goes first (a branch's end, or the very first step). Steps store what
 they share with other steps once, so 400 steps of the default workspace
 take about 0.1 MB rather than 2.3 MB.
 
-## 2. Left dock: Layers and Plugins
+## 2. Left column: Layers and Plugins
 
 | Panel | What it holds |
 |---|---|
@@ -145,17 +147,22 @@ Neuroglancer's mouse controls apply: drag to pan, scroll to move through
 sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
 ++shift++ + drag to rotate a cross-section to any angle.
 
-## 4. Right dock: Tools
+## 4. Tools, below the layers
 
-The panel of a tool that is on (a plugin): one at a time, chosen by the
-tabs at the top of the dock (the arrow keys move between them), kept
-together by what they work on:
+The panel of a tool that is on (a plugin), in the left column below the
+layers: one at a time, chosen by the tabs in the section's head (the arrow
+keys move between them), kept together by what they work on:
 *Image* (Filters, Anatomical rendering, Orientations), *Labels*
 (Annotations, Segmentation, Atlas), *Space* (Registration, a collection's
-panel) and *Vectors* (Track filtering, Luxar). Turning a tool on opens it
-here; with no tool on, the dock is not there. Long panels are in cards
-that fold away (Registration's Transform, Landmarks…; Settings' sign-ins),
-each kept open or closed as you left it.
+panel) and *Vectors* (Track filtering, Luxar). A tool made for one kind
+of data is listed while that data is selected. Turning a tool on opens it
+here (and the column, if it was collapsed); with no tool on, the section
+is not there and the layers have the whole column. Drag the divider above
+the section (or focus it and use the arrow keys) to share the column
+between the layers and the tools; the arrow at the right of its head folds
+it to its tabs. Long panels are in cards that fold away (Registration's
+Transform, Landmarks…; Settings' sign-ins), each kept open or closed as
+you left it.
 
 ## Layer controls
 
@@ -282,8 +289,11 @@ overlays at once are not there.
 
 ## 5. Activity dock
 
-Collapsed to one line at first: the running job and its progress, else the
-last message. Click the line (or the icon at its end) to open the dock.
+Collapsed to one line at first, the status line: the running job and its
+progress, else the last message, on the left; on the right, what tools
+put there (in monospace, shortened with … when the line is full; the
+whole text in its tooltip). Click the message (or the icon at its end) to
+open the dock.
 
 | Panel | What it holds |
 |---|---|

@@ -3,7 +3,7 @@
 ![S-21-46 (HiP-CT, 100 µm) path-traced on a workstation's GPU and drawn in the 3-D view](../images/plugins/anatomical-rendering.png)
 
 **Kind:** tool · **Off by default** (offered when you open an OME-Zarr or N5 image; or turn it on in the Plugins panel) · a
-**Render** switch beside **Sections** in the 3-D view, and the **Anatomical** panel in the Tools dock ·
+**Render** switch beside **Sections** in the 3-D view, and the **Anatomical** panel in the Tools section ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/anatomical-rendering)
 
 Photorealistic views of an OME-Zarr or N5 image (not precomputed volumes such as EM), path-traced on a GPU and drawn in
@@ -45,7 +45,7 @@ Organ Atlas serves most of its scans; on a host).
    (**This computer**, or **Add a computer (SSH)…**; **Pair a computer…** in
    the panel's **Remote** card opens it). Addresses and tokens are kept
    there, for every function, not per image.
-3. Turn the plugin on and open the **Anatomical** panel in the Tools dock. Switch on
+3. Turn the plugin on and open the **Anatomical** panel in the Tools section. Switch on
    **Render** at the top (also beside **Sections** in the 3-D view); the
    line under it shows work under way (the image loading), or the
    error when something has gone wrong, with **Retry**. **Remote** picks the **Computer**:

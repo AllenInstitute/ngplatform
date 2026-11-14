@@ -3,7 +3,7 @@
 ![Registration: rotating a template by hand, and the saved image overlaid](../images/plugins/registration.png)
 
 **Kind:** tool · **Off by default** (offered when you open two images; or turn it on in the Plugins panel) · the
-**Registration** panel in the Tools dock ·
+**Registration** panel in the Tools section ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/registration)
 
 Places a moving layer onto the others: by hand, as Freeview's Transform

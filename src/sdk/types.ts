@@ -117,10 +117,12 @@ export interface Manifest {
     commands?: CommandContribution[];
     keybindings?: { key: string; command: string; args?: unknown; when?: string }[];
     /**
-     * A panel in the `left` slot is a tool: it goes to the Tools dock, listed
-     * under `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
-     * given).  `minSize`: pixels the dock grows to, at least, when the panel
-     * is shown (not saved as the dock's size).
+     * A panel in the `left` (or `right`) slot is a tool: it goes to the
+     * Tools section of the left column, below the layers, listed under
+     * `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
+     * given), and is listed while its `when` holds (for the data selected,
+     * say: `selectedLayerType == image`).  `minSize`: pixels the dock grows
+     * to, at least, when the panel is shown (not saved as the dock's size).
      */
     panels?: { id: string; title: string; slot: DockSlot; group?: string; order?: number; when?: string; minSize?: number }[];
     datasetActions?: { command: string; title?: string; when?: string }[];
@@ -738,6 +740,16 @@ export interface PlatformContext {
     overlay(): { element: HTMLElement; dispose(): void };
     /** Paints over each screenshot Neuroglancer takes, in its canvas's pixels, until disposed. */
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
+    /**
+     * An item on the right of the status line, below the views (also while
+     * the Activity dock is collapsed), until the disposer is called: a scale
+     * breadcrumb, the level on screen.  Items are drawn in `order` (lower
+     * first, 100 when not given), in the mono face (a child with the class
+     * `status-label` in the interface's), and cut short with an ellipsis
+     * when the line is full; `label` names it for a screen reader.  Keep
+     * the element's text short and update it in place.
+     */
+    statusItem(element: HTMLElement, options?: { order?: number; label?: string }): Disposer;
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;

@@ -1,7 +1,7 @@
 # Plugins
 
 Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
-lists, and the **Plugins** panel (left dock) switches each on or off. Only Zarr
+lists, and the **Plugins** panel (left column) switches each on or off. Only Zarr
 Vectors is on by default; the others are offered when data they work with is
 opened (below).
 
@@ -26,7 +26,7 @@ scene's state):
 |---|---|---|
 | [`starter_ts/`](starter_ts/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
 | [`starter_ts/starter.mjs`](starter_ts/starter.mjs) | The same as one JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
-| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools dock; what it prints goes to the Python panel, or the Activity log when that is closed |
+| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools section; what it prints goes to the Python panel, or the Activity log when that is closed |
 
 ## Adding a plugin
 
@@ -80,7 +80,7 @@ module (one file, bundled) exporting `manifest` (a tool) and `plugin`, or a
 folder with `manifest.json` and the module it names as `main`; or a Python
 file, run in the Python panel's interpreter, where `@ngp.command("Title")`
 adds a function to the command palette and `@ngp.panel("Title")` a panel
-in the Tools dock, under *Python* or `group="…"` (drawn by a function given
+in the Tools section, under *Python* or `group="…"` (drawn by a function given
 the panel's element, when shown and whenever the workspace changes; the
 page's DOM is reachable through Pyodide's `js`). **Reload** reads it again after an
 edit. In Chrome and Edge the file is remembered between visits.
@@ -138,7 +138,7 @@ built with the app.
 | Kind | What it does | Its code | Example |
 |---|---|---|---|
 | **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | [`zarr-vectors/`](zarr-vectors/) |
-| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a panel in the Tools dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
+| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a panel in the Tools section, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
 
 A data type plugin has no platform code and contributes no commands or
 panels; tools that work on its data are separate tool plugins that declare
@@ -246,9 +246,11 @@ export const MANIFEST: Manifest = {
   events (`onStartup`, `onCommand:<id>`, `onView:<panel>`,
   `onDatasetKind:<kind>`, `onOpen:<regex>`) load it earlier.
 - **Panels** (`contributes.panels`): a panel in a dock, in `order`. A tool's
-  panel (`left`) goes to the Tools dock, listed under its `group`: `Image`,
-  `Labels`, `Space`, `Vectors`, or `Other` when it names none; `bottom`
-  keeps it in the Activity dock at the bottom; `minSize` (pixels) grows the dock to at least that
+  panel (`left`, or `right` as before) goes to the Tools section, in the left
+  column below the layers, listed under its `group`: `Image`, `Labels`,
+  `Space`, `Vectors`, or `Other` when it names none, and only while its
+  `when` holds (`when: "selectedLayerType == image"` lists it while an image
+  is selected); `bottom` keeps it in the Activity dock at the bottom; `minSize` (pixels) grows the dock to at least that
   while the panel is shown (the annotation table asks for 300), without
   changing the size the person set.
 - **Scene kinds** (`contributes.sceneKinds: [{kind, title, panel}]`): a
@@ -293,10 +295,11 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | Part | For |
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
-| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
+| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools section of the left column, below the layers, under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
 | `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
+| `ui.statusItem` | An element on the right of the status line below the views (also while the Activity dock is collapsed), `{ order, label }`, until its disposer is called or the plugin stops: a short value kept up to date in place, such as a scale breadcrumb or the level on screen. Drawn in the mono face (a child with the class `status-label` in the interface's), lower `order` further left, and shortened with … when the line is full. |
 | `ui.toast / confirm / form / sheet` | Messages, confirmation, a dialog generated from a schema, and a sheet whose body the plugin draws. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. `undoSteps` gives the change the workspace's undo and redo would take, with when it was made (Segmentation undoes strokes and workspace changes as one history with it). |
 | `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
