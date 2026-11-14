@@ -31,12 +31,18 @@ why ("“movie” is 4-D").
   go, then **Straighten**: the line #1 → #2 is turned onto an axis (the AC
   to the PC onto P → A, say) and #3 → #4 as near another as it can, about
   the volume's centre.
-- **Landmarks:** ++alt+f++ places a fixed point and ++alt+m++ the matching
-  moving point. Fit as translation, rigid, similarity or affine, with the
+- **Landmarks:** **Place pairs** (as BigWarp's landmark mode): each click in
+  a view places a landmark, a fixed point and then the same feature in
+  the moving layer, until **Stop placing**; the panel says which comes
+  next. Or ++alt+f++ places a fixed point at the mouse and ++alt+m++ the
+  matching moving point. Landmarks show in the views as numbered points
+  (fixed ones yellow, moving ones cyan where the layer puts them): drag
+  one to move it, and its pair is fitted again; its card goes to the pair
+  or removes it. Fit as translation, rigid, similarity or affine, with the
   residual of each pair; with **Live** the layer moves with each pair,
   otherwise **Apply**. Each pair has a button that goes to it, and a point
   dragged in the *landmarks (fixed)* or *landmarks (moving)* layer moves
-  its pair.
+  its pair too.
 - **Warp through the pairs:** a new layer of the moving image bent so each
   fixed point lands exactly on its pair and smoothly between (a thin-plate
   spline; four pairs or more, not all in one plane). It is computed as you
