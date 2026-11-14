@@ -88,6 +88,11 @@ async function hasPrecomputedMeshes(scene: OfferScene): Promise<boolean> {
 
 /** By plugin id. */
 export const OFFERS: Record<string, Offer> = {
+  "org.ngplatform.view-aids": {
+    pitch: "an orientation cube, labels and bookmarks in the 3-D view",
+    toast: false,
+    applies: (scene) => scene.layers.length > 0 && "list",
+  },
   "org.ngplatform.track-filtering": {
     pitch: "select streamlines through regions",
     toast: true,
