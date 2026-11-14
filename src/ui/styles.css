@@ -923,6 +923,8 @@ textarea.py-in {
 /* The resolution histograms: the whole row's width, the readouts beneath. */
 .ins-render-scale .neuroglancer-render-scale-widget { width: 100%; flex-direction: column; align-items: stretch; margin: 0; }
 .ins-render-scale .neuroglancer-render-scale-widget > canvas { width: 100%; flex: none; height: 40px; background: var(--ink-0); border: 1px solid var(--line); box-sizing: border-box; cursor: ew-resize; }
+/* Neuroglancer draws the histograms' bars in red and orange: shown in greys (their brightness keeps them apart). */
+.ins-render-scale .neuroglancer-render-scale-widget > canvas { filter: grayscale(1); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend { width: auto; display: flex; justify-content: space-between; gap: var(--sp-4); color: var(--muted); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend > div { height: auto; }
 .ins-code { border: 1px solid var(--line); }
