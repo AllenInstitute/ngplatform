@@ -145,3 +145,76 @@ export function translationStep(extent: number): number {
   const power = 10 ** Math.floor(Math.log10(want));
   return [1, 2, 5, 10].map((k) => k * power).find((v) => v >= want * (1 - 1e-9)) ?? 10 * power;
 }
+
+// ------------------------------------------------- moving in the views
+
+/** 3 × 3 row-major product. */
+function mul3(a: number[], b: number[]): number[] {
+  const out = new Array<number>(9).fill(0);
+  for (let r = 0; r < 3; ++r) for (let c = 0; c < 3; ++c) for (let k = 0; k < 3; ++k) out[3 * r + c] += a[3 * r + k] * b[3 * k + c];
+  return out;
+}
+
+/** The hand-made rotation, Rz Ry Rx of its angles (degrees), 3 × 3 row-major. */
+export function rotationOf(rotate: Vec3): number[] {
+  return mul3(axisRotation(2, rotate[2]), mul3(axisRotation(1, rotate[1]), axisRotation(0, rotate[0])));
+}
+
+/** Rotation by `degrees` about a unit `axis`, right-handed (3 × 3 row-major). */
+export function axisAngleRotation(axis: Vec3, degrees: number): number[] {
+  const n = Math.hypot(...axis) || 1;
+  const [x, y, z] = axis.map((v) => v / n);
+  const a = (degrees * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const k = 1 - c;
+  return [c + x * x * k, x * y * k - z * s, x * z * k + y * s, y * x * k + z * s, c + y * y * k, y * z * k - x * s, z * x * k - y * s, z * y * k + x * s, c + z * z * k];
+}
+
+/** Angles in degrees, rounded to a millionth (−0 and specks of rounding as 0). */
+const tidy = (v: number) => {
+  const r = Math.round(v * 1e6) / 1e6;
+  return r === 0 ? 0 : r;
+};
+
+/** The angles about x, y and z (degrees, each in (−180, 180]) with R = Rz Ry Rx, as the sliders hold them. */
+export function eulerOf(r: number[]): Vec3 {
+  const deg = (v: number) => (v * 180) / Math.PI;
+  const sy = Math.max(-1, Math.min(1, -r[6]));
+  const y = Math.asin(sy);
+  // Gimbal lock (y at ±90°): x taken as 0, all of the turn about z.
+  if (Math.abs(sy) > 1 - 1e-12) return [0, tidy(deg(y)), tidy(deg(Math.atan2(-r[1], r[4])))];
+  return [tidy(deg(Math.atan2(r[7], r[8]))), tidy(deg(y)), tidy(deg(Math.atan2(r[3], r[0])))];
+}
+
+/**
+ * Where the hand-made rotation turns about, as it shows: the pivot (fixed
+ * by the first rotation; until then the volume's centre or the cursor, as
+ * Rotate around says) moved by the translation.  Whatever the angles, that
+ * point stays where it is, so a turn about it changes the angles only.
+ */
+export function shownPivot(m: Manual, centre: Vec3, cursor: Vec3): Vec3 {
+  const p = m.pivot ?? (m.around === "cursor" ? cursor : centre);
+  return [p[0] + m.translate[0], p[1] + m.translate[1], p[2] + m.translate[2]];
+}
+
+/** Moved by `by` (mm along x, y, z) as dragging the layer's box in a view does. */
+export function moveManual(m: Manual, by: Vec3): Manual {
+  return { ...m, translate: [m.translate[0] + by[0], m.translate[1] + by[1], m.translate[2] + by[2]] };
+}
+
+/**
+ * Turned by `degrees` about the unit `axis` (x, y, z) through the shown
+ * pivot (shownPivot), as the box's ring turns it: the rotation becomes
+ * Q·R and the translation stays.  `pivot` fixes the pivot when no rotation
+ * or flip has yet.
+ */
+export function turnManual(m: Manual, axis: Vec3, degrees: number, pivot: Vec3): Manual {
+  const rotate = eulerOf(mul3(axisAngleRotation(axis, degrees), rotationOf(m.rotate)));
+  return { ...m, rotate, pivot: m.pivot ?? pivot };
+}
+
+/** Scaled by `factors` along x, y and z (each kept above 0), as the box's corners scale it. */
+export function scaleManual(m: Manual, factors: Vec3): Manual {
+  return { ...m, scale: m.scale.map((s, k) => Math.max(1e-3, s * (factors[k] > 0 ? factors[k] : 1))) as Vec3 };
+}
