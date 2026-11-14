@@ -22,6 +22,7 @@ import {
   el,
   emptyState,
   field,
+  icon,
   iconButton,
   info,
   type OnOff,
@@ -1581,7 +1582,16 @@ export class Registration {
 
       // Straighten.
       marks.forEach((b, i) => {
-        b.textContent = saved.marks?.[i] ? `#${i + 1} ✓` : `#${i + 1} here`;
+        // Marked: the number and a check icon (its accessible name says so); not yet: "here".
+        if (saved.marks?.[i]) {
+          const mark = icon("check");
+          mark.setAttribute("aria-hidden", "true");
+          b.replaceChildren(`#${i + 1} `, mark);
+          b.setAttribute("aria-label", `#${i + 1}, marked; mark again here`);
+        } else {
+          b.replaceChildren(`#${i + 1} here`);
+          b.removeAttribute("aria-label");
+        }
         b.disabled = !has;
       });
       directions.forEach((d, k) => d.set((saved.lines ?? ["P→A", "I→S"])[k]));
