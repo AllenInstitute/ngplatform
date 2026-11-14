@@ -7,12 +7,20 @@
    lines, white at fixed opacities, square corners.  What is chosen or on is
    inverted (white, black words) or outlined in white; the one hue is
    Neuroglancer's error red, for errors and what deletes (DESIGN.md).
-   One theme, dark.  Text in Source Sans 3 with tabular figures; monospace
+   Two themes, dark (the default) and light; the views take the theme's
+   ground (white in the light unless kept black).  Text in Source Sans 3 with tabular figures; monospace
    only for what a person types or copies (an address, a path, code, a log).
 
    Everything below takes its colours, sizes and spacing from these tokens;
    a plugin's own styles should too. */
-:root {
+/* The colours, twice: the dark set (the default) and the light one, the
+   same system mirrored (black at the opacities white has in the dark).
+   The chrome follows the theme (data-theme on the root, src/ui/theme.ts);
+   the views, and what is drawn over them, follow the views' own ground:
+   Neuroglancer's panels and the overlays over them carry data-view-ground
+   (dark or light, by their background; data-view-ground-3d for the 3-D
+   view, read by elements marked .over-3d), and take the set that reads on it. */
+:root, [data-view-ground="dark"], [data-view-ground-3d="dark"] .over-3d {
   /* Neuroglancer's materials: black panels separated by 1 px lines, not grey fills; white
      at fixed opacities for text, lines and states; one hue, Neuroglancer's error red, for
      errors and what deletes.  What is selected or on is inverted (a white fill, black
@@ -47,7 +55,6 @@
   /* Hover and pressed: white layers over whatever is beneath. */
   --state-hover: rgba(255, 255, 255, 0.06);
   --state-press: rgba(255, 255, 255, 0.10);
-  --hover: var(--state-hover);
   /* What is selected in a list: a white tint and the strong text. */
   --select: #fff;
   --select-strong: #fff;
@@ -55,14 +62,10 @@
   /* Text selected with the pointer. */
   --selection: rgba(255, 255, 255, 0.30);
   /* Done and well: the text's own white (a state is told by words and shape, not hue). */
-  --ok: var(--text);
-  --ok-line: var(--line-strong);
   /* An on/off switch: a quiet track off, white on, its knob the other way. */
   --off: rgba(255, 255, 255, 0.20);
   --on: #ebebeb;
   --knob: rgba(255, 255, 255, 0.92);
-  --warn: var(--text);
-  --warn-line: var(--line-strong);
   /* The one hue: Neuroglancer's error red, for errors and what deletes (4.9:1 on black). */
   --err: #db4437;
   --err-line: rgba(219, 68, 55, 0.6);
@@ -83,20 +86,130 @@
   --view-x: #ce6e65;
   --view-y: #71af7c;
   --view-z: #6890cb;
+  /* What the platform draws over the views (src/ui/view_tools.ts, the view aids): a shape's
+     line, the selected one, under the pointer, the keyline around it, its words; a label's
+     leader and box; the orientation cube's tint under the pointer and its faces' greys. */
+  /* A view panel's frame: opaque, as Neuroglancer's canvas is black beneath it. */
+  --view-frame: #333;
+  --view-ink-line: #a3a3a3;
+  --view-ink-accent: #d0d0d0;
+  --view-ink-hover: #f0f0f0;
+  --view-ink-keyline: #000;
+  --view-ink-text: #e6e6e6;
+  --view-ink-leader: rgba(208, 208, 208, 0.85);
+  --view-ink-label: rgba(0, 0, 0, 0.6);
+  --view-ink-zone: rgba(208, 208, 208, 0.45);
+  --view-ink-face-1: #333;
+  --view-ink-face-2: #292929;
+  --view-ink-face-3: #1f1f1f;
   /* Overlays: the dimmed page behind a sheet, and the shadows that lift things off it. */
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-sheet: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.4);
   /* What floats over the page without dimming it (menus, the command palette, toasts, tips,
      a view's floating card): one shadow; --shadow-menu is the same, for the plugins that name it. */
   --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-menu: var(--shadow-float);
   --shadow-dock: 0 0 40px rgba(0, 0, 0, 0.6);
   /* The outline of a colour swatch, and a line struck through quiet text. */
   --swatch-line: rgba(255, 255, 255, 0.25);
   /* Bars in a small plot, and those of the part that is on. */
   --plot: rgba(255, 255, 255, 0.18);
   --plot-on: rgba(255, 255, 255, 0.92);
+  /* Google's sign-in button in its dark theme. */
+  --gsi-fill: #131314;
+  --gsi-border: #8e918f;
+  --gsi-text: #e3e3e3;
 
+  color-scheme: dark;
+}
+:root[data-theme="light"], [data-view-ground="light"], [data-view-ground-3d="light"] .over-3d {
+  /* White panels, black at fixed opacities.  Text 88, 62 and 56 % black: at least 4.8:1 on
+     white and on the overlay grey (faint is 56 %, not 46 %, for that). */
+  --ink-0: #fff;
+  --ink-1: #fff;
+  --ink-2: #fff;
+  --ink-3: #fff;
+  --ink-card: #fff;
+  --ink-4: rgba(0, 0, 0, 0.10);
+  --surface-overlay: #f4f4f4;
+  --line: rgba(0, 0, 0, 0.10);
+  --line-strong: rgba(0, 0, 0, 0.20);
+  --line-control: rgba(0, 0, 0, 0.20);
+  --line-hover: rgba(0, 0, 0, 0.36);
+  --line-focus: rgba(0, 0, 0, 0.88);
+  --text: rgba(0, 0, 0, 0.88);
+  --text-strong: #000;
+  --muted: rgba(0, 0, 0, 0.62);
+  --faint: rgba(0, 0, 0, 0.56);
+  /* Chosen, on or primary: a black fill with white text. */
+  --accent: #141414;
+  --accent-hover: #000;
+  --accent-ink: #fff;
+  --accent-line: #000;
+  --accent-soft: rgba(0, 0, 0, 0.08);
+  --focus: #000;
+  --state-hover: rgba(0, 0, 0, 0.06);
+  --state-press: rgba(0, 0, 0, 0.10);
+  --select: #000;
+  --select-strong: #000;
+  --select-soft: rgba(0, 0, 0, 0.08);
+  --selection: rgba(0, 0, 0, 0.22);
+  --off: rgba(0, 0, 0, 0.20);
+  --on: #141414;
+  --knob: rgba(0, 0, 0, 0.88);
+  /* The same red, a step darker: 5.3:1 on white, 4.8:1 on the overlay grey. */
+  --err: #c53929;
+  --err-line: rgba(197, 57, 41, 0.6);
+  --danger: rgba(197, 57, 41, 0.12);
+  --danger-hover: rgba(197, 57, 41, 0.20);
+  --danger-ink: #c53929;
+  /* Direction colours a step darker, at least 3.8:1 on the light ground (lines, the cube's edges). */
+  --dec-x: #c0463a;
+  --dec-y: #3a8a4a;
+  --dec-z: #3d72c4;
+  /* A light ground for the views (the light theme, unless Settings › View keeps the views black): the margin, a
+     layer's bounding box (3.6:1 on it), the axis labels at least 5.4:1. */
+  --view-margin: #f3f3f3;
+  --view-outline: #808080;
+  --view-x: #b03a2e;
+  --view-y: #2b7039;
+  --view-z: #2c5fae;
+  --view-frame: #c8c8c8;
+  --view-ink-line: #5c5c5c;
+  --view-ink-accent: #262626;
+  --view-ink-hover: #000;
+  --view-ink-keyline: #fff;
+  --view-ink-text: #1a1a1a;
+  --view-ink-leader: rgba(38, 38, 38, 0.85);
+  --view-ink-label: rgba(255, 255, 255, 0.72);
+  --view-ink-zone: rgba(0, 0, 0, 0.16);
+  --view-ink-face-1: #e2e2e2;
+  --view-ink-face-2: #d6d6d6;
+  --view-ink-face-3: #cacaca;
+  --scrim: rgba(0, 0, 0, 0.3);
+  --shadow-sheet: 0 20px 48px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-dock: 0 0 40px rgba(0, 0, 0, 0.18);
+  --swatch-line: rgba(0, 0, 0, 0.25);
+  --plot: rgba(0, 0, 0, 0.18);
+  --plot-on: rgba(0, 0, 0, 0.88);
+  /* Google's sign-in button in its light theme. */
+  --gsi-fill: #fff;
+  --gsi-border: #747775;
+  --gsi-text: #1f1f1f;
+  color-scheme: light;
+}
+/* Tokens made of others, worked out wherever a set is. */
+:root, [data-view-ground], [data-view-ground-3d] .over-3d {
+  --hover: var(--state-hover);
+  --ok: var(--text);
+  --ok-line: var(--line-strong);
+  --warn: var(--text);
+  --warn-line: var(--line-strong);
+  --shadow-menu: var(--shadow-float);
+}
+/* Over the views: the set's text colour too (Neuroglancer sets white). */
+.engine :is([data-view-ground], [data-view-ground-3d] .over-3d) { color: var(--text); }
+:root {
   --ui: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Source Code Pro", ui-monospace, "SFMono-Regular", Menlo, monospace;
   /* Every font set at one x-height, so a fallback keeps the sizes. */
@@ -136,7 +249,6 @@
   --t-fast: 120ms;       /* a control's own change: a switch, a chevron */
   --t: 200ms;            /* a part that grows or moves: a progress bar */
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
-  color-scheme: dark;
 }
 /* Sheets and the top bar are the larger context. */
 .sheet, .topbar { --ctl-h: var(--ctl-h-sheet); --ctl-fs: var(--fs-control); font-size: var(--fs-control); }
@@ -225,7 +337,7 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
   padding: var(--sp-2) var(--sp-3);
   border-radius: 0;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--state-hover);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -736,10 +848,9 @@ kbd {
 /* Google's "Sign in with Google" button, as its sign-in branding guidelines
    draw it: a pill 40px tall, the four-colour G (never recoloured) and the
    words in Roboto Medium: Google's own colours and shape, the one place the
-   app's tokens and square corners do not apply.  Google's dark theme, as the
-   app has only a dark one. */
+   app's tokens and square corners do not apply.  Google's dark theme in the
+   dark theme and its light one in the light (--gsi-fill, --gsi-border, --gsi-text). */
 .gsi-pill {
-  --gsi-fill: #131314; --gsi-border: #8e918f; --gsi-text: #e3e3e3;
   position: relative; display: inline-flex; align-items: center; gap: 10px;
   height: 40px; padding: 0 var(--sp-6) 0 var(--sp-5); border-radius: 20px;
   background: var(--gsi-fill); border: 1px solid var(--gsi-border); color: var(--gsi-text);
@@ -932,11 +1043,21 @@ textarea.py-in {
 .ins-code.tall .CodeMirror { height: 60vh; }
 .ins-code .CodeMirror-gutters { background: var(--ink-1); border-right: 1px solid var(--line); }
 .ins-code .CodeMirror-cursor { border-left-color: var(--text); }
-/* The shader's syntax in the app's greys: CodeMirror's light-theme colours are too dark on black. */
+/* The shader's syntax in the app's greys, in either theme: told apart by weight and
+   opacity, not hue (CodeMirror's own colours are a light theme's, and coloured).
+   Keywords and types in the strong text at 600, names and numbers in the text,
+   punctuation muted, comments faint; an error in the red. */
 .ins-code .cm-s-default .cm-comment { color: var(--faint); }
-.ins-code .cm-s-default :is(.cm-keyword, .cm-builtin, .cm-def, .cm-type, .cm-variable-3) { color: var(--text-strong); }
-.ins-code .cm-s-default :is(.cm-number, .cm-atom, .cm-string, .cm-variable-2) { color: var(--text); }
-.ins-code .cm-s-default :is(.cm-bracket, .cm-meta, .cm-qualifier) { color: var(--muted); }
+.ins-code .cm-s-default :is(.cm-keyword, .cm-builtin, .cm-def, .cm-type, .cm-variable-3) { color: var(--text-strong); font-weight: 600; }
+.ins-code .cm-s-default :is(.cm-number, .cm-atom, .cm-string, .cm-string-2, .cm-variable, .cm-variable-2, .cm-property, .cm-operator, .cm-tag, .cm-attribute) { color: var(--text); }
+.ins-code .cm-s-default :is(.cm-bracket, .cm-meta, .cm-qualifier, .cm-punctuation) { color: var(--muted); }
+.ins-code .cm-s-default .cm-error { color: var(--err); }
+.ins-code .CodeMirror :is(.CodeMirror-selected, .CodeMirror-line::selection, .CodeMirror-line > span::selection, .CodeMirror-line > span > span::selection) { background: var(--selection); }
+.ins-code .CodeMirror-focused .CodeMirror-selected { background: var(--selection); }
+.ins-code .CodeMirror-linenumber { color: var(--faint); }
+.ins-code .CodeMirror-activeline-background { background: var(--hover); }
+.ins-code .CodeMirror :is(.CodeMirror-matchingbracket, .CodeMirror-nonmatchingbracket) { color: var(--text-strong); background: var(--select-soft); text-decoration: underline; }
+.ins-code .CodeMirror .CodeMirror-nonmatchingbracket { color: var(--err); }
 /* Valid code has no mark; code that does not compile, a red border. */
 .ins-code .neuroglancer-shader-code-widget.valid-input { border-color: transparent; }
 .ins-code .neuroglancer-shader-code-widget.invalid-input { border-color: var(--err); }
@@ -1234,11 +1355,11 @@ textarea.state-input.tall { min-height: 50vh; }
    and the scale bar are drawn in WebGL: the first two are a new scene's
    defaults (src/core/view_defaults.ts), the scale bar's face and size are set
    by the engine; the axis lines keep Neuroglancer's red, green and blue. */
-.engine .neuroglancer-show-panel-borders .neuroglancer-panel { border-width: 1px; border-color: var(--line-strong); }
+.engine .neuroglancer-show-panel-borders .neuroglancer-panel { border-width: 1px; border-color: var(--view-frame); }
 .engine .neuroglancer-show-panel-borders .neuroglancer-panel:focus-within { border-color: var(--accent); }
 .engine .neuroglancer-display-dimensions-widget {
   top: var(--sp-2); left: var(--sp-2); padding: var(--sp-1) var(--sp-2);
-  background: rgba(0, 0, 0, 0.55); color: var(--muted); font: var(--fs-caption)/1.3 var(--mono); font-variant-numeric: tabular-nums;
+  background: var(--view-ink-label); color: var(--muted); font: var(--fs-caption)/1.3 var(--mono); font-variant-numeric: tabular-nums;
 }
 .engine .neuroglancer-display-dimensions-widget:is(:hover, [data-active="true"]) { background: var(--surface-overlay); outline: 1px solid var(--line-strong); }
 .engine .neuroglancer-display-dimensions-input-base { font: var(--fs-caption)/1.3 var(--mono); color: var(--text); padding: 1px var(--sp-1); }
@@ -1280,6 +1401,60 @@ textarea.state-input.tall { min-height: 50vh; }
 :is(.engine, .dock, .sheet) .neuroglancer-icon { border-radius: 0; color: var(--muted); font-family: var(--ui); }
 :is(.engine, .dock, .sheet) .neuroglancer-icon:hover { background: var(--hover); color: var(--text); }
 :is(.engine, .dock, .sheet) .neuroglancer-icon svg { stroke: currentColor; }
+
+/* ------------------------------------------- Neuroglancer's panels, light
+   Neuroglancer's stylesheets assume black: white words, black and dark grey
+   fills, words in yellow, cyan and magenta.  Wherever the app shows its parts
+   (a tab of a layer Neuroglancer's, the key reference, selection details,
+   dropdowns, completions, tool chips) and has not restyled them above, the
+   light theme gives them the tokens; the dark theme keeps Neuroglancer's own. */
+/* White words: the text. */
+:root[data-theme="light"] :is(.neuroglancer-icon-button, .neuroglancer-layer-side-panel-name, .neuroglancer-layer-side-panel-type, .neuroglancer-single-mesh-attribute-name, .neuroglancer-annotation-property-label, div.neuroglancer-annotation-details-description, .neuroglancer-tool-palette-name, .neuroglancer-invlerp-widget-range-bound, .neuroglancer-segment-query-result-numerical-plot-range-bound, .neuroglancer-segment-query-result-numerical-plot-bound-constraint-spacer, .neuroglancer-viewer-side-panel, .neuroglancer-build-info a, .neuroglancer-annotation-schema-name-input, .neuroglancer-layer-item, .neuroglancer-multiline-autocomplete-hint, .neuroglancer-multiline-autocomplete-input, .neuroglancer-multiline-autocomplete-dropdown, .neuroglancer-layer-data-source-url-input input.autocomplete-input, .neuroglancer-annotation-entry-tool-chip-active .neuroglancer-annotation-entry-tool-chip-label, .neuroglancer-command-palette-picker-header:hover, .neuroglancer-annotation-schema-cancel-paste-button, #neuroglancer-status-container-modal) { color: var(--text); }
+:root[data-theme="light"] .neuroglancer-help-scroll-container h2 { color: var(--text-strong); }
+/* Dark fills behind words and fields: the panel's white, edged by a line. */
+:root[data-theme="light"] :is(.neuroglancer-segment-list-entry, .find-path-annotations > .neuroglancer-annotation-list-entry, .neuroglancer-tab-label.neuroglancer-selected-tab-label, .neuroglancer-layer-item, .neuroglancer-layer-side-panel-type, .neuroglancer-layer-side-panel-type option) { background-color: var(--ink-0); }
+:root[data-theme="light"] :is(.neuroglancer-coordinate-space-transform-widget input, textarea.neuroglancer-annotation-details-description, .neuroglancer-annotation-entry-tool-number, .neuroglancer-segment-list-query, .neuroglancer-settings-body input[type="text"], .neuroglancer-settings-body input[type="number"], .neuroglancer-annotation-schema-enum-default-select, .neuroglancer-annotation-property-value-input, .neuroglancer-annotation-schema-default-value-input, .neuroglancer-position-dimension-playback input[type="text"], .range-slider input[type="number"], .neuroglancer-segmentation-color-seed-control input, .neuroglancer-multiline-autocomplete, .neuroglancer-annotation-property-color) {
+  background: var(--ink-0); color: var(--text); border-color: var(--line-control);
+}
+:root[data-theme="light"] :is(.neuroglancer-annotation-property-value-input, .neuroglancer-annotation-schema-default-value-input, .neuroglancer-segment-list-query, .neuroglancer-multiline-autocomplete-input, .neuroglancer-annotation-schema-name-input)::placeholder,
+:root[data-theme="light"] .neuroglancer-multiline-autocomplete-input:not(:focus):empty::before { color: var(--faint); }
+/* What floats (menus, dropdowns, completions, the command palette): the floating surface. */
+:root[data-theme="light"] :is(.neuroglancer-context-menu, .neuroglancer-tool-palette-dropdown, .neuroglancer-annotation-schema-dropdown, .neuroglancer-annotation-schema-confirm-paste-modal, .neuroglancer-multiline-autocomplete-dropdown, .neuroglancer-multiline-autocomplete-error, .neuroglancer-layer-data-source-url-input .autocomplete-dropdown, .neuroglancer-command-palette.overlay-content) {
+  background: var(--surface-overlay); color: var(--text); border-color: var(--line-strong); box-shadow: var(--shadow-float);
+}
+/* Heads and bars in dark greys: the overlay grey, under a line. */
+:root[data-theme="light"] :is(.neuroglancer-help-scroll-container h2, .neuroglancer-status-header, .neuroglancer-related-segment-list-title, .neuroglancer-segment-query-errors, .neuroglancer-segment-list-status, .neuroglancer-segment-query-result-statistics, .neuroglancer-segment-query-result-statistics-separator, .neuroglancer-selection-details-layer-title, .neuroglancer-statistics-panel-body > table > thead td, .neuroglancer-tool-status-bindings, .neuroglancer-tool-status-header-container, .neuroglancer-tab-view-bar, .neuroglancer-tool-palette-layer-group-header, .neuroglancer-annotation-entry-tool-chip, .neuroglancer-annotation-entry-tool-nav, .neuroglancer-segment-list-entry.neuroglancer-segment-list-header, .neuroglancer-position-tool, .neuroglancer-annotation-property-color-preview, .neuroglancer-resize-gutter-vertical, .neuroglancer-resize-gutter-horizontal) {
+  background-color: var(--surface-overlay); color: var(--text); border-color: var(--line);
+}
+:root[data-theme="light"] .neuroglancer-side-panel-titlebar:not(.ngp-docked-panel > *) { background-color: var(--ink-1); color: var(--text); border-bottom: 1px solid var(--line); }
+:root[data-theme="light"] .neuroglancer-selection-details-layer { border-color: var(--line); }
+/* Under the pointer and chosen: the hover tint; the chosen row, the selection tint. */
+:root[data-theme="light"] :is(.neuroglancer-annotation-schema-row:hover, .neuroglancer-annotation-hover, .neuroglancer-annotation-property:hover, .neuroglancer-segment-query-result-tag:hover *, .neuroglancer-selection-details-layer-title:hover, .neuroglancer-statistics-panel-body > table > tbody tr:hover, .neuroglancer-tool-palette-button-container:hover, .neuroglancer-tool-palette-dropdown > ul > li:hover, .neuroglancer-tool-palette-tool-container:hover, .neuroglancer-tool-palette-layer-group:hover > .neuroglancer-tool-palette-layer-group-header, .neuroglancer-linked-layer-widget-layer:hover, .neuroglancer-layer-list-panel-item:hover, .neuroglancer-command-palette-row:hover, .neuroglancer-command-palette-row[data-active], .neuroglancer-multiline-autocomplete-completion:nth-child(even), .neuroglancer-annotation-schema-dropdown-option:hover, .neuroglancer-annotation-schema-row:hover) { background-color: var(--hover); }
+:root[data-theme="light"] :is(.neuroglancer-annotation-selected, .neuroglancer-annotation-hover.neuroglancer-annotation-selected, .neuroglancer-segment-list-entry[data-selected="true"], .neuroglancer-selection-details-segment[data-selected="true"], .neuroglancer-multiline-autocomplete-completion-active) { background-color: var(--select-soft); color: var(--text-strong); }
+:root[data-theme="light"] .neuroglancer-annotation-entry-tool-chip-active { background-color: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+:root[data-theme="light"] .neuroglancer-annotation-entry-tool-chip-active .neuroglancer-annotation-entry-tool-chip-label { color: var(--accent-ink); }
+/* A segment's id as a chip: inverted, as in the dark. */
+:root[data-theme="light"] :is(.neuroglancer-segment-list-entry-id, .neuroglancer-selection-details-segment-id, .neuroglancer-annotation-segment-item) { background-color: var(--accent); color: var(--accent-ink); }
+:root[data-theme="light"] .neuroglancer-segment-list-header .neuroglancer-segment-list-entry-id { background-color: transparent; color: var(--text); }
+:root[data-theme="light"] :is(.neuroglancer-segment-list-entry-id.stated-color, .neuroglancer-layer-list-panel-item, .neuroglancer-context-menu) { border-color: var(--line-strong); }
+:root[data-theme="light"] .neuroglancer-segment-list-entry .neuroglancer-segment-list-entry-color-input.stated-color { background-color: var(--text-strong); }
+/* Names in yellow, cyan, pink and magenta: the muted text; key names the strong text; errors red. */
+:root[data-theme="light"] :is(.neuroglancer-selection-details-value-grid-dim, .neuroglancer-annotations-view-dimension-name, .neuroglancer-selected-annotation-details-position-dim, .neuroglancer-selection-details-position-dimension-name, .neuroglancer-channel-dimensions-widget-name, .neuroglancer-coordinate-space-transform-input-name, input.neuroglancer-coordinate-space-transform-output-name, .neuroglancer-coordinate-space-transform-label, .neuroglancer-coordinate-space-transform-input-bounds, .neuroglancer-coordinate-space-transform-output-bounds, .neuroglancer-tool-palette-tool-properties, .neuroglancer-multiline-autocomplete-completion-description, .neuroglancer-annotation-shader-property-type, .neuroglancer-single-mesh-attribute-type, .neuroglancer-invlerp-widget-window-bound, .neuroglancer-transfer-function-widget-bound, .neuroglancer-segment-query-result-numerical-plot-window-bound) { color: var(--muted); }
+:root[data-theme="light"] :is(.neuroglancer-tool-key-binding, .neuroglancer-annotation-tool-status-widget-key, .neuroglancer-annotation-entry-tool-chip-key, .neuroglancer-layer-data-sources-source-id:not(:empty), .neuroglancer-help-scroll-container .dt, li.neuroglancer-message-warning, .neuroglancer-coordinate-space-transform-input-bounds.neuroglancer-coordinate-space-transform-singleton, .neuroglancer-annotation-tool-status-widget-description) { color: var(--text-strong); }
+:root[data-theme="light"] :is(.neuroglancer-segment-query-errors > li, .neuroglancer-multiline-autocomplete-error, li.neuroglancer-message-error, .neuroglancer-tool-palette-query-errors > li, .neuroglancer-annotation-entry-tool-number-invalid) { color: var(--err); }
+/* Light greys for hints: the faint text. */
+:root[data-theme="light"] :is(.neuroglancer-annotation-shader-property-identifier::after, .neuroglancer-selection-details-value-grid-dim::after, .neuroglancer-selection-details-value-grid-coord, .neuroglancer-single-mesh-attribute-range, .neuroglancer-annotations-view-dimension-scale, .neuroglancer-annotation-entry-tool-chip-label, .neuroglancer-command-palette-shortcut, .neuroglancer-command-palette-empty, .neuroglancer-command-palette-picker-header, .neuroglancer-layer-data-source-url-input input.autocomplete-hint, li.neuroglancer-message-info, .neuroglancer-layer-data-sources-tab .neuroglancer-progress > li, .neuroglancer-segment-query-result-tag-name::before, .neuroglancer-segment-query-result-tag-count:not(:empty)::before, .neuroglancer-segment-query-result-tag-count:not(:empty)::after, .neuroglancer-segment-query-result-numerical-plot-bounds, .neuroglancer-tool-key-binding::before, .neuroglancer-tool-key-binding::after, .neuroglancer-annotation-tool-status-widget-key::before, .neuroglancer-annotation-tool-status-widget-key::after, .neuroglancer-channel-dimensions-widget-upper::after, .neuroglancer-channel-dimensions-widget-lower::before, .neuroglancer-coordinate-space-transform-scale-suggestion, .neuroglancer-multiline-autocomplete-progress, .neuroglancer-annotation-schema-main-text, .neuroglancer-annotation-schema-header-row, .neuroglancer-annotation-schema-dropdown-header, .neuroglancer-layer-item[data-visible="false"], .neuroglancer-layer-list-panel-item[data-visible="false"]) { color: var(--muted); }
+/* Icons drawn in white. */
+:root[data-theme="light"] :is(.neuroglancer-star-icon > svg, .neuroglancer-annotation-description-icon svg, .neuroglancer-annotation-schema-action-buttons svg, .neuroglancer-coordinate-space-transform-scale-suggestion svg, .neuroglancer-framed-dialog-close-icon:hover svg) { stroke: currentColor; }
+:root[data-theme="light"] .neuroglancer-star-icon.neuroglancer-starred > svg { fill: currentColor; }
+:root[data-theme="light"] :is(.neuroglancer-star-icon.neuroglancer-indeterminate > svg, .neuroglancer-eye-icon.neuroglancer-indeterminate > svg > :last-child) { fill: var(--faint); stroke: var(--faint); }
+:root[data-theme="light"] .neuroglancer-layer-type-indicator { background-color: var(--hover); color: var(--text); }
+:root[data-theme="light"] .neuroglancer-checkbox-icon.dark-background[data-checked="true"] { background-color: var(--state-press); }
+/* What turns red under the pointer in Neuroglancer: the hover tint, as the app's icons. */
+:root[data-theme="light"] :is(.neuroglancer-icon-button:hover, .neuroglancer-build-info a:hover, .neuroglancer-voxel-coordinates-link:hover) { background-color: var(--hover); }
+:root[data-theme="light"] .neuroglancer-coordinate-space-transform-scale-suggestion:hover { background-color: var(--hover); color: var(--text); }
+:root[data-theme="light"] :is(.neuroglancer-tool-key-binding:hover, .neuroglancer-annotation-tool-status-widget:hover, .neuroglancer-multiline-autocomplete-completion:hover) { outline-color: var(--line-hover); }
+:root[data-theme="light"] :is(.neuroglancer-invlerp-cdfpanel, .neuroglancer-invlerp-legend-panel, .neuroglancer-transfer-function-panel, .neuroglancer-segment-query-result-numerical-plot) { border-color: var(--line); }
 
 .ins-label-with-pickers { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
 .ins-pickers:empty { display: none; }

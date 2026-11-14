@@ -39,6 +39,7 @@ import { addMomentum } from "./momentum.js";
 import { mountInspector, mountSource } from "./inspector/index.js";
 import { sizeMemoryLimits } from "./memory.js";
 import { VIEW_MARGIN, VIEW_OUTLINE } from "../core/view_defaults.js";
+import { ViewBackgrounds, type ViewGround } from "./backgrounds.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
@@ -275,6 +276,10 @@ function readPanelPreference(): PanelConvention | "auto" {
   return "auto";
 }
 
+function setAttribute(element: HTMLElement, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
 export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
@@ -335,6 +340,12 @@ export class Engine {
       host.removeEventListener("contextmenu", noMenu);
       host.removeEventListener("wheel", noZoom);
     });
+    // The views' grounds, for what is drawn over them: kept on the panels (made afresh with the layout) and the overlays.
+    this.backgrounds = new ViewBackgrounds({ sections: this.viewer.crossSectionBackgroundColor, view3d: this.viewer.perspectiveViewBackgroundColor }, () => this.markViewGround());
+    this.disposers.push(
+      () => this.backgrounds.dispose(),
+      this.viewer.display.updateFinished.add(() => this.markViewGround()),
+    );
     // Segmentations drawn as outlines keep their outline layers' colours in step.
     this.disposers.push(watchOutlines(this));
     // Segmentation layers whose drawing a plugin hides stay hidden when made afresh.
@@ -352,10 +363,16 @@ export class Engine {
 
   getState(): Json {
     const ng = this.viewer.state.toJSON() as Json;
-    // The 2-D views' background a plugin set for a while is saved as it was.
-    if (this.background !== undefined) {
-      if (this.background.json === undefined) delete ng.crossSectionBackgroundColor;
-      else ng.crossSectionBackgroundColor = this.background.json;
+    // A background set for a while (by a plugin, or the light ground) is saved as it was.
+    const saved = this.backgrounds.saved();
+    if (saved !== undefined) {
+      for (const [key, json] of [
+        ["crossSectionBackgroundColor", saved.sections],
+        ["perspectiveViewBackgroundColor", saved.view3d],
+      ] as const) {
+        if (json === undefined) delete ng[key];
+        else ng[key] = json as Json[string];
+      }
     }
     // A layer whose drawing a plugin hides is saved as it was.
     if (this.hiddenDrawing.size > 0 && Array.isArray(ng.layers)) {
@@ -378,25 +395,48 @@ export class Engine {
     return ng;
   }
 
-  /** The 2-D views' background as it was while a plugin sets another (its value, and as saved). */
-  private background: { value: Float32Array; json: Json[string]; temporary: Float32Array } | undefined;
+  /** The views' backgrounds, and those shown over them for a while (./backgrounds.ts). */
+  private readonly backgrounds: ViewBackgrounds;
 
   /**
    * Sets the 2-D views' background for a while (Luxar's splats in place of an
    * image need black), or (`undefined`) puts it back: not saved in the link.
+   * Shown over the light theme's ground.
    */
   setTemporaryBackground(rgb: [number, number, number] | undefined): void {
-    const colour = this.viewer.crossSectionBackgroundColor;
-    if (rgb === undefined) {
-      if (this.background === undefined) return;
-      const before = this.background;
-      this.background = undefined;
-      colour.value = before.value as typeof colour.value;
-      return;
+    this.backgrounds.setPlugin(rgb);
+  }
+
+  /**
+   * Shows the views on another ground for a while (`sections` behind the
+   * 2-D views, `view3d` behind the 3-D view: the light theme's), or
+   * (`undefined`) puts back the backgrounds the state has: never saved in
+   * the link, whatever the scene carries.
+   */
+  setViewGround(ground: { sections: [number, number, number]; view3d: [number, number, number] } | undefined): void {
+    this.backgrounds.setGround(ground);
+  }
+
+  /** Whether the 2-D views and the 3-D view are on a dark or a light ground, as shown now. */
+  viewGrounds(): { sections: ViewGround; view3d: ViewGround } {
+    return this.backgrounds.grounds();
+  }
+
+  /** Elements over the views that carry the grounds (the overlays), beside the panels. */
+  private readonly grounded = new Set<HTMLElement>();
+
+  /**
+   * Marks the views with their grounds, for what is drawn over them to read on
+   * (src/ui/styles.css): each panel by its kind, each overlay with both
+   * (data-view-ground for the 2-D views, data-view-ground-3d for elements over the 3-D view).
+   */
+  private markViewGround(): void {
+    const grounds = this.viewGrounds();
+    for (const element of this.grounded) {
+      setAttribute(element, "data-view-ground", grounds.sections);
+      setAttribute(element, "data-view-ground-3d", grounds.view3d);
     }
-    const temporary = Float32Array.from(rgb);
-    this.background = this.background !== undefined ? { ...this.background, temporary } : { value: Float32Array.from(colour.value), json: (this.viewer.state.toJSON() as Json).crossSectionBackgroundColor, temporary };
-    colour.value = temporary as typeof colour.value;
+    for (const panel of this.panels()) setAttribute(panel.element, "data-view-ground", panel.kind === "3d" ? grounds.view3d : grounds.sections);
   }
 
   /**
@@ -490,18 +530,15 @@ export class Engine {
         }),
       };
     }
-    for (const [key, child] of state.children) {
-      if (Object.prototype.hasOwnProperty.call(ng, key) && ng[key] !== undefined) continue;
-      if (key === "layers") child.restoreState([]);
-      else child.reset();
-    }
-    state.restoreState(ng);
-    // A background set for a while stays (the state restored has the one saved).
-    if (this.background !== undefined) {
-      const colour = this.viewer.crossSectionBackgroundColor;
-      this.background = { value: Float32Array.from(colour.value), json: (ng as Json).crossSectionBackgroundColor, temporary: this.background.temporary };
-      colour.value = this.background.temporary as typeof colour.value;
-    }
+    // Backgrounds set for a while stay over the state's own (the state restored has the ones saved).
+    this.backgrounds.under(() => {
+      for (const [key, child] of state.children) {
+        if (Object.prototype.hasOwnProperty.call(ng, key) && ng[key] !== undefined) continue;
+        if (key === "layers") child.restoreState([]);
+        else child.reset();
+      }
+      state.restoreState(ng);
+    });
     // Layers whose drawing a plugin hides stay hidden (their layer objects may be new).
     for (const [name, hidden] of [...this.hiddenDrawing]) {
       const opacity = this.opacityOf(name);
@@ -982,7 +1019,7 @@ export class Engine {
 
   /** The views' defaults for a new, empty viewer (src/core/view_defaults.ts): a near-black margin around the sections. */
   applyViewDefaults(): void {
-    this.viewer.crossSectionBackgroundColor.restoreState(VIEW_MARGIN);
+    this.backgrounds.under(() => this.viewer.crossSectionBackgroundColor.restoreState(VIEW_MARGIN));
   }
 
   setViewOption(key: string, value: boolean): void {
@@ -1549,7 +1586,15 @@ export class Engine {
     const element = document.createElement("div");
     element.className = "view-overlay";
     this.host.parentElement!.append(element);
-    return { element, dispose: () => element.remove() };
+    this.grounded.add(element);
+    this.markViewGround();
+    return {
+      element,
+      dispose: () => {
+        this.grounded.delete(element);
+        element.remove();
+      },
+    };
   }
 
   /** A plugin's drawing in the 3-D view, with the layer `name` (see ./draw3d.ts). */

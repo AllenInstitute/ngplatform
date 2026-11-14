@@ -19,7 +19,7 @@ Item line numbers are from that commit and move as the code changes.
 | Corners | Square everywhere (`--r: 0`); pills only for status chips. |
 | CI | As few runs as possible: on pull requests and by hand, `[skip ci]` on work-in-progress pushes. |
 | Errors | Kept locally: in Activity, and a log Settings › Developer can save. No remote reporter. |
-| Theme | Dark only. |
+| Theme | Dark (default), Light or Match system, kept per browser (Settings › View); light mirrors dark. The views are white in the light theme (display only, never saved) unless Black views in the light theme is on. Decided 2026-11-14, replacing "Dark only". |
 | Splats | Shown, marked *In progress*, until a fit has run end to end. |
 | Browsers | Chrome and Edge fully; Firefox and Safari work, without folder access. |
 

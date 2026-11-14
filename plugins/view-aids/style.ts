@@ -23,7 +23,7 @@ export const STYLE = `
 .view-aids-thumb img, .view-aids-thumb-empty { display: block; width: 100%; height: 100%; object-fit: cover; }
 .view-aids-thumb-name {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 0 var(--sp-2);
-  font: var(--fs-caption)/14px var(--ui); color: var(--text); background: var(--scrim);
+  font: var(--fs-caption)/14px var(--ui); color: var(--text); background: var(--view-ink-label);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left;
 }
 .view-aids-thumb:hover { border-color: var(--line-hover); }

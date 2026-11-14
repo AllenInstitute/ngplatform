@@ -9,7 +9,8 @@ import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import { type DroppedItem, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
-import { checkbox, downloadBlob, info, roving } from "../sdk/dom.js";
+import { checkbox, downloadBlob, info, roving, toggle } from "../sdk/dom.js";
+import { pageTheme, THEME_CHOICES, type ThemeChoice } from "./theme.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import { renderOverviewSettings } from "./overview.js";
@@ -427,6 +428,30 @@ export function showSettingsSheet(wb: Workbench, section: SettingsSection = "vie
   nav.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
 }
 
+/**
+ * Theme: dark, light or as the system is, and whether the views stay black in the light one
+ * (src/ui/theme.ts).  Kept in this browser; the choice shows at once.
+ */
+function themeSettings(): HTMLElement {
+  const theme = pageTheme();
+  const buttons = THEME_CHOICES.map(([id, label]) =>
+    h("button", { type: "button", "data-theme-choice": id, "aria-pressed": String(theme.choice() === id), onclick: () => choose(id) }, label),
+  );
+  const black = toggle("Black views in the light theme", theme.blackViews(), (on) => theme.setBlackViews(on), {
+    info: "Off: in the light theme the views are white too. On: they stay black, as in the dark theme (images read best on black). Either way only this browser's display: the scene and its link keep their own backgrounds.",
+  });
+  const choose = (id: ThemeChoice) => {
+    theme.setChoice(id);
+    for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.themeChoice === id));
+  };
+  return h(
+    "div",
+    { class: "options theme-options" },
+    h("div", { class: "field" }, h("span", { id: "theme-label" }, "Theme"), h("div", { class: "segmented", role: "group", "aria-labelledby": "theme-label" }, ...buttons)),
+    black,
+  );
+}
+
 const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench) => (() => void) | undefined> = {
   view: (host, wb) => {
     const settings = h("div", { class: "view-settings" });
@@ -441,6 +466,7 @@ const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench)
           "In this browser",
           info("Kept in this browser. The groups above are saved with the workspace.", "About In this browser"),
         ),
+        themeSettings(),
         h(
           "div",
           { class: "options" },

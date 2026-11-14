@@ -16,15 +16,30 @@ collapsed are remembered by your browser.
 Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
 window over the app, closed with **Done**, **Cancel** or ++escape++.
 
-The app has one theme, a dark one, in Neuroglancer's materials: black
-panels divided by thin lines, white type, square corners, numbers in a
-monospaced face; there is no light theme. What is chosen or on is shown
-inverted, white with black words (as Neuroglancer's chosen tab), and the
-only colour in the interface is red, for errors and what deletes: colour
-on screen is the data's. The views are a black stage: a new scene draws the margin around the
-sections near black and a layer's bounding box in a dim grey (a link keeps
-the colours it was shared with; the margin's colour is in Settings ›
-View). Values the
+The app has two themes, chosen in **Settings › View › Theme**: **Dark**
+(the default), **Light**, or **Match system** (as your computer's setting,
+changing when it does). The choice is kept by your browser, not in the
+workspace or its link; the palette's **Theme: switch between dark and
+light** switches it too. Both are Neuroglancer's materials: panels divided
+by thin lines, type at a few strengths, square corners, numbers in a
+monospaced face; the light theme is the dark one mirrored (white panels,
+black type). What is chosen or on is shown inverted (white with black words
+in the dark, black with white words in the light, as Neuroglancer's chosen
+tab), and the only colour in the interface is red, for errors and what
+deletes: colour on screen is the data's.
+
+The views take the theme: in the dark theme they are a black stage (a new
+scene draws the margin around the sections near black and a layer's
+bounding box in a dim grey; a link keeps the colours it was shared with, and
+the margin's colour is in Settings › View); in the light theme they are
+white, with the margin the lightest grey. That white is your browser's
+display only: the scene and its link keep their own backgrounds, and the
+dark theme shows them again exactly. **Black views in the light theme**,
+under Theme and off by default, keeps the views black in the light theme
+(images often read best on black). Captures show the views as you see them. What is drawn over the views (the axis labels, the 3-D view's
+switches, the orientation cube, labels, bookmarks, handles and their card)
+follows the views' ground, not the theme: light on black views, dark on
+light ones. Values the
 app shows, such as the coordinates over the views and the status line's
 items, are in a monospaced face with their units in grey.
 

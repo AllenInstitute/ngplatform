@@ -32,7 +32,7 @@ import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
 import { HistoryKeep, IndexedDbHistoryBackend } from "../platform/history_keep.js";
 import type { HistoryData } from "../core/history.js";
-import { withViewDefaults } from "../core/view_defaults.js";
+import { rgbOf, VIEW_GROUND_LIGHT, withViewDefaults } from "../core/view_defaults.js";
 import {
   type Choices,
   defaultsTold,
@@ -61,6 +61,7 @@ import { renderJobsPanel, renderPluginsPanel } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { offerOverviews } from "./overview.js";
 import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
+import { pageTheme, THEME_CHOICES, type ThemeChoice } from "./theme.js";
 import { openDroppedItems, SETTINGS_SECTIONS, type SettingsSection, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -315,6 +316,11 @@ export class Shell {
       },
     };
     this.wb = wb;
+    // The views on the light ground in the light theme (unless kept black there); as the scene has them otherwise.
+    const theme = pageTheme();
+    const ground = () => engine.setViewGround(theme.lightViews() ? { sections: rgbOf(VIEW_GROUND_LIGHT.sections), view3d: rgbOf(VIEW_GROUND_LIGHT.view3d) } : undefined);
+    theme.onChanged(ground);
+    ground();
     this.switches = { catalogue: plugins.catalogue, choices: plugins.choices, thisTab: plugins.thisTab, resolution: plugins.resolution };
     wb.offers = new PluginOffers(wb, plugins.catalogue, (ids) => this.turnOnPlugins(ids));
     // For debugging from the console, beside window.viewer (in production only with ?debug).
@@ -1030,6 +1036,17 @@ export class Shell {
       run: (args?: { section?: SettingsSection }) => showSettingsSheet(wb, args?.section),
     });
     add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb, "view") });
+    // The theme, kept in this browser (Settings › View).
+    const theme = pageTheme();
+    add({ id: "view.theme.toggle", title: "Theme: switch between dark and light", group: "View", run: () => theme.toggle() });
+    add({
+      id: "view.theme",
+      title: "Theme: dark, light or as the system is",
+      group: "View",
+      args: { type: "object", required: ["theme"], properties: { theme: { type: "string", enum: THEME_CHOICES.map(([id]) => id) } } },
+      run: ({ theme: choice }: { theme: ThemeChoice }) => theme.setChoice(choice),
+    });
+    add({ id: "view.theme.blackViews", title: "Black views in the light theme: on or off", group: "View", run: () => theme.setBlackViews(!theme.blackViews()) });
     add({
       id: "settings.signIn",
       title: "Sign-in settings…",

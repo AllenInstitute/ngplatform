@@ -48,7 +48,7 @@ import {
   type Vec3,
   viewPlaneDelta,
 } from "../core/view_geometry.js";
-import { el, iconButton } from "../sdk/dom.js";
+import { el, iconButton, viewInk, type ViewInk } from "../sdk/dom.js";
 import type { Disposer, ViewPanelInfo, ViewShape, ViewShapeHandle, ViewToolsApi } from "../sdk/types.js";
 
 /** What the tools need of the viewer; the shell supplies it (./apis.ts), tests fake it. */
@@ -63,22 +63,20 @@ export interface ViewToolsHost {
   mouse(): number[] | undefined;
 }
 
-/** Look (DESIGN.md, "The Instrument Panel"; the surface brief's in-view tools). */
+/**
+ * Look (DESIGN.md, "The Instrument Panel"; the surface brief's in-view
+ * tools).  The colours are the view's ink (`viewInk`), read from each
+ * canvas: light lines with a black keyline on a dark view, dark lines with
+ * a white one on a light view.
+ */
 const LOOK = {
   line: 1.5,
-  idle: "#a3a3a3",
-  accent: "#d0d0d0",
-  hover: "#f0f0f0",
-  keyline: "#000",
   knob: 7,
   /** Radius of a plane's turning ring, px (3-D; smaller in a 2-D view). */
   ring: 34,
   ring2d: 26,
   font: '11px "Source Sans 3", system-ui, sans-serif',
   mono: '11px "Source Code Pro", ui-monospace, monospace',
-  text: "#e6e6e6",
-  /** A caption's value (a size), as a readout's unit is: quieter. */
-  quiet: "rgba(255, 255, 255, 0.64)",
 };
 /** How near a handle or a line the mouse must be to take it, px: a target of 24 px or more (WCAG 2.5.8). */
 const REACH = 12;
@@ -388,6 +386,8 @@ export class ViewTools {
     }
     const root = this.root().getBoundingClientRect();
     const rect = rectOf(panel);
+    // On the ground of the view it is over.
+    card.element.classList.toggle("over-3d", panel.info.kind === "3d");
     card.element.style.left = `${Math.round(rect.left - root.left + CARD_AT.left)}px`;
     card.element.style.top = `${Math.round(rect.top - root.top + CARD_AT.top)}px`;
   }
@@ -441,6 +441,8 @@ export class ViewTools {
       canvas.hidden = rect.width === 0 || rect.height === 0;
       if (canvas.hidden) continue;
       if (canvas.parentElement !== root) root.prepend(canvas);
+      // Over the 3-D view, the 3-D view's ground (the overlay carries both).
+      canvas.classList.toggle("over-3d", state.info.kind === "3d");
       canvas.style.left = `${rect.left - rootRect.left}px`;
       canvas.style.top = `${rect.top - rootRect.top}px`;
       canvas.style.width = `${rect.width}px`;
@@ -458,6 +460,7 @@ export class ViewTools {
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       const lens = state.lens;
       if (lens === undefined) continue;
+      const ink = viewInk(canvas);
       const entries = [...this.entries.values()].sort((a, b) => (a.key === this.selectedKey ? 1 : b.key === this.selectedKey ? -1 : a.order - b.order));
       for (const entry of entries) {
         if (!shows(entry.shape, lens.kind)) continue;
@@ -465,7 +468,7 @@ export class ViewTools {
         if (drawn === undefined) continue;
         if (entry.shape.minSize !== undefined && screenSize(drawn) < entry.shape.minSize) continue;
         state.drawn.push(drawn);
-        this.paint(context, drawn);
+        this.paint(context, drawn, ink);
       }
     }
     this.placeCard();
@@ -801,10 +804,10 @@ export class ViewTools {
     return out;
   }
 
-  private paint(context: CanvasRenderingContext2D, d: Drawn): void {
+  private paint(context: CanvasRenderingContext2D, d: Drawn, ink: ViewInk): void {
     const selected = d.entry.key === this.selectedKey;
     const hovered = this.hover?.key === d.entry.key;
-    const colour = selected ? LOOK.accent : hovered ? LOOK.hover : (d.entry.shape.colour ?? LOOK.idle);
+    const colour = selected ? ink.accent : hovered ? ink.hover : (d.entry.shape.colour ?? ink.line);
     context.lineJoin = "miter";
     context.lineCap = "butt";
     const trace = (points: Vec2[], closed: boolean) => {
@@ -815,7 +818,7 @@ export class ViewTools {
     for (const line of d.lines) {
       trace(line.points, line.closed);
       if (selected) {
-        context.strokeStyle = LOOK.keyline;
+        context.strokeStyle = ink.keyline;
         context.lineWidth = LOOK.line + 2;
         context.stroke();
       }
@@ -827,18 +830,18 @@ export class ViewTools {
       const h = size / 2;
       const left = Math.round(x - h) + 0.5;
       const top = Math.round(y - h) + 0.5;
-      context.fillStyle = hollow ? LOOK.keyline : fill;
+      context.fillStyle = hollow ? ink.keyline : fill;
       context.fillRect(left, top, size, size);
       context.lineWidth = 1;
-      context.strokeStyle = hollow ? fill : LOOK.keyline;
+      context.strokeStyle = hollow ? fill : ink.keyline;
       context.strokeRect(left, top, size, size);
     };
     if (d.point !== undefined) {
-      const fill = selected ? LOOK.accent : hovered ? LOOK.hover : (d.entry.shape.colour ?? LOOK.idle);
+      const fill = selected ? ink.accent : hovered ? ink.hover : (d.entry.shape.colour ?? ink.line);
       knob(d.point[0], d.point[1], LOOK.knob, fill);
       if (selected) {
         context.lineWidth = 1;
-        context.strokeStyle = LOOK.accent;
+        context.strokeStyle = ink.accent;
         context.strokeRect(Math.round(d.point[0] - 7) + 0.5, Math.round(d.point[1] - 7) + 0.5, 14, 14);
       }
     }
@@ -846,11 +849,11 @@ export class ViewTools {
       context.font = LOOK.font;
       context.textBaseline = "middle";
       context.lineWidth = 3;
-      context.strokeStyle = LOOK.keyline;
+      context.strokeStyle = ink.keyline;
       const x = d.label.at[0] + 9;
       const y = d.label.at[1] - 7;
       context.strokeText(d.label.text, x, y);
-      context.fillStyle = LOOK.text;
+      context.fillStyle = ink.text;
       context.fillText(d.label.text, x, y);
     }
     const caption = d.entry.shape.caption;
@@ -871,26 +874,29 @@ export class ViewTools {
       d.caption = { x, y, w: textWidth + valueWidth, h };
       context.textBaseline = "middle";
       context.lineWidth = 3;
-      context.strokeStyle = LOOK.keyline;
+      context.strokeStyle = ink.keyline;
       context.font = LOOK.font;
       context.strokeText(caption.text, x, y + h / 2);
-      context.fillStyle = hovered || selected ? LOOK.hover : LOOK.text;
+      context.fillStyle = hovered || selected ? ink.hover : ink.text;
       context.fillText(caption.text, x, y + h / 2);
       if (value !== "") {
         context.font = LOOK.mono;
         context.strokeText(value, x + textWidth, y + h / 2);
-        context.fillStyle = hovered || selected ? LOOK.hover : LOOK.quiet;
+        // A caption's value (a size) is quieter, as a readout's unit is.
+        context.fillStyle = hovered || selected ? ink.hover : ink.text;
+        context.globalAlpha = hovered || selected ? 1 : 0.64;
         context.fillText(value, x + textWidth, y + h / 2);
+        context.globalAlpha = 1;
       }
     }
     for (const h of d.handles) {
       const hot = this.hover?.key === d.entry.key && this.hover.handle === h;
       const live = this.drag?.entry === d.entry && this.drag.handle.kind === h.kind && this.drag.handle.index === h.index;
-      const fill = hot || live ? LOOK.hover : LOOK.accent;
+      const fill = hot || live ? ink.hover : ink.accent;
       if (h.kind === "ring") {
         context.beginPath();
         context.arc(h.x, h.y, h.ring!, 0, 2 * Math.PI);
-        context.strokeStyle = LOOK.keyline;
+        context.strokeStyle = ink.keyline;
         context.lineWidth = LOOK.line + 2;
         context.stroke();
         context.strokeStyle = fill;

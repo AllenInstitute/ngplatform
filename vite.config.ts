@@ -124,7 +124,7 @@ function serviceWorker(): Plugin {
           : { fileName: f.fileName, type: "asset" },
       );
       if (!files.some((f) => f.isEntry && /index\.html$/.test(f.facadeModuleId ?? ""))) return;
-      this.emitFile({ type: "asset", fileName: "sw.js", source: await bundle(shellFiles(files, ["favicon.svg", ...FONTS])) });
+      this.emitFile({ type: "asset", fileName: "sw.js", source: await bundle(shellFiles(files, ["favicon.svg", "theme.js", ...FONTS])) });
     },
   };
 }

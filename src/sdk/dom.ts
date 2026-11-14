@@ -509,6 +509,69 @@ export function statusLine(): StatusLine {
 
 // --------------------------------------------------------------- files
 
+/**
+ * The colours to draw with over a view (a canvas, labels): those that read on
+ * the view's own ground, dark or light, whatever the app's theme
+ * (src/ui/styles.css, the --view-ink-* and --dec-* tokens).  Read from the
+ * element drawn into: a canvas in a view overlay (`ui.overlay()`), with the
+ * class `over-3d` when it is over the 3-D view.
+ *
+ *     const ink = viewInk(canvas);
+ *     context.strokeStyle = ink.line;
+ */
+export interface ViewInk {
+  /** A shape's line, as drawn when not selected. */
+  line: string;
+  /** What is selected, and handles. */
+  accent: string;
+  /** Under the pointer. */
+  hover: string;
+  /** The thin edge that keeps a line apart from the data beneath. */
+  keyline: string;
+  /** Words. */
+  text: string;
+  /** A label's leader line and the box behind its words. */
+  leader: string;
+  label: string;
+  /** A tint under the pointer. */
+  zone: string;
+  /** Three greys, facing the viewer to facing away (the orientation cube's faces). */
+  faces: [string, string, string];
+  /** The direction colours of x, y and z. */
+  axes: [string, string, string];
+}
+
+/** The dark ground's ink: where the stylesheet is not (tests), or an element outside the page. */
+const DARK_INK: ViewInk = {
+  line: "#a3a3a3",
+  accent: "#d0d0d0",
+  hover: "#f0f0f0",
+  keyline: "#000",
+  text: "#e6e6e6",
+  leader: "rgba(208, 208, 208, 0.85)",
+  label: "rgba(0, 0, 0, 0.6)",
+  zone: "rgba(208, 208, 208, 0.45)",
+  faces: ["#333", "#292929", "#1f1f1f"],
+  axes: ["#e0574b", "#5cb46c", "#4f88dc"],
+};
+
+export function viewInk(element: Element): ViewInk {
+  const style = element.isConnected ? getComputedStyle(element) : undefined;
+  const v = (name: string, fallback: string) => style?.getPropertyValue(name).trim() || fallback;
+  return {
+    line: v("--view-ink-line", DARK_INK.line),
+    accent: v("--view-ink-accent", DARK_INK.accent),
+    hover: v("--view-ink-hover", DARK_INK.hover),
+    keyline: v("--view-ink-keyline", DARK_INK.keyline),
+    text: v("--view-ink-text", DARK_INK.text),
+    leader: v("--view-ink-leader", DARK_INK.leader),
+    label: v("--view-ink-label", DARK_INK.label),
+    zone: v("--view-ink-zone", DARK_INK.zone),
+    faces: [v("--view-ink-face-1", DARK_INK.faces[0]), v("--view-ink-face-2", DARK_INK.faces[1]), v("--view-ink-face-3", DARK_INK.faces[2])],
+    axes: [v("--dec-x", DARK_INK.axes[0]), v("--dec-y", DARK_INK.axes[1]), v("--dec-z", DARK_INK.axes[2])],
+  };
+}
+
 /** Saves a blob as a download named `name`. */
 export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
