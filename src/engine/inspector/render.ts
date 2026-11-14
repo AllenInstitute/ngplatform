@@ -65,7 +65,11 @@ export function signal(s: { add(listener: () => void): () => void }): Watch<unde
 
 function renderScale(scope: Scope, histogram: unknown, target: unknown, Widget: typeof RenderScaleWidget = RenderScaleWidget): HTMLElement {
   const widget = scope.ng.registerDisposer(new Widget(histogram as never, target as never));
-  return embed(widget.element, "ins-render-scale");
+  const host = embed(widget.element, "ins-render-scale");
+  // Not drawn now: marked, so the stylesheet can say so in the theme's words (Neuroglancer writes them in white on its canvas).
+  const visibility = (histogram as { visibility?: Watch<number> & { readonly visible: boolean } }).visibility;
+  if (visibility !== undefined) scope.watch(visibility, () => host.toggleAttribute("data-inactive", !visibility.visible));
+  return host;
 }
 
 export function renderTab(scope: Scope, layer: UserLayer): HTMLElement[] {

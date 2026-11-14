@@ -587,6 +587,9 @@ kbd {
 .dock-left > .dock-head .tab:not([aria-selected="true"]) { color: var(--faint); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
+/* The left column: its content 12 px in from either side (one left and one right edge for
+   every row), and one nested step of 12 px (a dataset's settings, its views). */
+.side .dock-head { padding-left: var(--sp-5); padding-right: var(--sp-5); }
 .dock.collapsed .dock-body, .dock.collapsed .dock-tabs { display: none; }
 .dock.collapsed .dock-head { flex-direction: column; height: auto; padding: var(--sp-3) 0; border: 0; }
 .rail-title {
@@ -649,6 +652,12 @@ kbd {
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
 /* Where a dataset is (gs, s3, local): small capitals. */
 .type { font: var(--fs-caption)/1 var(--ui); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted); white-space: nowrap; }
+
+/* A layer's kind (image, segmentation, vectors…) on its row: muted, in the mono face, before its icons. */
+.layer-kind { font: var(--fs-caption)/1.2 var(--mono); color: var(--muted); white-space: nowrap; justify-self: end; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* The name first: as wide as it is (cut short only past the row), the kind in what is left. */
+.layers-list .ds-row.card-row { grid-template-columns: auto auto minmax(0, max-content) minmax(0, 1fr) auto; }
+.layers-list .layer-row { grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr); }
 
 /* dataset and scene rows */
 .datasets { display: grid; gap: var(--sp-2); }
@@ -756,8 +765,14 @@ kbd {
 
 /* Layers: one card per dataset, its settings (the layer's sections) inside it while open, in one scrolling column */
 .dock-pane[data-tab="layers"] { display: flex; flex-direction: column; padding: 0; height: 100%; }
-.layers-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-4) var(--sp-5); }
-.layers-list .panel-actions { justify-content: space-between; align-items: center; margin-bottom: var(--sp-2); }
+.layers-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-4) 0; }
+.layers-list .panel-actions { justify-content: space-between; align-items: center; margin-bottom: var(--sp-2); padding: 0 var(--sp-5); }
+.layers-list > .note-bar, .layers-list .datasets > .empty-state { margin-inline: var(--sp-5); }
+/* A row spans the column (its outline, when selected, from edge to edge); its content 12 px in (11 and its 1 px edge). */
+.layers-list .ds-row { padding: var(--sp-2) 11px; }
+/* A dataset's views, one step in: a line down their left, their content 24 px in. */
+.layers-list .ds-layers { margin-left: var(--sp-5); padding-left: 0; }
+.layers-list .layer-row { padding: var(--sp-1) 11px var(--sp-1) 10px; }
 .layers-list .panel-actions .section-title { margin: 0; }
 .layers-list .ds-row .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Open, the card grows to hold the dataset's settings: one box, its row the head (no box of its
@@ -776,7 +791,7 @@ kbd {
 .ds-expand[aria-expanded="true"]::before { transform: rotate(45deg); }
 .ds-expand:hover { background: var(--hover); }
 /* Each level as wide as the panel, no wider: the controls shrink with it. */
-.ds-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-2) var(--sp-4) 0; border-top: 1px solid var(--line); min-width: 0; }
+.ds-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-2) var(--sp-5) 0 var(--sp-7); border-top: 1px solid var(--line); min-width: 0; }
 .ds-body .layer-controls-host, .ds-body .layer-source-host { min-width: 0; }
 /* The source, part of the card itself: a band above the tabs. */
 .ds-body .layer-source-host { padding-bottom: var(--sp-4); border-bottom: 1px solid var(--line); }
@@ -792,6 +807,10 @@ kbd {
 .plugin { border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-5); display: grid; gap: var(--sp-3); }
 .plugin-desc { margin: 0; color: var(--muted); font-size: var(--fs-body); line-height: 1.45; }
 .plugin.on { border-color: var(--line-strong); }
+/* In the left column the plugins are rows divided by lines, on its two edges. */
+.side .plugin-list { gap: 0; }
+.side .plugin, .side .plugin.on { border-width: 1px 0 0; border-color: var(--line); padding: var(--sp-5) 0; }
+.side .plugin:last-child { border-bottom-width: 1px; }
 .chip.kind-datatype { color: var(--text); }
 .chip.kind-tool { color: var(--muted); }
 .switch-label { margin-left: auto; display: inline-flex; }
@@ -981,9 +1000,9 @@ textarea.py-in {
    as wide as the panel, no wider. */
 .ins-root { display: flex; flex-direction: column; min-width: 0; }
 .ins-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); border-bottom: 1px solid var(--line); flex: none; }
-.ins-content { min-width: 0; padding: var(--sp-3) var(--sp-1) var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.ins-content { min-width: 0; padding: var(--sp-3) 0 var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-content > * { min-width: 0; }
-.ins-section { border-bottom: 1px solid var(--line); padding: var(--sp-4) var(--sp-1) 10px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ins-section { border-bottom: 1px solid var(--line); padding: var(--sp-4) 0 var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-section:last-child { border-bottom: 0; }
 .ins-section[hidden], .ins-row[hidden] { display: none; }
 .ins-section-head { display: flex; align-items: center; gap: var(--sp-4); }
@@ -997,7 +1016,8 @@ textarea.py-in {
 .ins-row.ins-wide { grid-template-columns: minmax(0, 1fr); }
 .ins-row.ins-wide > .ins-label { margin-top: var(--sp-2); }
 .ins-check-row { display: flex; align-items: center; gap: var(--sp-4); cursor: pointer; min-height: 24px; }
-.ins-label { color: var(--muted); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A label wraps to a second line rather than being cut short. */
+.ins-label { color: var(--muted); font-size: var(--fs-body); line-height: 1.25; overflow-wrap: break-word; min-width: 0; }
 .ins-control { min-width: 0; display: flex; align-items: center; }
 .ins-control > * { min-width: 0; }
 .ins-inline { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
@@ -1039,6 +1059,15 @@ textarea.py-in {
 .ins-render-scale .neuroglancer-render-scale-widget > canvas { filter: grayscale(1); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend { width: auto; display: flex; justify-content: space-between; gap: var(--sp-4); color: var(--muted); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend > div { height: auto; }
+/* Not drawn now (the layer hidden, or not in a view): only the foot of the histogram shown (the
+   levels' stubs), so neither the target's line nor Neuroglancer's own white words cross the
+   middle, and "not drawn" there in the theme's words. */
+.ins-render-scale .neuroglancer-render-scale-widget { position: relative; }
+.ins-render-scale[data-inactive] .neuroglancer-render-scale-widget > canvas { clip-path: inset(calc(100% - 4px) 1px 1px 1px); }
+.ins-render-scale[data-inactive] .neuroglancer-render-scale-widget::after {
+  content: "not drawn"; position: absolute; left: 50%; top: 20px; transform: translate(-50%, -50%); pointer-events: none;
+  padding: 0 var(--sp-3); background: var(--ink-0); color: var(--muted); font: var(--fs-caption)/18px var(--ui);
+}
 .ins-code { border: 1px solid var(--line); }
 .ins-code .CodeMirror { height: 180px; background: var(--ink-0); color: var(--text); font: var(--fs-body)/1.45 var(--mono); }
 .ins-code.tall .CodeMirror { height: 60vh; }
@@ -1071,23 +1100,37 @@ textarea.py-in {
 .ins-controls { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
 .ins-controls[hidden] { display: none; }
 .ins-control-list { display: flex; flex-direction: column; gap: var(--sp-2); }
-/* Until the histogram and the colour bar first draw, their canvases have the default 300 × 150 size and cover the range buttons below them. */
+/* Neuroglancer's contrast editor (invlerp): its colour bar and its histogram are drawn by WebGL
+   into the views' canvas, which does not reach the left column, so here the bar is drawn in CSS
+   (the colour map over the range, src/engine/inspector/shader.ts sets --ins-ramp) and the
+   histogram is left to Neuroglancer (its box, quiet).  Until they first draw, their canvases have
+   the default 300 × 150 size and would cover what is below them. */
 .ins-controls .neuroglancer-invlerp-cdfpanel,
-.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; border-color: var(--line); }
-/* The contrast editor's bounds as the app's number fields, and its range buttons (Min-Max, 1-99%) as outline buttons. */
-/* (Neuroglancer sizes each bound to its digits, in ch, and places the range bounds by percentages: no gaps.) */
+.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; border: 1px solid var(--line); box-sizing: border-box; }
+.ins-controls .neuroglancer-invlerp-legend-panel { height: 10px; background: var(--ins-ramp, linear-gradient(90deg, #000, #fff)); }
+.ins-controls .ins-histogram.no-ramp .neuroglancer-invlerp-legend-panel { display: none; }
+.ins-controls .neuroglancer-invlerp-cdfpanel { height: 40px; }
+/* The bounds as readouts in the mono face (fields still: a line under the pointer, the focus's with the focus);
+   the range's (above the histogram) in the text, the window's (its ends, below) muted.
+   (Neuroglancer sizes each bound to its digits, in ch, and places the range bounds by percentages: no gaps.) */
 .ins-root .neuroglancer-invlerp-widget-bounds { align-items: center; margin: var(--sp-1) 0; }
 .ins-root input.neuroglancer-invlerp-widget-bound {
-  height: calc(var(--ctl-h) - 2px); box-sizing: content-box; padding: 0 var(--sp-2); border: 1px solid var(--line);
-  background: var(--ink-0); color: var(--text); font: var(--fs-body) var(--mono);
+  height: 20px; box-sizing: content-box; padding: 0 var(--sp-1); border: 1px solid transparent; margin: 0 calc(-1 * var(--sp-1) - 1px);
+  background: transparent; color: var(--text); font: var(--fs-body) var(--mono); font-variant-numeric: tabular-nums;
 }
+.ins-root input.neuroglancer-invlerp-widget-bound:hover { border-color: var(--line-hover); }
+.ins-root input.neuroglancer-invlerp-widget-bound:focus { border-color: var(--line-focus); background: var(--ink-0); outline: none; }
 .ins-root input.neuroglancer-invlerp-widget-window-bound { color: var(--muted); }
-.ins-root .neuroglancer-invlerp-range-finder-button-container { gap: var(--sp-2); margin-top: var(--sp-2); }
+.ins-root .neuroglancer-invlerp-widget-range-spacer { color: var(--muted); }
+/* Min-Max, 1-99% and 5-95%: one segmented control (shared edges), the preset that applies inverted. */
+.ins-root .neuroglancer-invlerp-range-finder-button-container { display: flex; gap: 0; margin-top: var(--sp-2); }
 .ins-root .neuroglancer-invlerp-range-finder-button {
-  height: var(--ctl-h); box-sizing: border-box; margin: 0; padding: 0 var(--sp-4); border: 1px solid var(--line); border-radius: 0;
+  height: var(--ctl-h); box-sizing: border-box; margin: 0; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); border-radius: 0;
   background: transparent; color: var(--text); font: var(--ctl-fs) var(--ui); cursor: pointer;
 }
-.ins-root .neuroglancer-invlerp-range-finder-button:hover { background: var(--hover); }
+.ins-root .neuroglancer-invlerp-range-finder-button + .neuroglancer-invlerp-range-finder-button { border-left: 0; }
+.ins-root .neuroglancer-invlerp-range-finder-button:hover { background: var(--hover); border-color: var(--line-hover); }
+.ins-root .neuroglancer-invlerp-range-finder-button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
 /* Source */
 .ins-sources { display: flex; flex-direction: column; }
@@ -1548,6 +1591,11 @@ textarea.state-input.tall { min-height: 50vh; }
 /* A part with nothing in it now (a region not shown) takes no gap. */
 .stack > :empty,
 .card > .card-body > :empty { display: none; }
+/* In the left column a card is open at its sides, as a dataset's: lines above and below, its head on
+   the column's edge, its body one step (12 px) in, every row ending on the column's one right edge. */
+.side .card { border-left: 0; border-right: 0; }
+.side .card > .card-head { padding: var(--sp-4) 0; }
+.side .card > .card-body { padding: var(--sp-5) 0 var(--sp-5) var(--sp-5); }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-4); }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
@@ -1586,7 +1634,8 @@ textarea.state-input.tall { min-height: 50vh; }
 /* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it
    where it is (quiet) and the path between, cut short at its start; copy and edit beside it. */
 .source-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 0 var(--sp-1); }
-.source-text { display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); border: 1px solid transparent; cursor: text; }
+/* Its words on the column's edge, its box (shown under the pointer) out beyond it. */
+.source-text { display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); margin-left: calc(-1 * var(--sp-2) - 1px); border: 1px solid transparent; cursor: text; }
 .source-text:hover { border-color: var(--line-hover); background: var(--ink-0); }
 .source-name { font: var(--fs-body)/1.5 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-at { display: flex; min-width: 0; font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); white-space: nowrap; }

@@ -304,6 +304,13 @@ in sheets (28 px); a container sets the height, a button never does. A
 pointer target is never less than 24 px (WCAG 2.5.8), whatever is drawn.
 Every panel works at phone width with no sideways scroll.
 
+The left column has one inset: its content 12 px in from either side, so
+every row starts on one left edge and ends on one right edge, and one
+nested step of 12 px (a dataset's settings and its views, a card's body).
+A row that can be selected spans the column (its outline edge to edge),
+its content on the 12 px edge. Cards and the plugins there are open at
+their sides: lines above and below, not boxes.
+
 ## Elevation & Depth
 
 Flat: parts sit side by side on black, divided by 1 px lines. Only what
@@ -333,6 +340,10 @@ sheets alike. The one round shape is the on/off switch.
 - **On/off**: a round switch, a quiet track off, white on; a tick box (the browser's own, white) where a list of options each turn on.
 - **Cards**: a 1 px line around a head and its body, both black; a closed card is its head.
 - **Layer chips**: a layer's number (Neuroglancer's, in draw order) in a small square, mono: white while shown, faint while hidden.
+- **Layer rows**: the chip and the name, then the layer's kind (image, segmentation, vectors…; "local" before it for data on this computer) in the muted mono caption, right-aligned before the row's icons.
+- **Layer source**: the source line sits above the layer's tabs, and Neuroglancer's Source tab was folded into Details beneath it before this redesign; kept, because a layer's source is what the layer is, so it shows whichever tab is open, while its rarely changed parts (subsources, transforms) stay folded.
+- **Segmented controls**: joined buttons sharing their edges, the chosen one inverted (Min-Max, 1-99% and 5-95%: the preset that applies, while the range is the one it found).
+- **Contrast** (Neuroglancer's invlerp): its colour bar in CSS (the colour map across the range; Neuroglancer draws it, and the histogram, with WebGL into the views' canvas, which does not reach the left column), the bounds as mono readouts, the histogram left to Neuroglancer.
 - **Selection**: a selected row has a 1 px outline in the text's colour and its words in the strong text, no fill and no bar down the left; the row the keyboard is on in a menu or the palette is inverted. Never a grey tint for either.
 - **Icons**: one set of line drawings (`src/sdk/icons.ts`), 16 px with a 1 px line; inside a line of text, at the text's size. Never a character (×, ⋯, ▸, ✓) in an icon's place; an icon-only button has a name.
 - **Browser surfaces**: selected text on white 30 % (black 22 % in the light); a caret in the strong text; thin scrollbars with a 36 % thumb; placeholders a quieter text; ranges and tick boxes the browser's own in the accent.

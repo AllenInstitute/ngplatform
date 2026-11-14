@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeDom, fakeDocument } from "../src/sdk/testing.js";
-import { renderDatasetsPanel } from "../src/ui/panels/datasets.js";
+import { layerKind, renderDatasetsPanel } from "../src/ui/panels/datasets.js";
 import { failedPanel, renderPanel } from "../src/ui/docks.js";
 import { renderRunnerSection } from "../src/ui/runner.js";
 import type { Workbench } from "../src/ui/workbench.js";
@@ -267,5 +267,14 @@ describe("Docks: a panel rendered while an earlier render is still loading", () 
     expect(disposers[0]).toHaveBeenCalledOnce();
     expect(disposers[1]).not.toHaveBeenCalled();
     expect(failed).not.toHaveBeenCalled();
+  });
+});
+
+describe("a layer's kind on its row", () => {
+  it("is Neuroglancer's layer type, vectors for a Zarr Vectors store, nothing until typed", () => {
+    expect(layerKind({ type: "image", sources: ["zarr3://https://example.org/brain.ome.zarr/"] })).toBe("image");
+    expect(layerKind({ type: "segmentation", sources: ["https://example.org/S-21-46.zarrvectors/"] })).toBe("vectors");
+    expect(layerKind({ type: "new", sources: [] })).toBe("");
+    expect(layerKind(undefined)).toBe("");
   });
 });
