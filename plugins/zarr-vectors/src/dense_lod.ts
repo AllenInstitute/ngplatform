@@ -149,12 +149,20 @@ function loadedVolumes(
     const viewArea =
       Math.min(width * pixelSize, sortedExtent[0]) *
       Math.min(height * pixelSize, sortedExtent[1]);
+    // The depth a cross-section shows (and so loads): Neuroglancer's depth
+    // range either side of the plane, from its orthographic projection, in
+    // stored units. Zoomed out it is many chunks deep (10 pixels either side
+    // is millimetres), where taking it as one chunk chose a level far too
+    // fine and loaded the whole slab at it.
+    const shownDepth =
+      2 / Math.max(Math.abs(projectionMat[10]), 1e-30) / Math.cbrt(viewDet) / unitLength;
     return {
       unitVolume,
       loadedVolume: (level) => {
         const chunk = transformedSources[level].source.spec.chunkDataSize;
+        // The chunks cut by the slab: its depth and a chunk more (they straddle its faces).
         const depth = Math.min(
-          Math.cbrt(chunk[0] * chunk[1] * chunk[2]),
+          (Number.isFinite(shownDepth) ? shownDepth : 0) + Math.cbrt(chunk[0] * chunk[1] * chunk[2]),
           sortedExtent[2],
         );
         return viewArea * depth;
