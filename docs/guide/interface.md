@@ -7,7 +7,9 @@ and **Plugins** panels (2) and, below them, the **Tools** section (4),
 there only while a tool is on; Neuroglancer's views (3) fill the rest, and
 the **Activity** dock is at the bottom (5). The Activity dock starts
 collapsed to a status line: the running job or the last message on the
-left (click it to open the dock), and on the right what tools put there.
+left (click it to open the dock; a message that is not an error fades from
+it after a few seconds and stays in Activity), and on the right what tools
+put there.
 The left column and the Activity dock can be resized by dragging their
 edges and collapsed with the icon in their head; the divider between the
 layers and the tools moves too. The sizes, the panel each shows and what is
@@ -162,7 +164,8 @@ take about 0.1 MB rather than 2.3 MB.
 
 Neuroglancer's own views, unchanged: cross-sections and the 3-D view, in
 whichever layout the scene uses. The position (in the scene's units) is at
-the top left; click it to type a position. Each panel has buttons to make
+the top left; click it to type a position. After it, beyond a thin line,
+the pointer's position over the views, each value with its unit. Each panel has buttons to make
 it fill the view or to open it in a new window, and the 3-D panel has
 switches along its bottom: **Sections**, and those of tools that draw there.
 
@@ -217,22 +220,27 @@ keys move between them), kept together by what they work on:
 panel) and *Vectors* (Track filtering, Luxar). A tool made for one kind
 of data is listed while that data is selected. Turning a tool on opens it
 here (and the column, if it was collapsed); with no tool on, the section
-is not there and the layers have the whole column. Drag the divider above
+is not there and the layers have the whole column. The tabs name the
+tools; the section has no title of its own. Drag the divider above
 the section (or focus it and use the arrow keys) to share the column
 between the layers and the tools; the arrow at the right of its head folds
 it to its tabs. Long panels are in cards that fold away (Registration's
 Transform, Landmarks…; Settings' sign-ins), each kept open or closed as
-you left it.
+you left it. In the left column everything starts on one edge, 12 px in,
+and what belongs to something above it (a dataset's settings and views, a
+card's contents) one step further in.
 
 ## Layer controls
 
-Each dataset in the Layers panel is a card. Selecting a dataset (its row,
-or in the views) opens its card on its settings; the arrow at the left of
-the row opens and closes it, and several cards may be open at once. Open,
-the card grows to hold them: one box around the dataset's row and its
-settings (the selected dataset's in green), so what you edit is plainly
-that dataset's. For a dataset shown through several layers, they are those
-of the view selected in its list.
+Each dataset in the Layers panel is a card. Its row shows the layer's
+number, its name and, at the right before its buttons, what kind of data
+it is (`image`, `segmentation`, `annotation`, `vectors`; `local` before it
+for data on this computer). Selecting a dataset (its row, or in the views)
+opens its card on its settings and outlines its row; the arrow at the left
+of the row opens and closes it, and several cards may be open at once.
+Open, the card's settings are beneath its row, one step in, so what you
+edit is plainly that dataset's. For a dataset shown through several
+layers, they are those of the view selected in its list.
 
 At the top of the open card is its **source**: where the data comes from
 (its URL, editable), under **Details** its parts (subsources), its
@@ -240,12 +248,13 @@ At the top of the open card is its **source**: where the data comes from
 OME-Zarr image's coordinate systems and levels, and **Add a data source**.
 Its sign-in follows, only when its data is not public (or did not load);
 otherwise it is in Settings › Sign-in. Below are its layer's own tabs
-(Neuroglancer's, its Source being the part above), the tab chosen kept
-with the layer; a layer opens on **Rendering**.
+(Neuroglancer's, its Source being the part above, so where the data comes
+from shows whichever tab is open), the tab chosen kept with the layer; a
+layer opens on **Rendering**.
 
 | Tab | What it holds |
 |---|---|
-| **Rendering** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
+| **Rendering** | How it is drawn: resolution (its histogram says *not drawn* while the layer is hidden or not in a view), opacity, blending; for images the **Colour map**, then the shader's controls (contrast: the colour bar across the range, the range's ends, a histogram, and Min-Max, 1-99% and 5-95% as one control, the one that set the range marked until the range is changed another way) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | The tools that draw points, lines, boxes, ellipsoids and polylines (the one place to draw: the Annotations plugin's **Draw…** opens it), and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |
@@ -350,16 +359,19 @@ overlays at once are not there.
 ## 5. Activity dock
 
 Collapsed to one line at first, the status line: the running job and its
-progress, else the last message, on the left; on the right, what tools
-put there (in monospace, shortened with … when the line is full; the
-whole text in its tooltip). Click the message (or the icon at its end) to
-open the dock.
+progress, else the last message, on the left (a message that is not an
+error fades after a few seconds; all of them stay in the dock); on the
+right, what tools put there (in monospace, shortened with … when the line
+is full; the whole text in its tooltip). On a narrow window the message
+gives way first. Click the message (or the icon at its end) to open the
+dock.
 
 With image layers that lie inside one another (a HiP-CT overview and its
 zooms), the [Scale navigator](../plugins/scale-navigator.md) puts two items
 there: the layers holding the position, coarse to fine with their voxel
 sizes (click one to frame it), and the level of the selected layer's
-pyramid Neuroglancer draws at this zoom (`level 4/7 · 323 µm`).
+pyramid Neuroglancer draws at this zoom (`level 4/7 · 323 µm`), in every
+layout (worked out from the zoom, `≈`, when no section draws the layer).
 
 | Panel | What it holds |
 |---|---|
