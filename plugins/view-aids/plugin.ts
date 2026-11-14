@@ -77,12 +77,13 @@ class ViewAids {
     this.fallback = this.makeFallback();
     this.overlay.element.append(this.labels.canvas, this.cube.element, this.strip.element, this.fallback.element);
     this.toggles = {
-      cube: ctx.ui.viewToggle({ label: "Cube", title: "The orientation cube (View aids)", value: this.saved.cube, onChange: (v) => this.write({ cube: v }) }),
-      labels: ctx.ui.viewToggle({ label: "Labels", title: "Point annotations' descriptions, at the sides (View aids)", value: this.saved.labels, onChange: (v) => this.write({ labels: v }) }),
+      cube: ctx.ui.viewToggle({ label: "Cube", title: "The orientation cube (View aids)", value: this.saved.cube, order: 10, onChange: (v) => this.write({ cube: v }) }),
+      labels: ctx.ui.viewToggle({ label: "Labels", title: "Point annotations' descriptions, at the sides (View aids)", value: this.saved.labels, order: 11, onChange: (v) => this.write({ labels: v }) }),
       graphics: ctx.ui.viewToggle({
         label: "Graphics",
         title: "Off hides the axis lines, the box, the scale bar and the view aids, for a clean picture (View aids)",
         value: this.saved.hidden === undefined,
+        order: 12,
         onChange: (v) => this.setGraphics(v),
       }),
     };

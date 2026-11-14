@@ -129,6 +129,8 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     draw3d: (layer, drawer) => engine.draw3d(layer, drawer),
     panels: () => engine.panels(),
     layerTransform: (layer) => engine.layerTransform(layer),
+    layerBounds: (layer) => engine.layerBounds(layer),
+    renderedLevel: (layer) => engine.renderedLevel(layer),
     setLayerTransform: (layer, matrix) => {
       engine.setLayerTransform(layer, matrix);
       store.scheduleSettle();

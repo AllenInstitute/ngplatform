@@ -123,7 +123,7 @@ export interface HostServices {
   ui: {
     toast(message: string, kind?: "info" | "error"): void;
     confirm(message: string): Promise<boolean>;
-    viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
+    viewToggle(spec: { label: string; title?: string; value: boolean; order?: number; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
     overlay(): { element: HTMLElement; dispose(): void };
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
     statusItem(element: HTMLElement, options?: { order?: number; label?: string }): Disposer;
