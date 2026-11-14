@@ -56,6 +56,7 @@
   --warn: #d9a94a;
   --err: #e5736c;
   --err-line: #5c3330;
+  --warn-line: #5c4a26;
   /* An action that deletes: red words, a red fill under the pointer. */
   --danger: #8e3a36;
   --danger-hover: #a64540;
@@ -484,6 +485,10 @@ kbd {
 :where(.dock-pane) :where(h3, h4):where(:not([class])),
 .capture-more > summary, .keys-all > summary {
   margin: 0 0 var(--sp-4);
+}
+.section-title, .ins-section-title,
+:where(.dock-pane) :where(h3, h4):where(:not([class])),
+.capture-more > summary, .keys-all > summary {
   font: 600 var(--fs-heading)/1.2 var(--ui);
   color: var(--text);
 }
@@ -511,8 +516,9 @@ kbd {
   background: transparent; text-align: left; width: 100%; box-sizing: border-box; color: inherit;
 }
 .ds-row:hover { background: var(--hover); }
-/* Selected: a light-grey bar down the left and a tint. */
-.ds-row.selected { background: var(--select-soft); box-shadow: inset 2px 0 0 var(--select); }
+/* Selected: a tint, its name in the strong text (no bar down the left). */
+.ds-row.selected { background: var(--select-soft); }
+:is(.ds-row, .layer-row).selected .ds-name { color: var(--text-strong); }
 .ds-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ds-row .sub {
   grid-column: 3 / 6; color: var(--faint); font: var(--fs-caption)/1.3 var(--ui); font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
@@ -540,7 +546,7 @@ kbd {
 .ds-row.other { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .ds-row.other .sub { grid-column: 2 / -1; }
 /* A notice to act on: raised grey with an amber edge down the left. */
-.note-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: var(--sp-4); background: var(--ink-3); box-shadow: inset 2px 0 0 var(--warn); color: var(--text); font-size: var(--fs-body); }
+.note-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: var(--sp-4); background: var(--ink-3); border: 1px solid var(--warn-line); color: var(--text); font-size: var(--fs-body); }
 .panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .ds-row.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 /* Open from this computer: a tick box naming each dataset found, its format, and where it is. */
@@ -557,7 +563,7 @@ kbd {
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r); cursor: pointer; border: 1px solid transparent; font-size: var(--fs-body);
 }
 .layer-row:hover { background: var(--hover); }
-.layer-row.selected { background: var(--select-soft); box-shadow: inset 2px 0 0 var(--select); }
+.layer-row.selected { background: var(--select-soft); }
 .layer-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A view's tick box keeps its row as low as the name beside it. */
 .layer-row .choice { min-height: 0; }
@@ -611,8 +617,10 @@ kbd {
    own), the settings below a line, darker than the dock; the selected dataset's card with the selection's bar. */
 .ds-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-radius: var(--r); }
 .ds-card.open { background: var(--ink-1); padding-bottom: var(--sp-4); }
-.ds-card.open.selected { box-shadow: inset 2px 0 0 var(--select); }
-.ds-card.open.selected .ds-row.card-row { background: var(--select-soft); box-shadow: none; }
+.ds-card.open.selected .ds-row.card-row { background: var(--select-soft); }
+/* More room between datasets than within one: an open card stands apart from its neighbours. */
+.ds-card.open:not(:first-child) { margin-top: var(--sp-3); }
+.ds-card.open:not(:last-child) { margin-bottom: var(--sp-3); }
 .ds-row.card-row { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
 .ds-row.card-row .sub { grid-column: 3 / 6; }
 /* The card's arrow, as the cards' (.card-head::before): right closed, down open. */
@@ -646,7 +654,7 @@ kbd {
 .plugin-name { font-weight: 600; }
 
 .plugin .note { margin: 0; }
-.plugin-groups { display: grid; gap: var(--sp-6); }
+.plugin-groups { display: grid; gap: var(--sp-7); }
 .plugin-group .section-title { margin-top: 0; }
 .plugin-head .link { font-size: var(--fs-body); }
 
@@ -832,7 +840,8 @@ textarea.py-in {
 .ins-section:last-child { border-bottom: 0; }
 .ins-section[hidden], .ins-row[hidden] { display: none; }
 .ins-section-head { display: flex; align-items: center; gap: var(--sp-4); }
-.ins-section-title { margin: 0 0 var(--sp-1); font: 600 var(--fs-heading)/1.2 var(--ui); color: var(--text); flex: 1; }
+/* A section of the inspector: the panels' one section title (.section-title), closer to its rows. */
+.ins-section-title { margin: 0 0 var(--sp-1); flex: 1; }
 .ins-subhead { margin: var(--sp-4) 0 var(--sp-1); font: 600 var(--fs-body)/1.2 var(--ui); color: var(--muted); }
 .ins-ome-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-1) 10px; font-size: var(--fs-body); }
 .ins-ome-value { font-size: var(--fs-caption); font-variant-numeric: tabular-nums; color: var(--text); overflow-wrap: anywhere; }
@@ -1089,7 +1098,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .menu-item.with-detail { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 300px; }
 .menu-detail { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--fs-body); }
 .menu-item.muted .menu-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--swatch-line); }
-.menu-item.current { box-shadow: inset 2px 0 0 var(--accent); }
+.menu-item.current { background: var(--select-soft); color: var(--text-strong); }
 .menu-item.current .menu-label { font-weight: 600; }
 .menu-sep { height: 1px; background: var(--line); margin: var(--sp-2) var(--sp-1); }
 
@@ -1109,7 +1118,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .history-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-mark { color: var(--accent); font-size: var(--fs-caption); text-align: center; }
 .history-datasets { color: var(--muted); }
-.history-row.current { box-shadow: inset 2px 0 0 var(--accent); }
+.history-row.current { background: var(--select-soft); color: var(--text-strong); }
 .history-row.current .history-label { font-weight: 600; }
 .history-row.undone .history-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
 .history-row.branch .history-label { color: var(--muted); }
@@ -1128,8 +1137,8 @@ textarea.state-input.tall { min-height: 50vh; }
   padding: var(--sp-4) var(--sp-5); max-width: min(380px, calc(100vw - 32px));
   box-shadow: var(--shadow-float);
 }
-/* An error: red words and a red edge down the left. */
-.toast.error { box-shadow: inset 2px 0 0 var(--err), var(--shadow-float); }
+/* An error: red words in a red edge. */
+.toast.error { border-color: var(--err-line); color: var(--err); }
 .toast.offer { display: grid; gap: var(--sp-2); }
 .toast.offer .row-actions { justify-content: flex-end; margin-top: var(--sp-2); }
 .overview-list { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: var(--sp-2) var(--sp-5); align-items: center; font-size: var(--fs-body); margin: var(--sp-4) 0 0; }
