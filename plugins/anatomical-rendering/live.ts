@@ -16,6 +16,12 @@
  * the first passes are done, short rays toward the light and along the
  * normal stand in. Region colours, light maps and depth of field are the
  * path tracer's only.
+ *
+ * Several images (up to MAX_VOLUMES: an overview and volumes of interest
+ * within it, say) are drawn as one volume: each its own level, table and
+ * material, placed by its layer's transform, and where they overlap a point
+ * is the finest one's. One ray steps through them all, a voxel of whichever
+ * it is in a step; the light held covers all of them.
  */
 import type { Frame3d } from "@ngplatform/sdk";
 import { VolumeClient } from "../volume-view/volume_client.js";
@@ -42,10 +48,14 @@ export type LivePreset = LevelPreset;
 /** The preset's table at the level's values (`levelTable`). */
 export const liveTable = levelTable;
 
-/** What a frame is drawn with: the view the path tracer would be sent for it, and its preset. */
+/**
+ * What a frame is drawn with: the view the path tracer would be sent for it, and the images drawn together as one
+ * volume, each with its preset and where its layer's transform moves it (millimetres, column-major). The first
+ * image's preset gives the light, the surroundings and the exposure, and the crops are fractions of it.
+ */
 export interface LiveLook {
   view: ViewSpec;
-  preset: LivePreset;
+  volumes: { url: string; preset: LivePreset; placement?: ArrayLike<number> }[];
 }
 
 /**
@@ -71,13 +81,22 @@ export function lightGrid(size: readonly number[]): { cell: number; grid: [numbe
   return { cell, grid: [0, 1, 2].map((a) => Math.ceil(size[a] / cell)) as [number, number, number] };
 }
 
+/** The most volumes drawn together as one: each takes two of the GPU's texture units (WebGL 2 promises 16). */
+export const MAX_VOLUMES = 5;
+
 /** The shader's values for a view of a level, as the path tracer's parameter block has them (`LocalRenderer.pack`). */
 export type LiveParams = ReturnType<typeof liveParams>;
 
-export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level8, "size" | "voxelToRas">) {
+/**
+ * `placement`: where the layer's own transform moves the image from where its metadata puts it (millimetres to
+ * millimetres, column-major; a volume of interest placed in an overview), applied before the view's world.
+ */
+export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level8, "size" | "voxelToRas">, placement?: ArrayLike<number>) {
   const inv = rowMajor(view.inv_view_projection);
   const wfp = view.world_from_physical ? rowMajor(view.world_from_physical) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-  const vfw = invert(mul(wfp, level.voxelToRas));
+  const ras = placement ? mul(rowMajor(placement), level.voxelToRas) : level.voxelToRas;
+  const wfv = mul(wfp, ras);
+  const vfw = invert(wfv);
   const [right, up, back] = cameraAxes(inv);
   const ld = view.light?.direction ?? [0.4, 0.7, 0.6];
   let L = view.light?.camera_space === false ? ld : [0, 1, 2].map((i) => ld[0] * right[i] + ld[1] * up[i] + ld[2] * back[i]);
@@ -91,10 +110,7 @@ export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level
   return {
     // Column-major, for the shader.
     voxFromWorld: [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => vfw[4 * r + c])),
-    worldFromVox: (() => {
-      const wfv = mul(wfp, level.voxelToRas);
-      return [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => wfv[4 * r + c]));
-    })(),
+    worldFromVox: [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => wfv[4 * r + c])),
     dims: level.size,
     cropLo: crop ? crop[0].map((f, a) => f * level.size[a] - 0.5) : [-1e9, -1e9, -1e9],
     cropHi: crop ? crop[1].map((f, a) => f * level.size[a] - 0.5) : [1e9, 1e9, 1e9],
@@ -120,35 +136,77 @@ export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level
   };
 }
 
+/** A voxel's size in the world (the cube root of its volume there): which of two volumes is the finer. */
+export function voxelWorldSize(worldFromVox: readonly number[]): number {
+  const m = worldFromVox;
+  const det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
+  return Math.cbrt(Math.abs(det));
+}
+
+/**
+ * The box the light held covers, in the world (axis-aligned, about every volume), its cell's side, and cells along
+ * x, y and z: at most LIGHT_SIDE along the longest side.
+ */
+export function lightBox(volumes: readonly { worldFromVox: readonly number[]; dims: readonly number[] }[]): { lo: number[]; cell: number; grid: [number, number, number] } {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const { worldFromVox: m, dims } of volumes) {
+    for (let c = 0; c < 8; ++c) {
+      const v = [0, 1, 2].map((a) => ((c >> a) & 1 ? dims[a] - 0.5 : -0.5));
+      for (let r = 0; r < 3; ++r) {
+        const w = m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r];
+        lo[r] = Math.min(lo[r], w);
+        hi[r] = Math.max(hi[r], w);
+      }
+    }
+  }
+  const extent = [0, 1, 2].map((a) => Math.max(hi[a] - lo[a], 1e-9));
+  const cell = Math.max(...extent) / LIGHT_SIDE;
+  return { lo, cell, grid: [0, 1, 2].map((a) => Math.max(1, Math.ceil(extent[a] / cell))) as [number, number, number] };
+}
+
+/** One volume as the shaders take it: its level, its table, and its values for the view. */
+interface Drawn {
+  vol: Vol;
+  q: LiveParams;
+}
+
 const VS = `#version 300 es
 void main() {
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;
   gl_Position = vec4(p, 0.0, 1.0);
 }`;
 
-// What the shaders read: the level, the table, the clear bricks, the cuts, the shading, the light and
-// the surroundings.
-const COMMON = `precision highp float;
+/**
+ * What the shaders read, for `n` volumes drawn as one: each volume's level, its row of the table, its clear bricks
+ * and its material; the cuts; the light and the surroundings. The volumes are in order, finest first: where they
+ * overlap, a point is the finest one's. A ray carries where it is in each volume and when it is inside each, so a
+ * sample costs one look-up whichever volume it falls in. Samplers in arrays may be indexed only by constants in
+ * GLSL ES 3.00, so each volume's are their own, chosen in a chain of ifs.
+ */
+const COMMON = (n: number) => {
+  const each = (f: (k: number) => string) => Array.from({ length: n }, (_, k) => f(k)).join("\n");
+  const chain = (f: (k: number) => string, otherwise: string) => `${Array.from({ length: n }, (_, k) => `if (k == ${k}) ${f(k)}`).join("\n  else ")}\n  ${otherwise}`;
+  return `precision highp float;
 precision highp sampler3D;
-uniform sampler3D uVol;
+#define N ${n}
+${each((k) => `uniform sampler3D uVol${k};\nuniform highp sampler3D uOcc${k};`)}
 uniform sampler2D uTf;
-uniform highp sampler3D uOcc;
-uniform bool uHasOcc;
-uniform mat4 uVoxFromWorld;
-uniform mat4 uWorldFromVox;
-uniform vec3 uDims;
+uniform bool uHasOcc[N];
+uniform mat4 uVoxFromWorld[N];
+uniform vec3 uDims[N];
+uniform float uDensity[N];
+uniform float uPhaseG[N];
+uniform float uAlbedo[N];
+uniform float uShadeMix[N];
+uniform float uGradScale[N];
+uniform float uRoughness[N];
+uniform float uSpecular[N];
+uniform float uInset[N];
+uniform mat4 uCropFromWorld;
 uniform vec3 uCropLo;
 uniform vec3 uCropHi;
 uniform vec4 uClips[6];
 uniform int uNClip;
-uniform float uDensity;
-uniform float uPhaseG;
-uniform float uAlbedo;
-uniform float uShadeMix;
-uniform float uGradScale;
-uniform float uRoughness;
-uniform float uSpecular;
-uniform float uInset;
 uniform vec3 uLightDir;
 uniform vec3 uLightRgb;
 uniform vec3 uEnvTop;
@@ -156,33 +214,109 @@ uniform vec3 uEnvHorizon;
 uniform vec3 uEnvBottom;
 uniform vec3 uEnvUp;
 uniform float uEnvScale;
-uniform float uCell;
+uniform vec3 uLightLo;
+uniform float uCellW;
 
-vec3 world(vec3 v) { return (uWorldFromVox * vec4(v, 1.0)).xyz; }
-float tex(vec3 v) { return texture(uVol, (v + 0.5) / uDims).r; }
-vec4 tf(float t) { return texture(uTf, vec2((clamp(t, 0.0, 1.0) * ${TF_SIZE - 1}.0 + 0.5) / ${TF_SIZE}.0, 0.5)); }
-vec3 grad(vec3 v) {
-  return vec3(tex(v + vec3(1.0, 0.0, 0.0)) - tex(v - vec3(1.0, 0.0, 0.0)),
-              tex(v + vec3(0.0, 1.0, 0.0)) - tex(v - vec3(0.0, 1.0, 0.0)),
-              tex(v + vec3(0.0, 0.0, 1.0)) - tex(v - vec3(0.0, 0.0, 1.0))) * 0.5;
+struct Ray {
+  vec3 o;
+  vec3 d;
+  vec3 ov[N];
+  vec3 dv[N];
+  float vox[N];
+  float tin[N];
+  float tout[N];
+  float t0;
+  float t1;
+};
+
+float tex(int k, vec3 v) {
+  ${chain((k) => `return texture(uVol${k}, (v + 0.5) / uDims[${k}]).r;`, "return 0.0;")}
 }
-bool cut(vec3 w, vec3 v) {
-  if (any(lessThan(v, uCropLo)) || any(greaterThan(v, uCropHi))) return true;
+bool occupied(int k, vec3 cell) {
+  ${chain((k) => `return texelFetch(uOcc${k}, ivec3(clamp(cell, vec3(0.0), vec3(textureSize(uOcc${k}, 0) - 1))), 0).r != 0.0;`, "return true;")}
+}
+vec4 tf(int k, float t) { return texture(uTf, vec2((clamp(t, 0.0, 1.0) * ${TF_SIZE - 1}.0 + 0.5) / ${TF_SIZE}.0, (float(k) + 0.5) / float(N))); }
+vec3 grad(int k, vec3 v) {
+  return vec3(tex(k, v + vec3(1.0, 0.0, 0.0)) - tex(k, v - vec3(1.0, 0.0, 0.0)),
+              tex(k, v + vec3(0.0, 1.0, 0.0)) - tex(k, v - vec3(0.0, 1.0, 0.0)),
+              tex(k, v + vec3(0.0, 0.0, 1.0)) - tex(k, v - vec3(0.0, 0.0, 1.0))) * 0.5;
+}
+// The gradient in the world: the way the value rises there.
+vec3 worldGrad(int k, vec3 g) { return transpose(mat3(uVoxFromWorld[k])) * g; }
+vec3 safeDir(vec3 dv) { return mix(dv, vec3(1e-12), lessThan(abs(dv), vec3(1e-12))); }
+// Where a ray (origin o, unit direction d, world) is in the box lo..hi of a space it is ov + dv t in.
+vec2 slab(vec3 ov, vec3 dv, vec3 lo, vec3 hi) {
+  vec3 safe = safeDir(dv);
+  vec3 ta = (lo - ov) / safe;
+  vec3 tb = (hi - ov) / safe;
+  vec3 tlo = min(ta, tb);
+  vec3 thi = max(ta, tb);
+  return vec2(max(max(tlo.x, tlo.y), tlo.z), min(min(thi.x, thi.y), thi.z));
+}
+// A ray from o toward d: where it is in each volume, and when it is inside each and inside the crop.
+Ray ray(vec3 o, vec3 d) {
+  Ray r;
+  r.o = o;
+  r.d = d;
+  vec3 cv = (uCropFromWorld * vec4(o, 1.0)).xyz;
+  vec2 crop = slab(cv, mat3(uCropFromWorld) * d, uCropLo, uCropHi);
+  r.t0 = 1e30;
+  r.t1 = -1e30;
+  for (int k = 0; k < N; ++k) {
+    r.ov[k] = (uVoxFromWorld[k] * vec4(o, 1.0)).xyz;
+    r.dv[k] = mat3(uVoxFromWorld[k]) * d;
+    r.vox[k] = 1.0 / max(length(r.dv[k]), 1e-12);
+    vec2 s = slab(r.ov[k], r.dv[k], vec3(-0.5), uDims[k] - 0.5);
+    r.tin[k] = max(max(s.x, crop.x), 0.0);
+    r.tout[k] = min(s.y, crop.y);
+    if (r.tout[k] > r.tin[k]) {
+      r.t0 = min(r.t0, r.tin[k]);
+      r.t1 = max(r.t1, r.tout[k]);
+    }
+  }
+  return r;
+}
+// The ray's helpers read it in place (macros): passing a Ray, arrays and all, to a function copies it at every step.
+// The volume the ray is in at t (the finest of those it is in), else -1.
+#define OWNER(r, t, k) k = -1; for (int j_ = 0; j_ < N; ++j_) { if ((t) >= r.tin[j_] && (t) < r.tout[j_]) { k = j_; break; } }
+// Where the ray next enters a volume after t (1e30: none).
+#define NEXT_IN(r, t, n) n = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (r.tout[j_] > r.tin[j_] && r.tin[j_] > (t)) n = min(n, r.tin[j_]); }
+// A clear run cut short where the ray enters a finer volume than k.
+#define CAP_FINER(r, k, t, run) for (int j_ = 0; j_ < N; ++j_) { if (j_ < k && r.tout[j_] > r.tin[j_] && r.tin[j_] > (t)) run = min(run, r.tin[j_] - (t)); }
+bool clipped(vec3 w) {
   for (int i = 0; i < 6; ++i) {
     if (i >= uNClip) break;
     if (dot(uClips[i].xyz, w) + uClips[i].w < 0.0) return true;
   }
   return false;
 }
-float sigma(vec3 w, vec3 v) { return cut(w, v) ? 0.0 : uDensity * tf(tex(v)).a; }
-// The transmittance from a point toward dir (world, unit), from 1.5 voxels to reach voxels away.
-float clear(vec3 w, vec3 v, vec3 dir, float reach) {
-  vec3 dv = mat3(uVoxFromWorld) * dir;
-  float vox = 1.0 / max(length(dv), 1e-12);
+// The extinction at world point w, voxel point v of volume k.
+float sigma(int k, vec3 w, vec3 v) { return clipped(w) ? 0.0 : uDensity[k] * tf(k, tex(k, v)).a; }
+// In a brick of volume k that its table leaves clear, how far (world units) a ray (dv voxels a world unit) at voxel
+// point v goes before it leaves the brick; else 0.
+float clearRun(int k, vec3 v, vec3 dv) {
+  if (!uHasOcc[k]) return 0.0;
+  vec3 cell = floor((v + 0.5) / ${BRICK}.0);
+  if (occupied(k, cell)) return 0.0;
+  vec3 safe = safeDir(dv);
+  vec3 side = cell * ${BRICK}.0 - 0.5 + ${BRICK}.0 * step(0.0, safe);
+  vec3 leave = (side - v) / safe;
+  return max(min(min(leave.x, leave.y), leave.z), 0.0);
+}
+// The transmittance from world point w toward dir (unit), from 1.5 voxels to reach voxels away (of the volume it starts in).
+float clear(vec3 w, vec3 dir, float reach) {
+  Ray r = ray(w, dir);
+  int k0;
+  OWNER(r, 0.0, k0)
+  if (k0 < 0) return 1.0;
+  float vox = r.vox[k0];
   float T = 1.0;
   float before = 0.0;
   for (float d = 1.5; d < reach; d *= 2.0) {
-    T *= exp(-sigma(w + dir * (d * vox), v + dv * (d * vox)) * (d - before) * vox);
+    float t = d * vox;
+    int k;
+    OWNER(r, t, k)
+    if (k >= 0) T *= exp(-sigma(k, r.o + r.d * t, r.ov[k] + r.dv[k] * t) * (d - before) * vox);
     before = d;
   }
   return T;
@@ -195,38 +329,17 @@ float hg(float c, float g) {
   float d = 1.0 + g * g - 2.0 * g * c;
   return (1.0 - g * g) / (12.566371 * d * sqrt(d));
 }
-float phongExp() { return max(1.0, 2.0 / max(uRoughness * uRoughness, 1e-4) - 2.0); }
-vec3 brdfCos(vec3 n, vec3 wo, vec3 wl, vec3 albedo) {
+float phongExp(int k) { return max(1.0, 2.0 / max(uRoughness[k] * uRoughness[k], 1e-4) - 2.0); }
+vec3 brdfCos(int k, vec3 n, vec3 wo, vec3 wl, vec3 albedo) {
   float cl = dot(n, wl);
   if (cl <= 0.0) return vec3(0.0);
   vec3 h = normalize(wo + wl);
-  float e = phongExp();
-  float s = uSpecular * (e + 8.0) / 25.132741 * pow(max(dot(n, h), 0.0), e);
-  return (albedo * ((1.0 - uSpecular) * 0.31830989) + vec3(s)) * cl;
+  float e = phongExp(k);
+  float s = uSpecular[k] * (e + 8.0) / 25.132741 * pow(max(dot(n, h), 0.0), e);
+  return (albedo * ((1.0 - uSpecular[k]) * 0.31830989) + vec3(s)) * cl;
 }
-vec3 safeDir(vec3 dv) { return mix(dv, vec3(1e-12), lessThan(abs(dv), vec3(1e-12))); }
-// Where a ray from voxel point v, dv voxels a world unit, is in the level and its crop (world units from v).
-vec2 span(vec3 v, vec3 dv) {
-  vec3 bmin = max(vec3(-0.5), uCropLo - 0.5);
-  vec3 bmax = min(uDims - 0.5, uCropHi + 0.5);
-  vec3 safe = safeDir(dv);
-  vec3 ta = (bmin - v) / safe;
-  vec3 tb = (bmax - v) / safe;
-  vec3 tlo = min(ta, tb);
-  vec3 thi = max(ta, tb);
-  return vec2(max(max(max(tlo.x, tlo.y), tlo.z), 0.0), min(min(thi.x, thi.y), thi.z));
-}
-// In a brick the preset leaves clear, how far (world units) the ray goes before it leaves the brick; else 0.
-float clearRun(vec3 v, vec3 dv) {
-  if (!uHasOcc) return 0.0;
-  ivec3 grid = textureSize(uOcc, 0);
-  vec3 cell = clamp(floor((v + 0.5) / ${BRICK}.0), vec3(0.0), vec3(grid - 1));
-  if (texelFetch(uOcc, ivec3(cell), 0).r != 0.0) return 0.0;
-  vec3 safe = safeDir(dv);
-  vec3 side = cell * ${BRICK}.0 - 0.5 + ${BRICK}.0 * step(0.0, safe);
-  vec3 leave = (side - v) / safe;
-  return max(min(min(leave.x, leave.y), leave.z), 0.0);
-}`;
+`;
+};
 
 // Random numbers and directions, for the light held and the path tracer.
 const RANDOM = `uint rs;
@@ -267,52 +380,77 @@ vec3 hgdir(vec3 w, float g) {
   float ph = 6.2831853 * rnd();
   return normalize(basis(w) * vec3(sn * cos(ph), sn * sin(ph), c));
 }
-// The transmittance from voxel point v toward dir (world, unit) to the level's edge, a voxel a step.
-float transmit(vec3 v, vec3 dir) {
-  vec3 dv = mat3(uVoxFromWorld) * dir;
-  vec3 w = world(v);
-  float dt = 1.0 / length(dv);
-  float t1 = span(v, dv).y;
+// The transmittance from world point w toward dir (unit) to where it leaves every volume, a voxel (of the volume it
+// is in) a step.
+float transmit(vec3 w, vec3 dir) {
+  Ray r = ray(w, dir);
   float tau = 0.0;
-  float t = 0.5 * dt;
-  for (int k = 0; k < 4096; ++k) {
-    if (t >= t1 || tau > 8.0) break;
-    float run = clearRun(v + dv * t, dv);
+  int k0;
+  OWNER(r, r.t0, k0)
+  float t = r.t0 + 0.5 * (k0 >= 0 ? r.vox[k0] : 0.0);
+  for (int i = 0; i < 4096; ++i) {
+    if (t >= r.t1 || tau > 8.0) break;
+    int k;
+    OWNER(r, t, k)
+    if (k < 0) {
+      float n_;
+      NEXT_IN(r, t, n_)
+      t = n_;
+      continue;
+    }
+    float dt = r.vox[k];
+    vec3 vk = r.ov[k] + r.dv[k] * t;
+    float run = clearRun(k, vk, r.dv[k]);
     if (run > 0.0) {
+      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
-    tau += sigma(w + dir * t, v + dv * t) * dt;
+    tau += sigma(k, r.o + r.d * t, vk) * dt;
     t += dt;
   }
   return exp(-tau);
 }
-// Moves voxel point v to where a ray toward dir first scatters (where its optical depth reaches
-// -log(1 - u), stepVox voxels a step); false when it leaves the level first.
-bool collide(inout vec3 v, vec3 dir, float stepVox) {
-  vec3 dv = mat3(uVoxFromWorld) * dir;
-  vec3 w = world(v);
-  float dt = stepVox / length(dv);
-  vec2 sp = span(v, dv);
+// Moves world point w to where a ray toward dir first scatters (where its optical depth reaches -log(1 - u),
+// stepVox voxels a step), and says which volume it is in there; false when it leaves every volume first.
+bool collide(inout vec3 w, out int at, vec3 dir, float stepVox) {
+  Ray r = ray(w, dir);
   float target = -log(1.0 - rnd());
   float tau = 0.0;
-  float t = sp.x + dt * rnd();
-  for (int k = 0; k < 8192; ++k) {
-    if (t >= sp.y) return false;
-    float run = clearRun(v + dv * t, dv);
+  at = -1;
+  int k0;
+  OWNER(r, r.t0, k0)
+  float t = r.t0 + stepVox * (k0 >= 0 ? r.vox[k0] : 0.0) * rnd();
+  for (int i = 0; i < 8192; ++i) {
+    if (t >= r.t1) return false;
+    int k;
+    OWNER(r, t, k)
+    if (k < 0) {
+      float n_;
+      NEXT_IN(r, t, n_)
+      t = n_;
+      continue;
+    }
+    float dt = stepVox * r.vox[k];
+    vec3 vk = r.ov[k] + r.dv[k] * t;
+    float run = clearRun(k, vk, r.dv[k]);
     if (run > 0.0) {
+      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
-    tau += sigma(w + dir * t, v + dv * t) * dt;
+    tau += sigma(k, r.o + r.d * t, vk) * dt;
     if (tau >= target) {
-      v += dv * t;
+      w = r.o + r.d * t;
+      at = k;
       return true;
     }
     t += dt;
   }
   return false;
-}`;
+}
+// Where world point w is in volume k (voxels).
+vec3 voxOf(int k, vec3 w) { return (uVoxFromWorld[k] * vec4(w, 1.0)).xyz; }`;
 
 // The tone map (pathtrace.wgsl tonemap), and the dither that shares pixels between two images.
 const TONE = `vec3 tone(vec3 c) {
@@ -322,11 +460,11 @@ const TONE = `vec3 tone(vec3 c) {
 }
 float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))); }`;
 
-// Each pixel's ray through the level, from the camera of this frame. Light as the path tracer's
+// Each pixel's ray through the volumes, from the camera of this frame. Light as the path tracer's
 // (pathtrace.wgsl: brdf_cos, hg, envlight), from the light held for the object; until it is, the
 // light's through a short ray toward it and the surroundings' through one along the surface's normal.
-const FS = (o: Frame3d["outputs"]) => `#version 300 es
-${COMMON}
+const FS = (o: Frame3d["outputs"], n: number) => one(n, `#version 300 es
+${COMMON(n)}
 ${TONE}
 uniform highp sampler3D uLight;
 uniform bool uHasLight;
@@ -341,67 +479,76 @@ layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
 
-vec4 lightAt(vec3 v) { return texture(uLight, (v + 0.5) / (uCell * vec3(textureSize(uLight, 0)))); }
+vec4 lightAt(vec3 w) { return texture(uLight, (w - uLightLo) / (uCellW * vec3(textureSize(uLight, 0)))); }
 void main() {
   // The pixels this image draws while another (the path-traced one) comes in over it.
-  float k = noise();
-  if (k < uBand.x || k >= uBand.y) discard;
+  float kn = noise();
+  if (kn < uBand.x || kn >= uBand.y) discard;
   vec2 ndc = (gl_FragCoord.xy - uViewport.xy) / uViewport.zw * 2.0 - 1.0;
   vec4 a = uInvVP * vec4(ndc, -1.0, 1.0);
   vec4 b = uInvVP * vec4(ndc, 1.0, 1.0);
   vec3 ow = a.xyz / a.w;
   vec3 far = b.xyz / b.w;
   vec3 dw = normalize(far - ow);
-  mat3 lin = mat3(uVoxFromWorld);
-  vec3 ov = (uVoxFromWorld * vec4(ow, 1.0)).xyz;
-  vec3 dv = lin * dw;
-  vec2 sp = span(ov, dv);
-  float t0 = sp.x;
-  float t1 = min(sp.y, length(far - ow));
-  if (t1 <= t0) discard;
-  float dt = uStep / length(dv);
-  mat3 normalFrom = transpose(lin);
+  Ray r = ray(ow, dw);
+  float t1 = min(r.t1, length(far - ow));
+  if (t1 <= r.t0) discard;
   vec3 around = (uEnvTop + 2.0 * uEnvHorizon + uEnvBottom) * (0.25 * uEnvScale);
   vec3 L = vec3(0.0);
   float T = 1.0;
   vec3 hit = vec3(0.0);
   bool met = false;
-  float t = t0 + dt * noise();
-  for (int k = 0; k < 4096; ++k) {
+  int k0;
+  OWNER(r, r.t0, k0)
+  float t = r.t0 + uStep * (k0 >= 0 ? r.vox[k0] : 0.0) * noise();
+  for (int i = 0; i < 4096; ++i) {
     if (t >= t1 || T < 0.02) break;
-    vec3 w = ow + dw * t;
-    vec3 v = ov + dv * t;
-    // A brick the preset leaves clear: on to where the ray leaves it, at the same phase of the steps.
-    float run = clearRun(v, dv);
+    int k;
+    OWNER(r, t, k)
+    if (k < 0) {
+      float n_;
+      NEXT_IN(r, t, n_)
+      t = n_;
+      continue;
+    }
+    float dt = uStep * r.vox[k];
+    // A brick the volume's table leaves clear: on to where the ray leaves it, at the same phase of the steps.
+    vec3 vk = r.ov[k] + r.dv[k] * t;
+    float run = clearRun(k, vk, r.dv[k]);
     if (run > 0.0) {
+      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
+    vec3 w = r.o + r.d * t;
+    vec3 v = vk;
+    float s = sigma(k, w, v);
     t += dt;
-    float s = sigma(w, v);
     if (s <= 0.0) continue;
     float al = 1.0 - exp(-s * dt);
-    vec3 albedo = tf(tex(v)).rgb * uAlbedo;
-    vec3 g = grad(v);
+    vec3 albedo = tf(k, tex(k, v)).rgb * uAlbedo[k];
+    vec3 g = grad(k, v);
     float gm = length(g);
-    float edge = 1.0 - exp(-uGradScale * gm);
+    float edge = 1.0 - exp(-uGradScale[k] * gm);
+    vec3 gw = worldGrad(k, g);
+    vec3 up = length(gw) > 1e-12 ? normalize(gw) : vec3(0.0);
     // The light held, half a cell out from a surface (so the tissue beneath it does not shade it): the
     // light's share once it has been marched; the surroundings' coming in as paths gather (a few paths a
     // cell are blotchy), short rays standing in until then.
-    vec4 held = uHasLight ? lightAt(v - (gm > 1e-6 ? g / gm : vec3(0.0)) * (0.5 * uCell * edge)) : vec4(0.0);
-    float Tl = uHasLight ? held.a : clear(w, v, uLightDir, 25.0);
+    vec4 held = uHasLight ? lightAt(w - up * (0.5 * uCellW * edge)) : vec4(0.0);
+    float Tl = uHasLight ? held.a : clear(w, uLightDir, 25.0);
     // One ray stands for the path tracer's many directions to the surroundings: it shades only in part.
-    vec3 amb = uHeldAround < 1.0 ? albedo * around * (0.35 + 0.65 * clear(w, v, uEnvUp, 13.0)) : vec3(0.0);
+    vec3 amb = uHeldAround < 1.0 ? albedo * around * (0.35 + 0.65 * clear(w, uEnvUp, 13.0)) : vec3(0.0);
     amb = mix(amb, held.rgb, uHeldAround);
-    vec3 col = albedo * (uLightRgb * (hg(dot(dw, uLightDir), uPhaseG) * Tl) + amb);
+    vec3 col = albedo * (uLightRgb * (hg(dot(dw, uLightDir), uPhaseG[k]) * Tl) + amb);
     if (gm > 1e-6) {
-      vec3 n = -normalize(normalFrom * g);
-      if (dot(n, dw) > 0.0) n = -n;
+      vec3 nrm = -up;
+      if (dot(nrm, dw) > 0.0) nrm = -nrm;
       // What is held is the mean over every direction, the tissue's own light among it.
-      vec3 sky = uHeldAround < 1.0 ? env(n) * (0.35 + 0.65 * clear(w, v, n, 13.0)) : vec3(0.0);
+      vec3 sky = uHeldAround < 1.0 ? env(nrm) * (0.35 + 0.65 * clear(w, nrm, 13.0)) : vec3(0.0);
       sky = mix(sky, held.rgb, uHeldAround);
-      vec3 surf = brdfCos(n, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uSpecular);
-      col = mix(col, surf, uShadeMix * edge);
+      vec3 surf = brdfCos(k, nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uSpecular[k]);
+      col = mix(col, surf, uShadeMix[k] * edge);
     }
     L += T * al * col;
     T *= 1.0 - al;
@@ -419,14 +566,14 @@ void main() {
   out_color = vec4(c, 1.0);
   out_z = vec4(1.0 - d);
   out_pickId = vec4(0.0);
-}`;
+}`);
 
 // One layer of the light held, a cell a pixel. Pass 0: how much of the light reaches the cell's centre
 // (alpha). Later passes: one path from a point in the cell in a direction from all round, as the path
 // tracer's (up to three scatterings, the light at each through what pass 0 found, the surroundings
 // where it leaves), averaged into what the passes before found (colour).
-const BAKE_FS = `#version 300 es
-${COMMON}
+const BAKE_FS = (n: number) => one(n, `#version 300 es
+${COMMON(n)}
 ${RANDOM}
 uniform highp sampler3D uPrev;
 uniform int uLayer;
@@ -434,38 +581,39 @@ uniform int uPass;
 uniform uint uSeed;
 out vec4 o;
 
-float lightAt(vec3 v) { return texture(uPrev, (v + 0.5) / (uCell * vec3(textureSize(uPrev, 0)))).a; }
-// The light arriving at voxel point v from direction -dir (dir: the way the path goes out from it).
-vec3 incoming(vec3 v, vec3 dir) {
+float lightAt(vec3 w) { return texture(uPrev, (w - uLightLo) / (uCellW * vec3(textureSize(uPrev, 0)))).a; }
+// The light arriving at world point w from direction -dir (dir: the way the path goes out from it).
+vec3 incoming(vec3 w, vec3 dir) {
   vec3 thr = vec3(1.0);
   vec3 L = vec3(0.0);
   for (int bounce = 0; bounce < 3; ++bounce) {
-    if (!collide(v, dir, 1.5)) return L + thr * env(dir);
-    thr *= tf(tex(v)).rgb * uAlbedo;
-    L += thr * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG) * lightAt(v));
-    dir = hgdir(dir, uPhaseG);
+    int k;
+    if (!collide(w, k, dir, 1.5)) return L + thr * env(dir);
+    thr *= tf(k, tex(k, voxOf(k, w))).rgb * uAlbedo[k];
+    L += thr * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG[k]) * lightAt(w));
+    dir = hgdir(dir, uPhaseG[k]);
   }
   return L;
 }
 void main() {
   ivec3 cell = ivec3(ivec2(gl_FragCoord.xy), uLayer);
   rs = pcg(uint(cell.x) + 1024u * uint(cell.y) + 1048576u * uint(cell.z)) ^ pcg(uSeed);
-  vec3 v = (vec3(cell) + 0.5) * uCell - 0.5;
+  vec3 w = uLightLo + (vec3(cell) + 0.5) * uCellW;
   if (uPass == 0) {
-    o = vec4(0.0, 0.0, 0.0, transmit(v, uLightDir));
+    o = vec4(0.0, 0.0, 0.0, transmit(w, uLightDir));
     return;
   }
   vec4 prev = texelFetch(uPrev, cell, 0);
-  vec3 at = v + (vec3(rnd(), rnd(), rnd()) - 0.5) * uCell;
+  vec3 at = w + (vec3(rnd(), rnd(), rnd()) - 0.5) * uCellW;
   o = vec4(mix(prev.rgb, incoming(at, sphere()), 1.0 / float(uPass)), prev.a);
-}`;
+}`);
 
 // One sample a pixel of the view at rest, path-traced as pathtrace.wgsl's trace (the same light,
 // surface and volume scattering, bounces and roulette), added to the samples before: colour and
 // coverage (a path that met tissue), and the depth where the pixel's ray first meets tissue and the
 // samples taken. Only the rows uRow of every uRows are traced in a pass; the others are copied.
-const TRACE_FS = `#version 300 es
-${COMMON}
+const TRACE_FS = (n: number) => one(n, `#version 300 es
+${COMMON(n)}
 ${RANDOM}
 uniform sampler2D uPrevSum;
 uniform sampler2D uPrevAux;
@@ -480,19 +628,29 @@ layout(location = 0) out vec4 oSum;
 layout(location = 1) out vec4 oAux;
 
 // The GL depth where the ray first meets tissue (half its light gone), half a voxel a step; 1 for none.
-float firstHit(vec3 ov, vec3 dv, vec3 ow, vec3 dw) {
-  vec2 sp = span(ov, dv);
-  float dt = 0.5 / length(dv);
+float firstHit(vec3 ow, vec3 dw) {
+  Ray r = ray(ow, dw);
   float T = 1.0;
-  float t = sp.x;
-  for (int k = 0; k < 8192; ++k) {
-    if (t >= sp.y) break;
-    float run = clearRun(ov + dv * t, dv);
+  float t = r.t0;
+  for (int i = 0; i < 8192; ++i) {
+    if (t >= r.t1) break;
+    int k;
+    OWNER(r, t, k)
+    if (k < 0) {
+      float n_;
+      NEXT_IN(r, t, n_)
+      t = n_;
+      continue;
+    }
+    float dt = 0.5 * r.vox[k];
+    vec3 vk = r.ov[k] + r.dv[k] * t;
+    float run = clearRun(k, vk, r.dv[k]);
     if (run > 0.0) {
+      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
-    T *= exp(-sigma(ow + dw * t, ov + dv * t) * dt);
+    T *= exp(-sigma(k, ow + dw * t, vk) * dt);
     if (T <= 0.5) {
       vec4 p = uVP * vec4(ow + dw * t, 1.0);
       return clamp((p.z / p.w) * 0.5 + 0.5, 0.0, 0.99999);
@@ -511,59 +669,59 @@ void main() {
     return;
   }
   rs = pcg(uint(px.x) + 8192u * uint(px.y)) ^ pcg(uSeed);
-  mat3 lin = mat3(uVoxFromWorld);
   vec2 jitter = aux.g == 0.0 ? vec2(0.5) : vec2(rnd(), rnd());
   vec2 ndc = (vec2(px) + jitter) / uSize * 2.0 - 1.0;
   vec4 a = uInvVP * vec4(ndc, -1.0, 1.0);
   vec4 b = uInvVP * vec4(ndc, 1.0, 1.0);
-  vec3 ow = a.xyz / a.w;
-  vec3 dir = normalize(b.xyz / b.w - ow);
-  vec3 v = (uVoxFromWorld * vec4(ow, 1.0)).xyz;
-  if (aux.g == 0.0) aux.r = firstHit(v, lin * dir, ow, dir);
+  vec3 w = a.xyz / a.w;
+  vec3 dir = normalize(b.xyz / b.w - w);
+  if (aux.g == 0.0) aux.r = firstHit(w, dir);
   vec3 L = vec3(0.0);
   vec3 thr = vec3(1.0);
   float alpha = 0.0;
   for (int bounce = 0; bounce <= 16; ++bounce) {
     if (bounce > uMaxBounces) break;
-    if (!collide(v, dir, 0.5)) {
+    int k;
+    if (!collide(w, k, dir, 0.5)) {
       if (bounce > 0) L += thr * env(dir);
       break;
     }
     if (bounce == 0) alpha = 1.0;
-    vec3 albedo = tf(tex(v)).rgb * uAlbedo;
-    vec3 g = grad(v);
+    vec3 v = voxOf(k, w);
+    vec3 albedo = tf(k, tex(k, v)).rgb * uAlbedo[k];
+    vec3 g = grad(k, v);
     float gm = length(g);
-    if (uInset > 0.0 && gm > 1e-6) {
+    if (uInset[k] > 0.0 && gm > 1e-6) {
       // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
-      vec3 d = g * (uInset / gm);
-      vec4 ca = tf(tex(v + d));
-      vec4 cb = tf(tex(v - d));
-      albedo = (ca.a >= cb.a ? ca : cb).rgb * uAlbedo;
+      vec3 d = g * (uInset[k] / gm);
+      vec4 ca = tf(k, tex(k, v + d));
+      vec4 cb = tf(k, tex(k, v - d));
+      albedo = (ca.a >= cb.a ? ca : cb).rgb * uAlbedo[k];
     }
-    float psurf = uShadeMix * (1.0 - exp(-uGradScale * gm));
+    float psurf = uShadeMix[k] * (1.0 - exp(-uGradScale[k] * gm));
     vec3 wo = -dir;
-    float Tl = transmit(v, uLightDir);
+    float Tl = transmit(w, uLightDir);
     if (rnd() < psurf) {
-      vec3 n = -normalize(transpose(lin) * g);
-      if (dot(n, wo) < 0.0) n = -n;
-      if (Tl > 0.0) L += thr * brdfCos(n, wo, uLightDir, albedo) * uLightRgb * Tl;
+      vec3 nrm = -normalize(worldGrad(k, g));
+      if (dot(nrm, wo) < 0.0) nrm = -nrm;
+      if (Tl > 0.0) L += thr * brdfCos(k, nrm, wo, uLightDir, albedo) * uLightRgb * Tl;
       vec3 nd;
-      if (rnd() < uSpecular) {
-        vec3 r = normalize(n * (2.0 * dot(n, wo)) - wo);
-        float ct = pow(rnd(), 1.0 / (phongExp() + 1.0));
+      if (rnd() < uSpecular[k]) {
+        vec3 rf = normalize(nrm * (2.0 * dot(nrm, wo)) - wo);
+        float ct = pow(rnd(), 1.0 / (phongExp(k) + 1.0));
         float st = sqrt(max(0.0, 1.0 - ct * ct));
         float ph = 6.2831853 * rnd();
-        nd = normalize(basis(r) * vec3(st * cos(ph), st * sin(ph), ct));
-        if (dot(nd, n) <= 0.0) break;
+        nd = normalize(basis(rf) * vec3(st * cos(ph), st * sin(ph), ct));
+        if (dot(nd, nrm) <= 0.0) break;
       } else {
-        nd = cosdir(n);
+        nd = cosdir(nrm);
         thr *= albedo;
       }
       dir = nd;
     } else {
-      if (Tl > 0.0) L += thr * albedo * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG) * Tl);
+      if (Tl > 0.0) L += thr * albedo * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG[k]) * Tl);
       thr *= albedo;
-      dir = hgdir(dir, uPhaseG);
+      dir = hgdir(dir, uPhaseG[k]);
     }
     if (bounce >= 2) {
       float q = min(0.95, max(thr.x, max(thr.y, thr.z)));
@@ -573,7 +731,7 @@ void main() {
   }
   oSum = sum + vec4(L, alpha);
   oAux = vec4(aux.r, aux.g + 1.0, 0.0, 0.0);
-}`;
+}`);
 
 // The path-traced samples so far in the 3-D view: their mean where most met tissue, at the depth where
 // the pixel's ray first meets it, through the same tone map.
@@ -601,6 +759,17 @@ void main() {
   out_pickId = vec4(0.0);
 }`;
 
+/**
+ * One volume: its uniforms indexed by a constant, not by the volume a sample is in (which a compiler cannot know is
+ * always the first), so they are read as plainly as a single volume's always were.
+ */
+function one(n: number, src: string): string {
+  return n === 1 ? src.replace(/\[(k|j_)\]/g, "[0]") : src;
+}
+
+/** The shaders' sources for `n` volumes (for checking that they compile, and for the drawer). */
+export const SHADERS = { VS, FS, BAKE_FS, TRACE_FS, COMPOSITE_FS };
+
 /** The light held for the object, as it is being path-traced: two textures, one filled while the other is read. */
 interface Held {
   key: string;
@@ -612,6 +781,30 @@ interface Held {
   layer: number;
 }
 
+/** One image held: its level once read, its bricks' bounds, and its textures on the GPU. */
+interface Vol {
+  url: string;
+  /** The voxels it was read within. */
+  voxels: number;
+  level?: Level8;
+  bounds?: Float32Array;
+  /** What it says while being read, or why it could not be. */
+  text: string;
+  failed?: boolean;
+  tex?: WebGLTexture;
+  occ?: WebGLTexture;
+  uploaded?: Level8;
+  occKey?: string;
+}
+
+/** The voxels each image is read within, when `count` are drawn together within `voxels`: a share, but not too small a one. */
+export function shareOf(voxels: number, count: number): number {
+  return count <= 1 ? voxels : Math.max(voxels / count, Math.min(voxels, 32e6));
+}
+
+/** Texture units: the path tracing's sums and counts, the light held, the table, then each volume's level and bricks. */
+const UNIT = { sum: 2, aux: 3, light: 4, tf: 5, vol: 6 };
+
 export class LiveVolume {
   /** The look of a frame; undefined: nothing to draw it with. */
   look: ((frame: Frame3d) => LiveLook | undefined) | undefined;
@@ -619,29 +812,23 @@ export class LiveVolume {
   onChange: (() => void) | undefined;
   /** Called while the light held is being path-traced: the view should be drawn again. */
   onRedraw: (() => void) | undefined;
-  private base = "";
-  private url = "";
-  private client: VolumeClient | undefined;
-  private level: Level8 | undefined;
+  /** The images wanted, in the order asked for (the first is the one cropped by and lit for). */
+  private wanted: string[] = [];
+  private readonly vols = new Map<string, Vol>();
+  /** The images still to read, one at a time. */
+  private reading: Promise<void> = Promise.resolve();
   private gl: WebGL2RenderingContext | undefined;
-  private program: WebGLProgram | undefined;
-  private programFor = "";
-  private failed = false;
+  private programs = new Map<string, WebGLProgram>();
+  private failed = "";
   private vao: WebGLVertexArrayObject | undefined;
-  private vol: WebGLTexture | undefined;
   private tf: WebGLTexture | undefined;
-  private uploaded: Level8 | undefined;
   private tfKey = "";
-  private occ: WebGLTexture | undefined;
-  /** Each brick's least and greatest value, once worked out (in slabs, after the level is set). */
-  private bounds: { level: Level8; data: Float32Array } | undefined;
-  private occFor: Float32Array | undefined;
-  /** The light held: the textures read and filled, the framebuffer and program filling them; none where floats cannot be drawn to. */
+  /** The light held: the textures read and filled, the grid they hold, the framebuffer filling them; none where floats cannot be drawn to. */
   private held: Held | undefined;
   private lightRead: WebGLTexture | undefined;
   private lightFill: WebGLTexture | undefined;
+  private lightGridKey = "";
   private fb: WebGLFramebuffer | undefined;
-  private bake: WebGLProgram | undefined;
   private canBake = false;
   /**
    * The view at rest, path-traced: the samples' sums (colour, coverage) and each pixel's depth and
@@ -657,139 +844,190 @@ export class LiveVolume {
   private auxFill: WebGLTexture | undefined;
   private traceSize = [0, 0];
   private traceFb: WebGLFramebuffer | undefined;
-  private tracer: WebGLProgram | undefined;
-  private composite: WebGLProgram | undefined;
-  private compositeFor = "";
 
   /** What the object shows, or why it shows nothing. */
   get text(): string {
+    const vols = this.wanted.map((u) => this.vols.get(u)).filter((v): v is Vol => v !== undefined);
+    if (vols.length === 0) return "";
+    const one = vols.length === 1;
+    const lines = vols.map((v) => (one ? v.text : `${v.text} (${shortName(v.url)})`));
+    const base = this.failed ? `Object: ${this.failed}` : lines.join("\n");
     const h = this.held;
-    if (!this.base || this.level === undefined || h === undefined || !this.canBake) return this.base;
+    if (this.failed || !this.ready() || h === undefined || !this.canBake) return base;
     const traced = this.traced && this.traced.samples >= 1 ? `; path-traced, ${Math.floor(this.traced.samples)} samples` : "";
-    return `${this.base}; light ${h.pass >= LIGHT_PASSES ? "done" : `${Math.max(0, h.pass - 1)} of ${LIGHT_PASSES - 1} passes`}${traced}`;
+    return `${base}\n${one ? "" : `${vols.length} images as one volume; `}light ${h.pass >= LIGHT_PASSES ? "done" : `${Math.max(0, h.pass - 1)} of ${LIGHT_PASSES - 1} passes`}${traced}`;
   }
 
-  /** Reads the level to draw from the image at `url` (once for each image and size): the finest within `voxels`. */
-  async open(url: string, voxels = LIVE_VOXELS): Promise<void> {
-    const key = `${url} ${voxels}`;
-    if (key === this.url) return;
-    url = key.slice(0, key.lastIndexOf(" "));
-    this.close();
-    this.url = key;
-    try {
-      this.client = new VolumeClient();
-      this.base = "Object: reading the image";
-      const level = await readLevel(this.client, url, voxels, MAX_SIDE, (msg) => (this.base = `Object: ${msg}`));
-      if (this.url !== key) return;
-      this.setLevel(level, key);
-    } catch (e) {
-      if (this.url !== key) return;
-      this.base = `Object: ${(e as Error).message}`;
-      this.onChange?.();
-    } finally {
-      if (this.url === key) {
-        this.client?.dispose();
-        this.client = undefined;
-      }
-    }
-  }
-
-  /** The level to draw, read already (by this browser's path tracer) from the image at `url`. */
-  setLevel(level: Level8, url: string): void {
-    this.url = url;
-    this.level = level;
-    this.failed = false;
-    this.held = undefined;
-    this.base = `Object: level ${level.path} (${level.size.join(" × ")})`;
+  /**
+   * Reads the levels to draw from the images at `urls` (once for each image and size; the others let go): the
+   * finest of each within its share of `voxels`. The first is the one the crops are fractions of.
+   */
+  async open(urls: string | string[], voxels = LIVE_VOXELS): Promise<void> {
+    const list = [...new Set(typeof urls === "string" ? [urls] : urls)].slice(0, MAX_VOLUMES);
+    const each = shareOf(voxels, list.length);
+    for (const [url, v] of this.vols) if (!list.includes(url) || v.voxels !== each) this.drop(url);
+    this.wanted = list;
+    this.failed = "";
+    const todo = list.filter((u) => !this.vols.has(u));
+    for (const url of todo) this.vols.set(url, { url, voxels: each, text: "Object: waiting to read the image" });
+    if (todo.length === 0) return;
     this.onChange?.();
-    void brickBounds(level.data, level.size, BRICK, () => this.level !== level).then((data) => {
-      if (this.level !== level) return;
-      this.bounds = { level, data };
+    const read = async (url: string) => {
+      const v = this.vols.get(url);
+      if (v === undefined || v.level !== undefined) return;
+      const client = new VolumeClient();
+      try {
+        v.text = "Object: reading the image";
+        this.onChange?.();
+        const level = await readLevel(client, url, each, MAX_SIDE, (msg) => {
+          v.text = `Object: ${msg}`;
+          this.onChange?.();
+        });
+        if (this.vols.get(url) !== v) return;
+        this.held = undefined;
+        this.put(v, level);
+      } catch (e) {
+        if (this.vols.get(url) !== v) return;
+        v.failed = true;
+        v.text = `Object: ${(e as Error).message}`;
+        this.onChange?.();
+      } finally {
+        client.dispose();
+      }
+    };
+    // One at a time: several large images read at once would hold their chunks together.
+    const run = this.reading.then(async () => {
+      for (const url of todo) await read(url);
+    });
+    this.reading = run.catch(() => undefined);
+    await run;
+  }
+
+  /** The level to draw, read already (by this browser's path tracer) from the image at `url`: drawn alone. */
+  setLevel(level: Level8, url: string): void {
+    for (const u of [...this.vols.keys()]) if (u !== url) this.drop(u);
+    this.wanted = [url];
+    this.failed = "";
+    const v = this.vols.get(url) ?? { url, voxels: Math.round(level.size[0] * level.size[1] * level.size[2]), text: "" };
+    this.vols.set(url, v);
+    this.held = undefined;
+    this.put(v, level);
+  }
+
+  private put(v: Vol, level: Level8): void {
+    v.level = level;
+    v.failed = false;
+    v.bounds = undefined;
+    v.text = `Object: level ${level.path} (${level.size.join(" × ")})`;
+    this.onChange?.();
+    void brickBounds(level.data, level.size, BRICK, () => v.level !== level || this.vols.get(v.url) !== v).then((data) => {
+      if (v.level !== level || this.vols.get(v.url) !== v) return;
+      v.bounds = data;
       this.onChange?.();
     });
   }
 
-  ready(): boolean {
-    return this.level !== undefined && !this.failed;
+  /** Lets an image go, and its textures. */
+  private drop(url: string): void {
+    const v = this.vols.get(url);
+    if (v === undefined) return;
+    this.vols.delete(url);
+    const gl = this.gl;
+    if (gl) for (const t of [v.tex, v.occ]) if (t) gl.deleteTexture(t);
+    this.held = undefined;
+    this.tfKey = "";
   }
 
-  /** The level held for the object, once read. */
+  ready(): boolean {
+    return !this.failed && this.wanted.some((u) => this.vols.get(u)?.level !== undefined);
+  }
+
+  /** The level held for the first image, once read. */
   get heldLevel(): Level8 | undefined {
-    return this.level;
+    return this.wanted.length ? this.vols.get(this.wanted[0])?.level : undefined;
+  }
+
+  /** The level held for the image at `url`, once read. */
+  levelOf(url: string): Level8 | undefined {
+    return this.vols.get(url)?.level;
   }
 
   /** Draws the frame; `split`: the share of pixels drawn (the rest are the picture's). False when it cannot be drawn. */
   draw(frame: Frame3d, split = 1): boolean {
-    const level = this.level;
-    const look = level && !this.failed ? this.look?.(frame) : undefined;
-    if (level === undefined || look === undefined) return false;
+    const look = this.failed ? undefined : this.look?.(frame);
+    if (look === undefined) return false;
     const gl = frame.gl;
     if (this.gl !== gl) this.reset(gl);
-    if (Math.max(...level.size) > (gl.getParameter(gl.MAX_3D_TEXTURE_SIZE) as number)) return this.fail(`the level is larger than this GPU's 3-D textures`);
-    const key = JSON.stringify(frame.outputs);
-    if (this.program === undefined || this.programFor !== key) {
-      if (this.program) gl.deleteProgram(this.program);
-      this.program = undefined;
-      try {
-        this.program = link(gl, VS, FS(frame.outputs));
-        this.programFor = key;
-      } catch (e) {
-        return this.fail((e as Error).message);
+    const maxSide = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE) as number;
+    // The images of the look that are read (and fit this GPU), in its order.
+    const asked = look.volumes;
+    const shown: { vol: Vol; spec: LiveLook["volumes"][number] }[] = [];
+    for (const spec of asked) {
+      const vol = this.vols.get(spec.url);
+      if (vol?.level === undefined) continue;
+      if (Math.max(...vol.level.size) > maxSide) {
+        vol.text = "Object: the level is larger than this GPU's 3-D textures";
+        continue;
       }
+      shown.push({ vol, spec });
+      if (shown.length >= MAX_VOLUMES) break;
     }
-    const { cell, grid } = lightGrid(level.size);
-    if (this.uploaded !== level) {
-      gl.activeTexture(gl.TEXTURE6);
-      gl.bindTexture(gl.TEXTURE_3D, this.vol!);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, level.size[0], level.size[1], level.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, level.data);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    if (shown.length === 0) return false;
+    const n = shown.length;
+    const program = this.program(gl, `fs ${n} ${JSON.stringify(frame.outputs)}`, () => FS(frame.outputs, n));
+    if (program === undefined) return false;
+
+    // Each image's level on the GPU, and its table's row and clear bricks.
+    const tables = shown.map(({ vol, spec }) => liveTable(spec.preset, vol.level!));
+    const tfKeys = shown.map(({ vol, spec }) => JSON.stringify([vol.url, vol.level!.path, spec.preset.domain, spec.preset.stops, spec.preset.window ?? null]));
+    shown.forEach(({ vol }, i) => this.upload(gl, vol, tables[i], tfKeys[i]));
+    const drawn: Drawn[] = shown.map(({ vol, spec }) => ({ vol, q: liveParams(look.view, spec.preset, vol.level!, spec.placement) }));
+    const primary = drawn[0].q;
+    // Finest first: where volumes overlap, a point is the finest one's.
+    const order = drawn.map((d, i) => ({ d, i, size: voxelWorldSize(d.q.worldFromVox) })).sort((a, b) => a.size - b.size || a.i - b.i);
+    const sorted = order.map((o) => o.d);
+    const tfKey = JSON.stringify(order.map((o) => tfKeys[o.i]));
+    if (this.tfKey !== tfKey) {
+      const rows = new Float32Array(TF_SIZE * 4 * n);
+      order.forEach((o, row) => rows.set(tables[o.i], row * TF_SIZE * 4));
+      gl.activeTexture(gl.TEXTURE0 + UNIT.tf);
+      gl.bindTexture(gl.TEXTURE_2D, this.tf!);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, TF_SIZE, n, 0, gl.RGBA, gl.FLOAT, rows);
+      this.tfKey = tfKey;
+    }
+    const box = lightBox(sorted.map((d) => d.q));
+    const gridKey = JSON.stringify(box.grid);
+    if (this.lightGridKey !== gridKey) {
       for (const t of [this.lightRead!, this.lightFill!]) {
         gl.bindTexture(gl.TEXTURE_3D, t);
-        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, grid[0], grid[1], grid[2], 0, gl.RGBA, gl.HALF_FLOAT, null);
+        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, box.grid[0], box.grid[1], box.grid[2], 0, gl.RGBA, gl.HALF_FLOAT, null);
       }
-      this.uploaded = level;
-      this.tfKey = "";
+      this.lightGridKey = gridKey;
       this.held = undefined;
     }
-    const tfKey = JSON.stringify([look.preset.domain, look.preset.stops, look.preset.window ?? null]);
-    const bounds = this.bounds?.level === level ? this.bounds.data : undefined;
-    if (this.tfKey !== tfKey || this.occFor !== bounds) {
-      const table = liveTable(look.preset, level);
-      gl.activeTexture(gl.TEXTURE7);
-      gl.bindTexture(gl.TEXTURE_2D, this.tf!);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, TF_SIZE, 1, 0, gl.RGBA, gl.FLOAT, table);
-      gl.activeTexture(gl.TEXTURE5);
-      gl.bindTexture(gl.TEXTURE_3D, this.occ!);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      const g = level.size.map((n) => Math.ceil(n / BRICK));
-      if (bounds !== undefined) gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, g[0], g[1], g[2], 0, gl.RED, gl.UNSIGNED_BYTE, occupancy(bounds, table));
-      else gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, 1, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([255]));
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-      this.tfKey = tfKey;
-      this.occFor = bounds;
-    }
-    const q = liveParams(look.view, look.preset, level);
     // What the light held depends on (not the camera): a change starts it again, the light set from the camera now.
     const light = look.view.light;
-    const heldKey = JSON.stringify([tfKey, q.density, q.albedo, q.phaseG, q.lightRgb, q.envTop, q.envHorizon, q.envBottom, q.envScale, q.clips, q.cropLo, q.cropHi, light?.direction ?? null, light?.camera_space ?? true]);
-    if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: q.lightDir, envUp: q.envUp, pass: 0, layer: 0 };
-    q.lightDir = this.held.lightDir;
-    q.envUp = this.held.envUp;
-    if (this.canBake && this.held.pass < LIGHT_PASSES) this.bakeSome(gl, q, cell, grid);
+    const materials = sorted.map((d) => [d.vol.url, d.vol.level!.path, d.q.density, d.q.albedo, d.q.phaseG, d.q.worldFromVox]);
+    const heldKey = JSON.stringify([tfKey, materials, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, primary.clips, primary.cropLo, primary.cropHi, box, light?.direction ?? null, light?.camera_space ?? true]);
+    if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0 };
+    primary.lightDir = this.held.lightDir;
+    primary.envUp = this.held.envUp;
+    const scene: Scene = { n, drawn: sorted, primary, crop: drawn[0], box };
+    if (this.canBake && this.held.pass < LIGHT_PASSES) this.bakeSome(gl, scene);
 
     // The view at rest is path-traced, a pass a frame, once the camera has been still a moment; the
     // samples take the object's pixels from 4 samples on, all of them by 32.
     const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
     const max = Math.min(MAX_TRACED, look.view.max_samples ?? 256);
-    const traceKey = JSON.stringify([heldKey, Array.from(frame.invViewProjection), vp[2], vp[3], q.shadeMix, q.gradScale, q.roughness, q.specular, q.inset, q.maxBounces, max]);
+    const shading = sorted.map((d) => [d.q.shadeMix, d.q.gradScale, d.q.roughness, d.q.specular, d.q.inset]);
+    const traceKey = JSON.stringify([heldKey, Array.from(frame.invViewProjection), vp[2], vp[3], shading, primary.maxBounces, max]);
     const now = performance.now();
     if (traceKey !== this.traceKey) {
       this.traceKey = traceKey;
       this.stillSince = now;
       this.traced = undefined;
     }
-    if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, q, frame, vp[2], vp[3], max, cell);
+    if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
     else if (this.canBake) {
       // A frame after the camera stops, to start path-tracing it.
       clearTimeout(this.settle);
@@ -799,40 +1037,41 @@ export class LiveVolume {
     const traced = r * r * (3 - 2 * r);
 
     if (traced < 1) {
-      const p = this.program;
-      const u = (n: string) => gl.getUniformLocation(p, n);
+      const p = program;
+      const u = (name: string) => gl.getUniformLocation(p, name);
       gl.useProgram(p);
-      this.common(gl, p, q, cell, bounds !== undefined);
+      this.common(gl, p, scene);
       gl.uniform4f(u("uViewport"), vp[0], vp[1], vp[2], vp[3]);
       gl.uniformMatrix4fv(u("uInvVP"), false, frame.invViewProjection);
       gl.uniformMatrix4fv(u("uVP"), false, frame.viewProjection);
       // A voxel a step while the camera moves, half a voxel at rest.
       gl.uniform1f(u("uStep"), frame.moving ? 1 : 0.5);
-      gl.uniform1f(u("uExposure"), q.exposure);
+      gl.uniform1f(u("uExposure"), primary.exposure);
       gl.uniform2f(u("uBand"), 0, split * (1 - traced));
       // The light held: its light once marched (pass 0); its surroundings' coming in over passes 2 to 16.
-      gl.activeTexture(gl.TEXTURE4);
+      gl.activeTexture(gl.TEXTURE0 + UNIT.light);
       gl.bindTexture(gl.TEXTURE_3D, this.lightRead!);
-      gl.uniform1i(u("uLight"), 4);
+      gl.uniform1i(u("uLight"), UNIT.light);
       const held = this.canBake ? this.held.pass : 0;
       gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
       gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
-    if (traced > 0 && this.compositeProgram(gl, frame.outputs)) {
-      const p = this.composite!;
-      const u = (n: string) => gl.getUniformLocation(p, n);
+    const composite = traced > 0 ? this.program(gl, `composite ${JSON.stringify(frame.outputs)}`, () => COMPOSITE_FS(frame.outputs), true) : undefined;
+    if (composite !== undefined) {
+      const p = composite;
+      const u = (name: string) => gl.getUniformLocation(p, name);
       gl.useProgram(p);
       gl.uniform4f(u("uViewport"), vp[0], vp[1], vp[2], vp[3]);
-      gl.uniform1f(u("uExposure"), q.exposure);
+      gl.uniform1f(u("uExposure"), primary.exposure);
       gl.uniform2f(u("uBand"), split * (1 - traced), split);
-      gl.activeTexture(gl.TEXTURE2);
+      gl.activeTexture(gl.TEXTURE0 + UNIT.sum);
       gl.bindTexture(gl.TEXTURE_2D, this.sumRead!);
-      gl.uniform1i(u("uSum"), 2);
-      gl.activeTexture(gl.TEXTURE3);
+      gl.uniform1i(u("uSum"), UNIT.sum);
+      gl.activeTexture(gl.TEXTURE0 + UNIT.aux);
       gl.bindTexture(gl.TEXTURE_2D, this.auxRead!);
-      gl.uniform1i(u("uAux"), 3);
+      gl.uniform1i(u("uAux"), UNIT.aux);
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -843,24 +1082,71 @@ export class LiveVolume {
     return true;
   }
 
-  /** The uniforms every program reads, and the level, table and clear bricks on their units. */
-  private common(gl: WebGL2RenderingContext, p: WebGLProgram, q: LiveParams, cell: number, hasOcc: boolean): void {
-    const u = (n: string) => gl.getUniformLocation(p, n);
-    gl.uniformMatrix4fv(u("uVoxFromWorld"), false, q.voxFromWorld);
-    gl.uniformMatrix4fv(u("uWorldFromVox"), false, q.worldFromVox);
-    gl.uniform3fv(u("uDims"), q.dims);
-    gl.uniform3fv(u("uCropLo"), q.cropLo);
-    gl.uniform3fv(u("uCropHi"), q.cropHi);
+  /** An image's level on the GPU (once), and its clear bricks under its table (again when the table changes). */
+  private upload(gl: WebGL2RenderingContext, v: Vol, table: Float32Array, tfKey: string): void {
+    const level = v.level!;
+    v.tex ??= this.texture(gl, gl.TEXTURE_3D);
+    v.occ ??= this.texture(gl, gl.TEXTURE_3D);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (v.uploaded !== level) {
+      gl.activeTexture(gl.TEXTURE0 + UNIT.vol);
+      gl.bindTexture(gl.TEXTURE_3D, v.tex);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, level.size[0], level.size[1], level.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, level.data);
+      v.uploaded = level;
+      v.occKey = undefined;
+    }
+    const occKey = `${tfKey} ${v.bounds !== undefined}`;
+    if (v.occKey !== occKey) {
+      gl.activeTexture(gl.TEXTURE0 + UNIT.vol);
+      gl.bindTexture(gl.TEXTURE_3D, v.occ);
+      const g = level.size.map((s) => Math.ceil(s / BRICK));
+      if (v.bounds !== undefined) gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, g[0], g[1], g[2], 0, gl.RED, gl.UNSIGNED_BYTE, occupancy(v.bounds, table));
+      else gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, 1, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([255]));
+      v.occKey = occKey;
+    }
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  }
+
+  /** A program, made once for its key; undefined (and the object off, saying why) when it cannot be made. */
+  private program(gl: WebGL2RenderingContext, key: string, fs: () => string, optional = false): WebGLProgram | undefined {
+    const had = this.programs.get(key);
+    if (had !== undefined) return had;
+    try {
+      const p = link(gl, VS, fs());
+      this.programs.set(key, p);
+      return p;
+    } catch (e) {
+      if (optional) {
+        this.canBake = false;
+        return undefined;
+      }
+      this.fail((e as Error).message);
+      return undefined;
+    }
+  }
+
+  /** The uniforms every program reads, and the levels, table and clear bricks on their units. */
+  private common(gl: WebGL2RenderingContext, p: WebGLProgram, s: Scene): void {
+    const u = (name: string) => gl.getUniformLocation(p, name);
+    const q = s.primary;
+    const each = (f: (q: LiveParams) => number) => new Float32Array(s.drawn.map((d) => f(d.q)));
+    gl.uniformMatrix4fv(u("uVoxFromWorld"), false, new Float32Array(s.drawn.flatMap((d) => d.q.voxFromWorld)));
+    gl.uniform3fv(u("uDims"), new Float32Array(s.drawn.flatMap((d) => d.q.dims)));
+    gl.uniform1fv(u("uDensity"), each((x) => x.density));
+    gl.uniform1fv(u("uPhaseG"), each((x) => x.phaseG));
+    gl.uniform1fv(u("uAlbedo"), each((x) => x.albedo));
+    gl.uniform1fv(u("uShadeMix"), each((x) => x.shadeMix));
+    gl.uniform1fv(u("uGradScale"), each((x) => x.gradScale));
+    gl.uniform1fv(u("uRoughness"), each((x) => x.roughness));
+    gl.uniform1fv(u("uSpecular"), each((x) => x.specular));
+    gl.uniform1fv(u("uInset"), each((x) => x.inset));
+    gl.uniform1iv(u("uHasOcc"), new Int32Array(s.drawn.map((d) => (d.vol.bounds !== undefined ? 1 : 0))));
+    // The crop: a box in the first image's voxels.
+    gl.uniformMatrix4fv(u("uCropFromWorld"), false, s.crop.q.voxFromWorld);
+    gl.uniform3fv(u("uCropLo"), s.crop.q.cropLo);
+    gl.uniform3fv(u("uCropHi"), s.crop.q.cropHi);
     gl.uniform4fv(u("uClips"), q.clips);
     gl.uniform1i(u("uNClip"), q.nclip);
-    gl.uniform1f(u("uDensity"), q.density);
-    gl.uniform1f(u("uPhaseG"), q.phaseG);
-    gl.uniform1f(u("uAlbedo"), q.albedo);
-    gl.uniform1f(u("uShadeMix"), q.shadeMix);
-    gl.uniform1f(u("uGradScale"), q.gradScale);
-    gl.uniform1f(u("uRoughness"), q.roughness);
-    gl.uniform1f(u("uSpecular"), q.specular);
-    gl.uniform1f(u("uInset"), q.inset);
     gl.uniform3fv(u("uLightDir"), q.lightDir);
     gl.uniform3fv(u("uLightRgb"), q.lightRgb);
     gl.uniform3fv(u("uEnvTop"), q.envTop);
@@ -868,17 +1154,19 @@ export class LiveVolume {
     gl.uniform3fv(u("uEnvBottom"), q.envBottom);
     gl.uniform3fv(u("uEnvUp"), q.envUp);
     gl.uniform1f(u("uEnvScale"), q.envScale);
-    gl.uniform1f(u("uCell"), cell);
-    gl.activeTexture(gl.TEXTURE6);
-    gl.bindTexture(gl.TEXTURE_3D, this.vol!);
-    gl.uniform1i(u("uVol"), 6);
-    gl.activeTexture(gl.TEXTURE7);
+    gl.uniform3fv(u("uLightLo"), s.box.lo);
+    gl.uniform1f(u("uCellW"), s.box.cell);
+    gl.activeTexture(gl.TEXTURE0 + UNIT.tf);
     gl.bindTexture(gl.TEXTURE_2D, this.tf!);
-    gl.uniform1i(u("uTf"), 7);
-    gl.activeTexture(gl.TEXTURE5);
-    gl.bindTexture(gl.TEXTURE_3D, this.occ!);
-    gl.uniform1i(u("uOcc"), 5);
-    gl.uniform1i(u("uHasOcc"), hasOcc ? 1 : 0);
+    gl.uniform1i(u("uTf"), UNIT.tf);
+    s.drawn.forEach((d, k) => {
+      gl.activeTexture(gl.TEXTURE0 + UNIT.vol + k);
+      gl.bindTexture(gl.TEXTURE_3D, d.vol.tex!);
+      gl.uniform1i(u(`uVol${k}`), UNIT.vol + k);
+      gl.activeTexture(gl.TEXTURE0 + UNIT.vol + s.n + k);
+      gl.bindTexture(gl.TEXTURE_3D, d.vol.occ!);
+      gl.uniform1i(u(`uOcc${k}`), UNIT.vol + s.n + k);
+    });
   }
 
   /** Draws into framebuffer `fb` (`w` × `h`); Neuroglancer's framebuffer, viewport, colour mask and tests are as they were after. */
@@ -904,31 +1192,24 @@ export class LiveVolume {
    * Path-traces LAYERS_PER_DRAW layers of the light held into the texture being filled, reading the
    * one filled before; a pass done, the two change places.
    */
-  private bakeSome(gl: WebGL2RenderingContext, q: LiveParams, cell: number, grid: [number, number, number]): void {
+  private bakeSome(gl: WebGL2RenderingContext, s: Scene): void {
     const h = this.held!;
-    if (this.bake === undefined) {
-      try {
-        this.bake = link(gl, VS, BAKE_FS);
-      } catch (e) {
-        this.canBake = false;
-        this.base += ` (the light could not be held: ${(e as Error).message})`;
-        return;
-      }
-    }
-    const p = this.bake;
-    const u = (n: string) => gl.getUniformLocation(p, n);
+    const p = this.program(gl, `bake ${s.n}`, () => BAKE_FS(s.n), true);
+    if (p === undefined) return;
+    const u = (name: string) => gl.getUniformLocation(p, name);
+    const grid = s.box.grid;
     this.offscreen(gl, this.fb!, grid[0], grid[1], () => {
       gl.useProgram(p);
-      this.common(gl, p, q, cell, this.occFor !== undefined);
+      this.common(gl, p, s);
       const pass = () => {
         gl.uniform1i(u("uPass"), h.pass);
         gl.uniform1ui(u("uSeed"), h.pass * 7919 + 17);
-        gl.activeTexture(gl.TEXTURE4);
+        gl.activeTexture(gl.TEXTURE0 + UNIT.light);
         gl.bindTexture(gl.TEXTURE_3D, this.lightRead!);
-        gl.uniform1i(u("uPrev"), 4);
+        gl.uniform1i(u("uPrev"), UNIT.light);
       };
       pass();
-      for (let n = 0; n < LAYERS_PER_DRAW && h.pass < LIGHT_PASSES; ++n) {
+      for (let k = 0; k < LAYERS_PER_DRAW && h.pass < LIGHT_PASSES; ++k) {
         gl.framebufferTextureLayer(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, this.lightFill!, 0, h.layer);
         gl.uniform1i(u("uLayer"), h.layer);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -947,16 +1228,9 @@ export class LiveVolume {
    * sums read into the ones filled, which then change places. Every `rows`-th row is traced in a pass:
    * more rows a pass while frames come quickly, fewer while they are slow.
    */
-  private traceSome(gl: WebGL2RenderingContext, q: LiveParams, frame: Frame3d, w: number, h: number, max: number, cell: number): void {
-    if (this.tracer === undefined) {
-      try {
-        this.tracer = link(gl, VS, TRACE_FS);
-      } catch (e) {
-        this.canBake = false;
-        this.base += ` (the view could not be path-traced: ${(e as Error).message})`;
-        return;
-      }
-    }
+  private traceSome(gl: WebGL2RenderingContext, s: Scene, frame: Frame3d, w: number, h: number, max: number): void {
+    const p = this.program(gl, `trace ${s.n}`, () => TRACE_FS(s.n), true);
+    if (p === undefined) return;
     if (this.traceSize[0] !== w || this.traceSize[1] !== h) {
       for (const [t, f] of [[this.sumRead, gl.RGBA32F], [this.sumFill, gl.RGBA32F], [this.auxRead, gl.RG32F], [this.auxFill, gl.RG32F]] as const) {
         gl.bindTexture(gl.TEXTURE_2D, t!);
@@ -986,27 +1260,26 @@ export class LiveVolume {
       else if (dt < 22 && t.rows > 1) t.rows /= 2;
     }
     t.last = now;
-    const p = this.tracer;
-    const u = (n: string) => gl.getUniformLocation(p, n);
+    const u = (name: string) => gl.getUniformLocation(p, name);
     this.offscreen(gl, fb, w, h, () => {
       gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sumFill!, 0);
       gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.auxFill!, 0);
       gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
       gl.useProgram(p);
-      this.common(gl, p, q, cell, this.occFor !== undefined);
+      this.common(gl, p, s);
       gl.uniformMatrix4fv(u("uInvVP"), false, frame.invViewProjection);
       gl.uniformMatrix4fv(u("uVP"), false, frame.viewProjection);
       gl.uniform2f(u("uSize"), w, h);
       gl.uniform1ui(u("uSeed"), t.pass * 7919 + 101);
       gl.uniform1i(u("uRows"), t.rows);
       gl.uniform1i(u("uRow"), t.pass % t.rows);
-      gl.uniform1i(u("uMaxBounces"), q.maxBounces);
-      gl.activeTexture(gl.TEXTURE2);
+      gl.uniform1i(u("uMaxBounces"), s.primary.maxBounces);
+      gl.activeTexture(gl.TEXTURE0 + UNIT.sum);
       gl.bindTexture(gl.TEXTURE_2D, this.sumRead!);
-      gl.uniform1i(u("uPrevSum"), 2);
-      gl.activeTexture(gl.TEXTURE3);
+      gl.uniform1i(u("uPrevSum"), UNIT.sum);
+      gl.activeTexture(gl.TEXTURE0 + UNIT.aux);
       gl.bindTexture(gl.TEXTURE_2D, this.auxRead!);
-      gl.uniform1i(u("uPrevAux"), 3);
+      gl.uniform1i(u("uPrevAux"), UNIT.aux);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     });
     [this.sumRead, this.sumFill] = [this.sumFill, this.sumRead];
@@ -1016,62 +1289,41 @@ export class LiveVolume {
     if (Math.floor(t.samples) !== Math.floor(t.samples - 1 / t.rows)) this.onChange?.();
   }
 
-  /** The program that draws the path-traced samples into the view, for its outputs; false if it cannot be made. */
-  private compositeProgram(gl: WebGL2RenderingContext, outputs: Frame3d["outputs"]): boolean {
-    const key = JSON.stringify(outputs);
-    if (this.composite !== undefined && this.compositeFor === key) return true;
-    if (this.composite) gl.deleteProgram(this.composite);
-    this.composite = undefined;
-    try {
-      this.composite = link(gl, VS, COMPOSITE_FS(outputs));
-      this.compositeFor = key;
-      return true;
-    } catch (e) {
-      this.canBake = false;
-      this.base += ` (the path-traced view could not be drawn: ${(e as Error).message})`;
-      return false;
-    }
-  }
-
   /** Stops drawing (the picture drawn as before) and says why. */
   private fail(why: string): false {
-    this.failed = true;
-    this.base = `Object: ${why}`;
+    this.failed = why;
     this.onChange?.();
     return false;
   }
 
+  private texture(gl: WebGL2RenderingContext, target: number): WebGLTexture {
+    const t = gl.createTexture()!;
+    gl.bindTexture(target, t);
+    gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+
   private reset(gl: WebGL2RenderingContext): void {
     this.gl = gl;
-    this.program = undefined;
-    this.programFor = "";
-    this.bake = undefined;
-    this.uploaded = undefined;
+    this.programs = new Map();
     this.tfKey = "";
     this.held = undefined;
+    this.lightGridKey = "";
+    for (const v of this.vols.values()) [v.tex, v.occ, v.uploaded, v.occKey] = [undefined, undefined, undefined, undefined];
     this.vao = gl.createVertexArray()!;
-    const tex = (target: number) => {
-      const t = gl.createTexture()!;
-      gl.bindTexture(target, t);
-      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-      return t;
-    };
-    this.vol = tex(gl.TEXTURE_3D);
-    this.tf = tex(gl.TEXTURE_2D);
-    this.occ = tex(gl.TEXTURE_3D);
-    this.occFor = undefined;
+    this.tf = this.texture(gl, gl.TEXTURE_2D);
     // Drawing into float textures (the light held) needs this; without it the short rays stand in.
     this.canBake = gl.getExtension("EXT_color_buffer_float") !== null;
-    this.lightRead = tex(gl.TEXTURE_3D);
-    this.lightFill = tex(gl.TEXTURE_3D);
+    this.lightRead = this.texture(gl, gl.TEXTURE_3D);
+    this.lightFill = this.texture(gl, gl.TEXTURE_3D);
     this.fb = gl.createFramebuffer()!;
     // The path tracing's sums and counts: floats read texel by texel (not filtered).
     const exact = () => {
-      const t = tex(gl.TEXTURE_2D);
+      const t = this.texture(gl, gl.TEXTURE_2D);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       return t;
@@ -1079,39 +1331,42 @@ export class LiveVolume {
     [this.sumRead, this.sumFill, this.auxRead, this.auxFill] = [exact(), exact(), exact(), exact()];
     this.traceSize = [0, 0];
     this.traceFb = gl.createFramebuffer()!;
-    this.tracer = undefined;
-    this.composite = undefined;
-    this.compositeFor = "";
     this.traced = undefined;
   }
 
-  /** Lets the level and its GPU resources go. */
+  /** Lets the levels and their GPU resources go. */
   close(): void {
-    this.url = "";
-    this.base = "";
-    this.level = undefined;
-    this.bounds = undefined;
+    for (const url of [...this.vols.keys()]) this.drop(url);
+    this.wanted = [];
+    this.failed = "";
     this.held = undefined;
     this.traced = undefined;
     this.traceKey = "";
     clearTimeout(this.settle);
-    this.failed = false;
-    this.client?.dispose();
-    this.client = undefined;
     const gl = this.gl;
     if (gl !== undefined) {
-      for (const p of [this.program, this.bake, this.tracer, this.composite]) if (p) gl.deleteProgram(p);
-      for (const t of [this.vol, this.tf, this.occ, this.lightRead, this.lightFill, this.sumRead, this.sumFill, this.auxRead, this.auxFill]) if (t) gl.deleteTexture(t);
+      for (const p of this.programs.values()) gl.deleteProgram(p);
+      for (const t of [this.tf, this.lightRead, this.lightFill, this.sumRead, this.sumFill, this.auxRead, this.auxFill]) if (t) gl.deleteTexture(t);
       if (this.vao) gl.deleteVertexArray(this.vao);
       for (const f of [this.fb, this.traceFb]) if (f) gl.deleteFramebuffer(f);
     }
     this.gl = undefined;
-    this.program = undefined;
-    this.bake = undefined;
-    this.tracer = undefined;
-    this.composite = undefined;
-    this.uploaded = undefined;
+    this.programs = new Map();
   }
+}
+
+/** What a frame's programs are given: the volumes drawn (finest first), the first image's values (crop, light, cuts), and the light held's box. */
+interface Scene {
+  n: number;
+  drawn: Drawn[];
+  primary: LiveParams;
+  crop: Drawn;
+  box: ReturnType<typeof lightBox>;
+}
+
+/** An image's name from its store's address, for the readout. */
+function shortName(url: string): string {
+  return url.replace(/\/+$/, "").split("/").pop()?.replace(/\.(ome\.)?zarr$/, "") ?? url;
 }
 
 function link(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {

@@ -11,6 +11,21 @@ you are using.
 The production polish: the work of an audit of every panel and plugin
 (`plans/`), from the crashes up to the release process.
 
+### Tools column, per-image anatomical rendering, a true view cube
+
+- Tools is a second column beside Layers (folds to its tabs, drags to
+  width). Panels with several cards have Collapse all / Expand all at the
+  top. Clicking a selected layer folds its row again.
+- Anatomical rendering follows the layer selected in Layers: its own
+  Render on / Render off, preset, window, colourmap and density. Up to five
+  images render together as one volume, the finest drawn where they
+  overlap (an overview with its VOIs, placed by their transforms); cuts and
+  crops apply to all of them. The Images list, the Centre and view buttons
+  are gone (the view cube does that); Remote is the last card, closed.
+- The view cube is drawn in perspective, as the 3-D view is, without the
+  extra tilt, so its faces match the view.
+- Luxar places images by their source transforms.
+
 ### One left column, views first
 
 - The Tools dock on the right is gone: the tools that are on are a section

@@ -246,16 +246,35 @@ export function nearestStandard(q: Quat, axes: Pick<Axes, "up" | "alt">): { from
 export const BAND = 0.35;
 
 /**
+ * How far the eye is from the cube's centre, in the cube's half-sizes: the
+ * cube is seen in perspective, as Neuroglancer's 3-D view (45° from top to
+ * bottom) sees an object filling about half its height, so it is drawn as
+ * the data in the view is, its near faces larger than its far ones.
+ */
+export const CUBE_EYE = 5;
+
+/**
+ * A point of the cube (display coordinates, the cube spanning −1 to 1) on
+ * its picture: x right and y down in the cube's half-sizes from its centre
+ * (the plane through its centre at its own size), and its depth.
+ */
+export function projectCube(q: Quat, p: Vec3): Vec3 {
+  const v = toView(q, p);
+  const s = CUBE_EYE / (CUBE_EYE + v[2]);
+  return [v[0] * s, v[1] * s, v[2]];
+}
+
+/**
  * What of the cube (spanning −1 to 1) is under a point of its picture:
  * `sx`, `sy` in the cube's half-sizes from its centre, x right and y down,
- * as the view draws it (orthographic).  A face's middle names the face, its
- * borders an edge, its corners a corner: the direction (components −1, 0
- * or 1) to look from.  Undefined off the cube.
+ * as the view draws it (in perspective, `projectCube`).  A face's middle
+ * names the face, its borders an edge, its corners a corner: the direction
+ * (components −1, 0 or 1) to look from.  Undefined off the cube.
  */
 export function pickCube(q: Quat, sx: number, sy: number, band = BAND): Vec3 | undefined {
-  // The ray from in front of the cube along the view's forward, in display coordinates.
-  const origin = toDisplay(q, [sx, sy, -10]);
-  const dir = toDisplay(q, [0, 0, 1]);
+  // The ray from the eye through the point, in display coordinates.
+  const origin = toDisplay(q, [0, 0, -CUBE_EYE]);
+  const dir = toDisplay(q, [sx / CUBE_EYE, sy / CUBE_EYE, 1]);
   let near = -Infinity;
   let far = Infinity;
   for (let i = 0; i < 3; ++i) {
@@ -283,12 +302,11 @@ export function multiplyQuat(a: Quat, b: Quat): Quat {
 
 /**
  * How much more than the view the cube is drawn turned, degrees: about the
- * view's vertical (yaw) and its horizontal (pitch), so that seen face-on it
- * still shows two more faces, its edges and its depth, and never reads as
- * a flat framed square.  For display only: what a click on it names, and
- * where the view turns, are the view's own.
+ * view's vertical (yaw) and its horizontal (pitch).  None: the cube turns
+ * exactly as the view does (it was turned 12° each way, which put it about
+ * 17° off the data); its perspective shows its depth instead.
  */
-export const CUBE_TILT = { yaw: 12, pitch: 12 };
+export const CUBE_TILT = { yaw: 0, pitch: 0 };
 
 /** The orientation the cube is drawn with: the view's, turned by `tilt` in view coordinates (toView of it is the tilt after toView of the view's). */
 export function shownOrientation(q: Quat, tilt: { yaw: number; pitch: number } = CUBE_TILT): Quat {
@@ -326,13 +344,14 @@ export function faceCorners(normal: Vec3): Vec3[] {
   });
 }
 
-/** The faces turned towards the viewer (at most three). */
+/** The faces the eye sees (at most three), from CUBE_EYE away: a face whose plane the eye is in front of. */
 export function visibleFaces(q: Quat): CubeFace[] {
   const out: CubeFace[] = [];
   for (const normal of FACES) {
     // Towards the viewer: against the view's forward.
     const facing = -toView(q, normal)[2];
-    if (facing > 1e-6) out.push({ normal, corners: faceCorners(normal), facing });
+    // The eye (0, 0, −CUBE_EYE in view coordinates) on the face's outer side: n·(eye − n) > 0.
+    if (facing * CUBE_EYE - 1 > 1e-6) out.push({ normal, corners: faceCorners(normal), facing });
   }
   return out;
 }

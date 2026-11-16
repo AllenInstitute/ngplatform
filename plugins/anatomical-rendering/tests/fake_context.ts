@@ -96,7 +96,9 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
   const axes = options.axes ?? {};
   const settings = options.settings ?? new Map<string, unknown>();
   const services = new Map((options.hosts ?? ["workstation"]).map((h) => [h, new FakeService(h)]));
-  const listeners = { layers: new Set<() => void>(), state: new Set<() => void>(), hosts: new Set<() => void>(), cursor: new Set<() => void>() };
+  const listeners = { layers: new Set<() => void>(), state: new Set<() => void>(), hosts: new Set<() => void>(), cursor: new Set<() => void>(), selection: new Set<() => void>() };
+  /** The layer selected in the Layers panel. */
+  let selected: string | undefined;
   const panels = new Map<string, (host: HTMLElement) => (() => void) | void>();
   const drawers: Drawer3d[] = [];
   const ng: Record<string, unknown> = { position: [0, 0, 0], projectionOrientation: [0, 0, 0, 1], projectionScale: 256, layout: "xy-3d" };
@@ -122,8 +124,13 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
       confirm: async () => true,
       sheet: vi.fn(() => () => undefined),
     },
+    workspace: {
+      onChanged: (f: () => void) => (listeners.selection.add(f), () => listeners.selection.delete(f)),
+      selectedLayer: () => selected,
+    },
     viewer: {
-      layers: () => layers,
+      // Fresh objects each time, as the viewer gives them: layers are told apart by name, never by identity.
+      layers: () => layers.map((l) => ({ ...l })),
       onLayersChanged: (f: () => void) => (listeners.layers.add(f), () => listeners.layers.delete(f)),
       onStateChanged: () => () => {},
       onCursorChanged: (f: () => void) => (listeners.cursor.add(f), () => listeners.cursor.delete(f)),
@@ -170,6 +177,10 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
     settings,
     listeners: () => Object.values(listeners).reduce((n, l) => n + l.size, 0),
     state: () => state,
+    select(name: string | undefined) {
+      selected = name;
+      listeners.selection.forEach((f) => f());
+    },
     setLayers(next: LayerInfo[]) {
       layers = next;
       listeners.layers.forEach((f) => f());

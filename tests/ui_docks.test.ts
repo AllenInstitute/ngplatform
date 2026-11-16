@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContextKeys } from "../src/core/when.js";
 import { DockManager, type DockTab } from "../src/ui/docks.js";
 import { closeMenu } from "../src/ui/overlays.js";
+import { card } from "../src/sdk/dom.js";
 
 let root: HTMLElement;
 let context: ContextKeys;
@@ -23,11 +24,17 @@ beforeEach(() => {
   root = document.body.appendChild(document.createElement("div"));
   context = new ContextKeys();
   docks = new DockManager(root, context);
-  // As the shell lays them out: the left column (layers, the Tools section's divider, the Tools section), then the bottom dock.
+  // As the shell lays them out: the left column (layers), its handle, the Tools column beside it and its handle, then the bottom dock.
   const side = document.createElement("div");
   side.className = "side";
-  side.append(docks.element("left"), docks.resizer("tools"), docks.element("tools"));
-  root.append(side, docks.element("bottom"));
+  side.append(docks.element("left"));
+  const toolsColumn = document.createElement("div");
+  toolsColumn.className = "side side-tools";
+  toolsColumn.append(docks.element("tools"));
+  const workspace = document.createElement("div");
+  workspace.className = "workspace";
+  workspace.append(side, docks.resizer("left"), toolsColumn, docks.resizer("tools"));
+  root.append(workspace, docks.element("bottom"));
   docks.restore(false);
 });
 afterEach(() => {
@@ -183,13 +190,48 @@ describe("the Tools section", () => {
     expect(tools()[0].getAttribute("aria-selected")).toBe("false");
   });
 
-  it("is below the layers, in the left column, with a divider between them", () => {
-    const side = docks.element("left").parentElement!;
-    expect([...side.children].map((e) => e.className.split(" ").slice(0, 2).join(" "))).toEqual(["dock dock-left", "resizer resizer-tools", "dock dock-tools"]);
-    const divider = side.querySelector(".resizer-tools")!;
+  it("is a column of its own beside the layers, with a handle at its right edge", () => {
+    const workspace = docks.element("left").parentElement!.parentElement!;
+    expect([...workspace.children].map((e) => e.className)).toEqual(["side", "resizer resizer-left", "side side-tools", "resizer resizer-tools"]);
+    expect(docks.element("tools").parentElement!.classList.contains("side-tools")).toBe(true);
+    const divider = workspace.querySelector(".resizer-tools")!;
     expect(divider.getAttribute("role")).toBe("separator");
-    expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(divider.getAttribute("aria-orientation")).toBe("vertical");
     expect(divider.getAttribute("aria-controls")).toBe("dock-tools");
+  });
+
+  it("has Collapse all at the top while the panel shown has two cards or more", async () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const cards = (host: HTMLElement, n: number) =>
+      host.append(...Array.from({ length: n }, (_, i) => {
+        const d = card(`test.cards.${i}`, `Card ${i}`, { open: true }, "body");
+        // A card within a card folds with it: not counted.
+        if (i === 0) d.querySelector(".card-body")!.append(card("test.cards.inner", "Inner", { open: true }, "inner"));
+        return d;
+      }));
+    docks.addTab({ id: "one", title: "One", slot: "tools", render: (host) => cards(host, 1) });
+    docks.addTab({ id: "three", title: "Three", slot: "tools", render: (host) => cards(host, 3) });
+    const bar = docks.element("tools").querySelector<HTMLElement>(".cards-bar")!;
+    const flip = bar.querySelector("button")!;
+    docks.show("one");
+    await tick();
+    expect(bar.hidden).toBe(true);
+    docks.show("three");
+    await tick();
+    expect(bar.hidden).toBe(false);
+    expect(flip.textContent).toBe("Collapse all");
+    flip.click();
+    const shown = [...pane("three").querySelectorAll<HTMLDetailsElement>(":scope > details.card")];
+    expect(shown.map((d) => d.open)).toEqual([false, false, false]);
+    expect(pane("three").querySelector<HTMLDetailsElement>("[data-card='test.cards.inner']")!.open).toBe(true);
+    expect(flip.textContent).toBe("Expand all");
+    flip.click();
+    expect(shown.map((d) => d.open)).toEqual([true, true, true]);
+    // One opened by hand after all were folded: the bar offers to fold them again.
+    flip.click();
+    shown[1].open = true;
+    await tick();
+    expect(flip.textContent).toBe("Collapse all");
   });
 
   it("takes a plugin's right-slot panel as a tool", () => {
@@ -310,9 +352,9 @@ describe("remembered", () => {
 
   it("keeps the Tools section's size and its fold for the next visit", () => {
     docks.addTab(tab("stats", "tools").spec);
-    const divider = docks.element("tools").parentElement!.querySelector<HTMLElement>(".resizer-tools")!;
+    const divider = root.querySelector<HTMLElement>(".resizer-tools")!;
     root.style.setProperty("--tools", "300px");
-    divider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    divider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     expect(root.style.getPropertyValue("--tools")).toBe("310px");
     docks.toggle("tools");
     const again = document.body.appendChild(document.createElement("div"));

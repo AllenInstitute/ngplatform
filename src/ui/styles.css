@@ -310,12 +310,16 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 
 .app {
   --lw: var(--left, 300px);
+  --tw: var(--tools, 320px);
   --bh: var(--bottom, 190px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100%;
 }
 .app.left-collapsed { --lw: 34px; }
+/* The Tools column: a rail while folded, nothing while no tool is on or the layers are collapsed. */
+.app.tools-collapsed { --tw: 34px; }
+.app.tools-empty, .app.left-collapsed { --tw: 0px; }
 .app.bottom-collapsed { --bh: 34px; }
 
 /* ---------------------------------------------------------------- top bar */
@@ -517,22 +521,22 @@ kbd {
 .workspace {
   position: relative;
   display: grid;
-  grid-template-columns: var(--lw) auto minmax(0, 1fr);
+  grid-template-columns: var(--lw) auto var(--tw) auto minmax(0, 1fr);
   min-height: 0;
 }
 .workspace > * { grid-row: 1; min-height: 0; }
 /* Every child pinned to its column, so a hidden resizer or a floating column never shifts the rest. */
 .workspace > .side { grid-column: 1; }
 .workspace > .resizer-left { grid-column: 2; }
-.workspace > .centre { grid-column: 3; }
-/* The left column: the layers on top, the Tools section (while a tool is on) below its divider. */
+.workspace > .side-tools { grid-column: 3; }
+.workspace > .resizer-tools { grid-column: 4; }
+.workspace > .centre { grid-column: 5; }
+/* The left column (the layers), and beside it the Tools column (while a tool is on), each a dock filling its height. */
 .side { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--ink-2); border-right: 1px solid var(--line); }
-.side > .dock-left { flex: 1 1 0; min-height: 120px; }
-.side > .dock-tools { flex: 0 1 var(--tools, 50%); min-height: 96px; max-height: calc(100% - 120px); border-top: 1px solid var(--line-strong); }
-.side > .dock-tools.collapsed { flex: none; min-height: 0; }
-.app.tools-empty .dock-tools, .app.tools-empty .resizer-tools,
+.side > .dock { flex: 1 1 0; min-height: 0; }
+.app.tools-empty .side-tools, .app.tools-empty .resizer-tools,
 .app.tools-collapsed .resizer-tools,
-.app.left-collapsed .side > :not(.dock-left) { display: none; }
+.app.left-collapsed .side-tools, .app.left-collapsed .resizer-tools { display: none; }
 .centre { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 
 /* The views.  Neuroglancer's DisplayContext makes the host position:relative,
@@ -590,6 +594,10 @@ kbd {
 .dock-left > .dock-head .tab:not([aria-selected="true"]) { color: var(--faint); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
+/* Collapse all: at the top of a dock's body while the pane shown has two cards or more; it stays put as the pane scrolls. */
+.cards-bar { position: sticky; top: 0; z-index: 3; display: flex; justify-content: flex-end; padding: var(--sp-2) var(--sp-5); background: var(--ink-2); border-bottom: 1px solid var(--line); }
+.cards-bar[hidden] { display: none; }
+.cards-bar:not([hidden]) ~ .dock-pane { min-height: calc(100% - 33px); }
 /* The left column: its content 12 px in from either side (one left and one right edge for
    every row), and one nested step of 12 px (a dataset's settings, its views). */
 .side .dock-head { padding-left: var(--sp-5); padding-right: var(--sp-5); }
@@ -600,17 +608,14 @@ kbd {
   color: var(--muted); font-size: var(--fs-body); letter-spacing: 0.06em; margin-top: var(--sp-4);
 }
 .dock.collapsed .rail-title { display: block; }
-/* The Tools section's head: its name, then its row of tabs, also folded; its chevron points right while folded. */
-.dock-tools.collapsed .dock-tabs { display: flex; }
-.dock-tools.collapsed .dock-head { flex-direction: row; padding: 5px var(--sp-5) 0; border-bottom: 0; }
-/* Its tabs name themselves: no title over them (the section and its tab list are named "Tools" for a screen reader). */
-.dock-tools .rail-title, .dock-tools.collapsed .rail-title { display: none; }
-.dock-tools .dock-toggle svg { transition: transform var(--t-fast) var(--ease-out); }
-.dock-tools.collapsed .dock-toggle svg { transform: rotate(-90deg); }
+/* The Tools column's toggle: a chevron pointing back at the layers while open, out of them while folded to its rail. */
+.dock-tools .dock-toggle svg { transition: transform var(--t-fast) var(--ease-out); transform: rotate(180deg); }
+.dock-tools.collapsed .dock-toggle svg { transform: none; }
+.side-tools .dock-tools.collapsed .dock-head { padding-left: 0; padding-right: 0; align-items: center; }
 
 .resizer { background: transparent; position: relative; z-index: 2; }
-.resizer-left { width: 5px; margin-inline: -2px; cursor: col-resize; }
-.resizer-bottom, .resizer-tools { height: 5px; margin-block: -2px; cursor: row-resize; flex: none; }
+.resizer-left, .resizer-tools { width: 5px; margin-inline: -2px; cursor: col-resize; }
+.resizer-bottom { height: 5px; margin-block: -2px; cursor: row-resize; flex: none; }
 .resizer:hover, .resizer.dragging { background: var(--line-hover); }
 .resizer:focus-visible, .engine-split:focus-visible { background: var(--accent); outline: none; }
 .app.left-collapsed .resizer-left, .app.bottom-collapsed .resizer-bottom { display: none; }
@@ -1389,6 +1394,7 @@ textarea.state-input.tall { min-height: 50vh; }
 @media (min-width: 521px) and (max-width: 760px) {
   /* A half-width window: the left column takes at most a third, so the views keep room. */
   .app:not(.left-collapsed) { --lw: min(var(--left, 300px), 34vw); }
+  .app:not(.left-collapsed):not(.tools-collapsed):not(.tools-empty) { --tw: min(var(--tools, 320px), 34vw); }
 }
 @media (max-width: 520px) {
   /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */
@@ -1402,14 +1408,19 @@ textarea.state-input.tall { min-height: 50vh; }
      the dock's name too (its button keeps it). */
   .status-items { max-width: none; padding: 0 var(--sp-2); }
   .dock-bottom.collapsed .rail-title { display: none; }
-  .app { --lw: 34px; }
-  .resizer-left { display: none; }
-  /* On a phone the open left column floats over the views instead of squeezing them. */
+  .app { --lw: 34px; --tw: 0px; }
+  .resizer-left, .resizer-tools { display: none; }
+  /* On a phone the open left column floats over the views instead of squeezing them; the Tools
+     column, which has no room beside it, floats over its lower half. */
   .app:not(.left-collapsed) .side {
     position: absolute; top: 0; bottom: 0; left: 0; z-index: 20;
     width: min(340px, 88vw);
     box-shadow: var(--shadow-dock);
   }
+  .app:not(.left-collapsed) .side-tools { top: 50%; z-index: 21; border-top: 1px solid var(--line-strong); }
+  .app:not(.left-collapsed) .side-tools:has(.dock-tools.collapsed) { top: auto; height: 36px; }
+  .side-tools .dock-tools.collapsed .dock-head { flex-direction: row; }
+  .side-tools .dock-tools.collapsed .rail-title { writing-mode: horizontal-tb; transform: none; margin-top: 0; }
   .dock-bottom { height: min(var(--bh), 30vh); }
 }
 

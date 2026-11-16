@@ -214,7 +214,8 @@ export class SplatView2d {
     if (rect.width < 2 || rect.height < 2) return undefined;
     const rows = measurePanel((p) => panel.project(p), globals.position);
     if (rows === undefined) return undefined;
-    const toPanel = rasToPanel(globals, rows);
+    // The image's RAS mm, placed as the layer's transform places it (SplatView.placement), to the panel.
+    const toPanel = multiply(rasToPanel(globals, rows), view.placement());
     const plane = sectionPlane(toPanel);
     if (plane === undefined) return undefined;
     // Pixels to clip space; for choosing blocks, mm from the section to clip depth too.

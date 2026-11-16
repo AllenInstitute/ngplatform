@@ -189,17 +189,17 @@ describe("dock tabs", () => {
       expect(left.getAttribute("aria-valuenow")).toBe("350");
       key(left, "Home");
       expect(root.style.getPropertyValue("--left")).toBe("160px");
-      // The Tools section, below the layers in the left column, grows up; so does the bottom dock.
+      // The Tools column, beside the layers, grows to the right; the bottom dock grows up.
       root.style.setProperty("--tools", "300px");
       const tools = docks.resizer("tools");
-      expect(tools.getAttribute("aria-orientation")).toBe("horizontal");
-      expect(tools.getAttribute("aria-label")).toBe("Resize the Tools section");
-      key(tools, "ArrowUp");
+      expect(tools.getAttribute("aria-orientation")).toBe("vertical");
+      expect(tools.getAttribute("aria-label")).toBe("Resize the Tools column");
+      key(tools, "ArrowRight");
       expect(root.style.getPropertyValue("--tools")).toBe("310px");
-      key(tools, "ArrowDown", { shiftKey: true });
+      key(tools, "ArrowLeft", { shiftKey: true });
       expect(root.style.getPropertyValue("--tools")).toBe("270px");
       key(tools, "Home");
-      expect(root.style.getPropertyValue("--tools")).toBe("96px");
+      expect(root.style.getPropertyValue("--tools")).toBe("200px");
       const bottom = docks.resizer("bottom");
       expect(bottom.getAttribute("aria-orientation")).toBe("horizontal");
       key(bottom, "ArrowUp");

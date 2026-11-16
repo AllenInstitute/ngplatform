@@ -26,7 +26,7 @@ import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import { SplatView2d } from "./splat_view2d.js";
 import { BLOCK, CELL, type SplatImageInfo } from "./splat_worker.js";
 import { COLORMAP_INDEX, type LayerStyle, rgbOf, TONE_INDEX } from "./style.js";
-import { apply, boxInFrustum, columnMajor, invertAffine, multiply } from "./view_math.js";
+import { apply, boxInFrustum, columnMajor, identity, invertAffine, type Mat4, multiply, placementMm } from "./view_math.js";
 import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 /** GPU memory for one image's splats. */
@@ -108,6 +108,22 @@ export class SplatView {
       dispose: () => this.release(),
     });
     this.view2d = new SplatView2d(this);
+  }
+
+  private placementCache: { at: number; value: Mat4 } | undefined;
+
+  /**
+   * Splats (in the image's own RAS mm) to where the layer shows it, in mm
+   * (column-major): the layer's transform against the source's own, so a
+   * source given a transform of its own (a volume of interest placed in an
+   * overview) is drawn where Neuroglancer draws it.  Read once per frame.
+   */
+  placement(): Mat4 {
+    const now = performance.now();
+    if (this.placementCache === undefined || now - this.placementCache.at > 8) {
+      this.placementCache = { at: now, value: placementMm(this.ctx.viewer.layerTransform?.(this.name)) ?? identity() };
+    }
+    return this.placementCache.value;
   }
 
   setStyle(style: LayerStyle): void {
@@ -207,9 +223,11 @@ export class SplatView {
     }
     this.problem = undefined;
     ++this.frame;
-    const rasToClip = multiply(frame.viewProjection, columnMajor(toDisplay));
+    // The image's RAS mm, placed as the layer's transform places it, to the view's display coordinates.
+    const placed = multiply(columnMajor(toDisplay), this.placement());
+    const rasToClip = multiply(frame.viewProjection, placed);
     const voxelToClip = multiply(rasToClip, columnMajor(info.levels[0].voxelToRas));
-    const toVoxel = invertAffine(multiply(columnMajor(toDisplay), columnMajor(info.levels[0].voxelToRas)));
+    const toVoxel = invertAffine(multiply(placed, columnMajor(info.levels[0].voxelToRas)));
     const centre = toVoxel ? apply(toVoxel, frame.position).slice(0, 3) : info.levels[0].size.map((s) => s / 2);
     const store = this.storeInfo(info);
     const selection = selectChunks(store, (lo, hi) => boxInFrustum(voxelToClip, lo, hi), centre, this.style.detail * 1e6, (key) => this.arrived(key));

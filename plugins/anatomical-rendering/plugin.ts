@@ -10,7 +10,6 @@
 import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule, ViewShape, ViewShapeHandle } from "@ngplatform/sdk";
 import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
 import { type ColourByLook, colormapSamples, layerColourLook, lookAttributes } from "@ngplatform/sdk/colour_by";
-import { gcsReadable } from "@ngplatform/sdk/sources";
 import { type Distance, hostLink, type Link, type MovieInfo, type ObjectsSpec, type PresetInfo, refusal, RenderService, ServiceError, type ServiceInfo, serviceText, type SessionInfo, type ViewSpec, type VolumeMeta } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
 import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, putJob, readJobs } from "./jobs.js";
@@ -18,10 +17,11 @@ import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, wi
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { cropToDisplay, cutOffset, cutShape, displayToCrop, levelAxes, planeFromShape, planeShape } from "./handles.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
-import { LIVE_VOXELS, LiveVolume, type LivePreset } from "./live.js";
-import { cameraAxes, type Level8, type LevelPreset, levelHistogram, levelResolved, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
+import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_VOLUMES } from "./live.js";
+import { placementMm } from "../luxar/view_math.js";
+import { cameraAxes, type Level8, type LevelPreset, levelHistogram, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { anatomicalSides, type AxisSides, axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, renderSource, planeClip, planeFromView, safeHref, unitMm, type ViewButton, viewButtons, viewForward, viewKey } from "./view.js";
+import { axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, renderSource, planeClip, planeFromView, safeHref, unitMm, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
 export interface KeyframeCamera {
@@ -58,14 +58,25 @@ export interface Crop {
   hi: [number, number, number];
 }
 
+/** An image layer's own look: whether it is rendered, its preset and its density (else the defaults below). */
+export interface LayerLook {
+  on?: boolean;
+  preset?: string;
+  density?: number;
+}
+
 export interface Saved {
   on: boolean;
   /** Where frames are rendered: the render service on a host (CUDA), or this browser (WebGPU). */
   where: "host" | "browser";
+  /** The image whose look the panel shows (Settings for). */
   layer?: string;
   labels?: string;
+  /** The preset and density of an image that has none of its own (`looks`). */
   preset: string;
   density?: number;
+  /** Each image layer's own look, by layer name: rendered or not, its preset and density. */
+  looks: Record<string, LayerLook>;
   exposure: number;
   /** For "window" presets: the data values at the window's ends, per image (its OME-Zarr store); else the host's guess. */
   windows: Record<string, [number, number]>;
@@ -172,6 +183,15 @@ export function readSaved(raw: unknown): Saved {
     labels: typeof s.labels === "string" ? s.labels : undefined,
     preset: typeof s.preset === "string" ? s.preset : "",
     density: typeof s.density === "number" ? s.density : undefined,
+    looks: Object.fromEntries(
+      Object.entries(s.looks && typeof s.looks === "object" ? s.looks : {})
+        .filter((e): e is [string, LayerLook] => !!e[1] && typeof e[1] === "object")
+        .map(([k, v]) => [k, {
+          ...(typeof v.on === "boolean" ? { on: v.on } : {}),
+          ...(typeof v.preset === "string" && v.preset ? { preset: v.preset } : {}),
+          ...(typeof v.density === "number" && Number.isFinite(v.density) ? { density: v.density } : {}),
+        }]),
+    ),
     exposure: num(s.exposure, 1),
     windows: Object.fromEntries(
       Object.entries(s.windows && typeof s.windows === "object" ? s.windows : {}).filter(
@@ -359,6 +379,26 @@ export function farFrom(picture: ArrayLike<number>, frame: Pick<Frame3d, "invVie
   return !(w > 0) || Math.abs(x / w) > 0.8 || Math.abs(y / w) > 0.8;
 }
 
+/** A tuning that changes the map (stops edited, shifted, compressed or the histogram warped). */
+export function isTuned(t: Tuning | undefined): t is Tuning {
+  return t !== undefined && (t.stops !== undefined || t.shift !== 0 || t.scale !== 1 || (t.warp ?? []).some((p) => p.to !== p.from));
+}
+
+/**
+ * The stops a tuning makes of a preset placed on an image's values (`resolved`): as the editor shows them (on the
+ * colourmap's axis: as tuned, or as resolved, then shifted and compressed), the histogram's warp, and the stops at
+ * the image's values (through the warp): what is rendered.
+ */
+export function tuneStops(resolved: DataStop[], t: Tuning | undefined, hist: { lo: number; hi: number; counts: number[] } | undefined): { stops: DataStop[]; base: DataStop[]; centre: number; warp: WarpPoint[]; data: DataStop[] } {
+  const stops = t?.stops ?? resolved;
+  const vis = resolved.filter((x) => x.opacity > 0.01);
+  const centre = vis.length ? (vis[0].value + vis[vis.length - 1].value) / 2 : 0;
+  const shown = shifted(stops, t?.shift ?? 0, t?.scale ?? 1, centre);
+  // Not warped yet: handles at the histogram's quantiles over the map's visible range, each where it is.
+  const warp = t?.warp ?? (hist && vis.length ? histogramHandles(hist, vis[0].value, vis[vis.length - 1].value).map((v) => ({ from: v, to: v })) : []);
+  return { stops: shown, base: stops, centre, warp, data: shown.map((x) => ({ ...x, value: warpInverse(x.value, warp) })) };
+}
+
 /** Which paired computer (Settings › Compute, ctx.hosts) renders, kept per browser: none named for Compute's choice. */
 interface HostSetting {
   name?: string;
@@ -390,8 +430,6 @@ class AnatomicalRendering {
   /** The jobs asked for (kept in this browser), and those this page is following now. */
   private jobs: JobRecord[];
   private readonly following = new Set<string>();
-  /** Each image's anatomical orientation from its metadata (null: none given, or not readable), by store. */
-  private readonly sides = new Map<string, AxisSides | null>();
   private sessionKey = "";
   /** How many channels and time points each image has (by store), as a loaded session said: kept while another session loads. */
   private readonly counts = new Map<string, { channels: number; times: number }>();
@@ -460,8 +498,10 @@ class AnatomicalRendering {
     this.live.onChange = () => {
       this.handle?.redraw();
       this.statusUpdate?.();
-      // A level read (or let go): the colourmap editor can show its histogram.
-      const level = this.live.heldLevel;
+      // A level read (or let go): the colourmap editor can show the edited image's histogram.
+      const edited = this.edited();
+      const src = edited ? this.sourceOf(edited) : undefined;
+      const level = src !== undefined ? this.live.levelOf(src) : undefined;
       if (level !== this.levelShown) {
         this.levelShown = level;
         this.panelUpdate?.();
@@ -483,6 +523,7 @@ class AnatomicalRendering {
         this.lastLayerLook = look;
         this.update();
       }),
+      ctx.workspace.onChanged(() => this.followSelection()),
       ctx.viewer.onCursorChanged(() => {
         // The last point the cursor was over (in the 3-D view, on the rendered tissue): where a cut starts.
         const c = ctx.viewer.cursor();
@@ -506,6 +547,8 @@ class AnatomicalRendering {
       () => this.live.close(),
     );
     void this.connect();
+    // The image selected already: its controls are the ones shown.
+    this.followSelection();
     // For measuring (the drawer's stats) from the console or a test.
     try {
       if (localStorage.getItem("ngplatform.debug")) (window as unknown as { anatomicalRendering: unknown }).anatomicalRendering = this;
@@ -527,8 +570,17 @@ class AnatomicalRendering {
   }
 
   private setOn(on: boolean): void {
+    // On with no image switched on (the 3-D view's Render, the command): the image selected is.
+    const selected = this.edited();
+    if (on && this.renderedLayers().length === 0 && selected !== undefined && this.isImage(selected)) {
+      this.saved.looks = { ...this.saved.looks, [selected.name]: { ...this.saved.looks[selected.name], on: true } };
+    }
     const target = this.target();
-    const problem = target === undefined ? "Anatomical rendering needs an OME-Zarr, N5 or precomputed image in the scene." : this.axesOf(target).problem;
+    const problem = target === undefined
+      ? this.images().length > 0
+        ? "No image is switched on for rendering: select one in Layers and switch Render on."
+        : "Anatomical rendering needs an OME-Zarr, N5 or precomputed image in the scene."
+      : this.axesOf(target).problem;
     if (on && problem !== undefined) {
       // Nothing it can read (meshes, tractograms, a 2-D image): say so rather than switch on to no effect.
       this.toggle.set(false);
@@ -558,9 +610,107 @@ class AnatomicalRendering {
   private lookGeneration: number | undefined;
   private lastLayerLook = "";
 
+  /**
+   * The image rendered first: the one whose settings are shown when it is rendered, else the first rendered. The
+   * crops are fractions of it, and a render computer renders it alone.
+   */
   private target(): LayerInfo | undefined {
+    if (this.images().length === 0) return this.vectorsAlone();
+    return this.renderedLayers()[0];
+  }
+
+  /**
+   * The image whose controls the panel shows (its Render switch, preset, window, colourmap, density): the one
+   * selected in the Layers panel, else the last image selected, else the one rendered first, else the first.
+   * Not saved: it follows the selection, as a layer's own settings in Layers do.
+   */
+  private editing: string | undefined;
+  private edited(): LayerInfo | undefined {
     const imgs = this.images();
-    return imgs.find((l) => l.name === this.saved.layer) ?? imgs[0] ?? this.vectorsAlone();
+    return imgs.find((l) => l.name === this.editing) ?? imgs.find((l) => l.name === this.saved.layer) ?? imgs[0] ?? this.vectorsAlone();
+  }
+
+  /** Whether a layer is one of the images (by name: the viewer gives new objects for its layers each time). */
+  private isImage(layer: LayerInfo): boolean {
+    return this.images().some((l) => l.name === layer.name);
+  }
+
+  /** Whether an image is rendered: as its own Render switch says; for a scene of before, the one image it named. */
+  private isOn(layer: LayerInfo): boolean {
+    return this.saved.looks[layer.name]?.on ?? layer.name === (this.saved.layer ?? this.images()[0]?.name);
+  }
+
+  /**
+   * The images rendered together as one volume, at most MAX_VOLUMES: the image the scene named first (the crops are
+   * fractions of it, so selecting another layer does not move them), then the others in the order of the layers.
+   */
+  private renderedLayers(): LayerInfo[] {
+    const on = this.images().filter((l) => this.isOn(l));
+    const first = on.find((l) => l.name === this.saved.layer);
+    return (first ? [first, ...on.filter((l) => l !== first)] : on).slice(0, MAX_VOLUMES);
+  }
+
+  /** Switches one image's rendering on or off (its own Render switch): one undo step; the first switched on is the one the crops are of. */
+  private setLayerOn(layer: LayerInfo, on: boolean): void {
+    const problem = this.axesOf(layer).problem;
+    if (on && problem !== undefined) {
+      this.ctx.ui.toast(problem, "error");
+      this.panelUpdate?.();
+      return;
+    }
+    this.save((x) => {
+      // Each image's switch written as it stands (a scene of before renders its one named image by default), so
+      // changing which image comes first changes no other image's.
+      const looks = { ...x.looks };
+      for (const l of this.images()) if (looks[l.name]?.on === undefined) looks[l.name] = { ...looks[l.name], on: this.isOn(l) };
+      looks[layer.name] = { ...looks[layer.name], on };
+      x.looks = looks;
+      const still = this.images().filter((l) => looks[l.name]?.on === true);
+      // The image the crops are of: kept while it is rendered, else this one (switched on) or the first left.
+      if (!still.some((l) => l.name === x.layer)) x.layer = on ? layer.name : still[0]?.name ?? x.layer;
+      x.on = still.length > 0;
+    });
+    this.toggle.set(this.saved.on);
+    if (on) this.ensure3d();
+    this.update();
+  }
+
+  /** An image's preset: its own, else the default. */
+  private presetName(layer = this.edited()): string {
+    return (layer && this.saved.looks[layer.name]?.preset) || this.saved.preset;
+  }
+
+  /** An image's density: its own, else the default (undefined: the preset's). */
+  private densityOf(layer = this.edited()): number | undefined {
+    return (layer && this.saved.looks[layer.name]?.density) ?? this.saved.density;
+  }
+
+  /** Changes an image's own look; `preview`: rendered while a slider is dragged, saved when let go. */
+  private setLook(layer: LayerInfo, change: LayerLook, preview = false): void {
+    const edit = (x: Saved) => void (x.looks = { ...x.looks, [layer.name]: { ...x.looks[layer.name], ...change } });
+    if (preview) this.preview(edit);
+    else this.save(edit);
+  }
+
+  /** The image selected in the Layers panel becomes the one whose settings are shown (not an undo step). */
+  private lastSelected: string | undefined;
+  private followSelection(): void {
+    const name = this.ctx.workspace.selectedLayer();
+    if (name === this.lastSelected) return;
+    this.lastSelected = name;
+    if (name === undefined || name === this.editing || !this.images().some((l) => l.name === name)) return;
+    this.editing = name;
+    this.update();
+  }
+
+  /** Where a layer's own transform moves its image from where the image's metadata puts it (mm, column-major); undefined: nowhere. */
+  private placementOf(layer: LayerInfo): Float64Array | undefined {
+    try {
+      return placementMm(this.ctx.viewer.layerTransform?.(layer.name));
+    } catch {
+      // A transform it cannot read: the image where its metadata puts it.
+      return undefined;
+    }
   }
 
   /**
@@ -620,38 +770,6 @@ class AnatomicalRendering {
     const next = { ...this.volumeAt(layer), ...change };
     this.save((x) => (x.volumeAt[src] = next));
     this.update();
-  }
-
-  /** The buttons that turn the view, by the image's anatomical sides when its metadata gives them, else by axis. */
-  private viewButtons(): ViewButton[] {
-    const target = this.target();
-    const src = target ? this.sourceOf(target) : undefined;
-    if (src !== undefined && !this.sides.has(src)) void this.readSides(src);
-    return viewButtons(this.lastFrame?.dimensions.names ?? ["x", "y", "z"], src === undefined ? undefined : (this.sides.get(src) ?? undefined));
-  }
-
-  /** Reads an image's anatomical orientation from its OME-Zarr metadata (zarr.json, else .zattrs), once per store. */
-  private async readSides(src: string): Promise<void> {
-    this.sides.set(src, null);
-    const base = metadataBase(src);
-    if (base === undefined || typeof fetch !== "function") return;
-    for (const [file, attrs] of [["zarr.json", (j: { attributes?: unknown }) => j.attributes], [".zattrs", (j: unknown) => j]] as const) {
-      try {
-        const r = await fetch(gcsReadable(`${base}/${file}`), { signal: AbortSignal.timeout(8000) });
-        if (!r.ok) continue;
-        const sides = anatomicalSides(attrs(await r.json()));
-        if (sides === undefined) return;
-        this.sides.set(src, sides);
-        this.panelUpdate?.();
-        return;
-      } catch {
-        // Not readable from the page: the buttons stay by axis.
-      }
-    }
-  }
-
-  private lookFrom(v: ViewButton): void {
-    this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)));
   }
 
   // ------------------------------------------------------------------ service
@@ -750,7 +868,7 @@ class AnatomicalRendering {
         dispose: () => undefined,
       });
     }
-    if (browser && target === this.vectorsAlone()) {
+    if (browser && target.name === this.vectorsAlone()?.name) {
       // This browser's renderer draws images only: a Zarr Vectors layer alone needs a render computer.
       this.closeLocal();
       this.closeSession();
@@ -758,7 +876,12 @@ class AnatomicalRendering {
       this.statusUpdate?.();
     } else if (browser) {
       this.closeSession();
-      void this.ensureLocal(target);
+      // Several images: drawn together as one volume, each read here (this browser's path tracer takes one).
+      const layers = this.renderedLayers().filter((l) => this.axesOf(l).problem === undefined);
+      if (layers.length > 1) {
+        this.closeLocal();
+        void this.live.open(layers.map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
+      } else void this.ensureLocal(target);
     } else {
       this.closeLocal();
       void this.ensureSession(target);
@@ -834,17 +957,19 @@ class AnatomicalRendering {
   }
 
   /** The chosen preset's domain ("percentile", "data" or "window"), as far as the page knows it. */
-  private presetDomain(): string | undefined {
+  private presetDomain(layer = this.edited()): string | undefined {
     const s = this.saved;
-    const custom = s.customPresets.find((p) => p.name === s.preset) as { domain?: unknown } | undefined;
-    const d = custom?.domain ?? (s.where === "browser" ? LOCAL_PRESETS.find((p) => p.name === s.preset)?.domain : this.presets.find((p) => p.name === s.preset)?.domain);
+    const name = this.presetName(layer);
+    const custom = s.customPresets.find((p) => p.name === name) as { domain?: unknown } | undefined;
+    const d = custom?.domain ?? (s.where === "browser" ? LOCAL_PRESETS.find((p) => p.name === name)?.domain : this.presets.find((p) => p.name === name)?.domain);
     return typeof d === "string" ? d : undefined;
   }
 
   /** Where a preset's colours came from: the photographs it lists (with their authors and licences). */
   private references(): { title: string; page?: string; author: string; licence: string }[] {
     const list = (this.saved.where === "browser" ? LOCAL_PRESETS : this.presets) as unknown as Record<string, unknown>[];
-    const info = list.find((p) => p.name === this.saved.preset);
+    const name = this.presetName();
+    const info = list.find((p) => p.name === name);
     const refs = Array.isArray(info?.reference) ? (info!.reference as { title?: string; page?: string; author?: string; licence?: string }[]) : [];
     return refs.map((r) => ({ title: (r.title ?? "a photograph").replace(/^File:/, ""), page: safeHref(r.page), author: r.author ?? "unknown", licence: r.licence ?? "" }));
   }
@@ -855,16 +980,17 @@ class AnatomicalRendering {
    */
   private resolved: { key: string; preset: Record<string, unknown> } | undefined;
   private editor: ColourmapEditor | undefined;
-  /** The histogram of the level held in this browser, for the editor. */
-  private levelHist: { level: Level8; hist: { lo: number; hi: number; counts: number[] } } | undefined;
 
   private presetRequest(): { key: string; preset: string | Record<string, unknown>; overrides: Record<string, unknown> } | undefined {
     const s = this.saved;
-    const src = this.target() ? this.sourceOf(this.target()!) : undefined;
+    const edited = this.edited();
+    const src = edited ? this.sourceOf(edited) : undefined;
     const browser = s.where === "browser";
-    const level = this.live.heldLevel;
-    if (src === undefined || (browser ? level === undefined : this.session?.status !== "ready")) return undefined;
-    const preset = (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain");
+    const level = src !== undefined ? this.live.levelOf(src) : undefined;
+    // On a computer, the session is the first image's: its editor is for that one only.
+    if (src === undefined || (browser ? level === undefined : this.session?.status !== "ready" || edited?.name !== this.target()?.name)) return undefined;
+    const name = this.presetName(edited);
+    const preset = (s.customPresets.find((p) => p.name === name) as Record<string, unknown> | undefined) ?? (name || "HiP-CT brain");
     const overrides: Record<string, unknown> = s.windows[src] && this.presetDomain() === "window" ? { window: s.windows[src] } : {};
     const on = browser ? ["browser", src, level!.path] : [this.session!.id];
     return { key: JSON.stringify([...on, preset, overrides]), preset, overrides };
@@ -874,7 +1000,8 @@ class AnatomicalRendering {
   private async resolvePreset(): Promise<void> {
     const r = this.presetRequest();
     if (r === undefined || this.resolved?.key === r.key) return;
-    const level = this.live.heldLevel;
+    const edited = this.edited();
+    const level = edited ? this.live.levelOf(this.sourceOf(edited) ?? "") : undefined;
     if (this.saved.where === "browser" && level !== undefined) {
       const base = typeof r.preset === "object" ? r.preset : (LOCAL_PRESETS.find((p) => p.name === r.preset) ?? LOCAL_PRESETS[0]);
       this.resolved = { key: r.key, preset: levelResolved({ ...base, ...r.overrides } as unknown as LevelPreset, level) as unknown as Record<string, unknown> };
@@ -896,7 +1023,8 @@ class AnatomicalRendering {
   }
 
   private currentTuning(): { src: string; tuning: Tuning } | undefined {
-    const src = this.target() ? this.sourceOf(this.target()!) : undefined;
+    const edited = this.edited();
+    const src = edited ? this.sourceOf(edited) : undefined;
     if (src === undefined) return undefined;
     return { src, tuning: this.saved.tunings[src] ?? { shift: 0, scale: 1 } };
   }
@@ -906,25 +1034,12 @@ class AnatomicalRendering {
   private editedStops(): { stops: DataStop[]; base: DataStop[]; centre: number; warp: WarpPoint[]; data: DataStop[] } | undefined {
     const r = this.presetRequest();
     if (!this.resolved || r === undefined || this.resolved.key !== r.key) return undefined;
-    const base = (this.resolved.preset.stops as DataStop[]) ?? [];
-    const t = this.currentTuning()?.tuning;
-    const stops = t?.stops ?? base;
-    const vis = base.filter((x) => x.opacity > 0.01);
-    const centre = vis.length ? (vis[0].value + vis[vis.length - 1].value) / 2 : 0;
-    const shown = shifted(stops, t?.shift ?? 0, t?.scale ?? 1, centre);
-    let warp = t?.warp;
-    if (!warp) {
-      // Not warped yet: handles at the histogram's quantiles over the map's visible range, each where it is.
-      const hist = this.histogram();
-      warp = hist && vis.length ? histogramHandles(hist, vis[0].value, vis[vis.length - 1].value).map((v) => ({ from: v, to: v })) : [];
-    }
-    return { stops: shown, base: stops, centre, warp, data: shown.map((x) => ({ ...x, value: warpInverse(x.value, warp) })) };
+    return tuneStops((this.resolved.preset.stops as DataStop[]) ?? [], this.currentTuning()?.tuning, this.histogram());
   }
 
   /** The preset as tuned for this image (whole, at data values), when it is tuned; else undefined. */
   private tunedPreset(): Record<string, unknown> | undefined {
-    const t = this.currentTuning()?.tuning;
-    if (!t || (!t.stops && t.shift === 0 && t.scale === 1 && !(t.warp ?? []).some((p) => p.to !== p.from))) return undefined;
+    if (!isTuned(this.currentTuning()?.tuning)) return undefined;
     const e = this.editedStops();
     if (!e || !this.resolved) return undefined;
     // Without what only describes it (photographs, measured colours): it goes with every view.
@@ -935,10 +1050,17 @@ class AnatomicalRendering {
   /** The image's histogram for the editor: the host's, or in this browser the level held here's. */
   private histogram(): { lo: number; hi: number; counts: number[] } | undefined {
     if (this.saved.where !== "browser") return (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
-    const level = this.live.heldLevel;
-    if (level === undefined) return undefined;
-    if (this.levelHist?.level !== level) this.levelHist = { level, hist: levelHistogram(level) };
-    return this.levelHist.hist;
+    const edited = this.edited();
+    const level = edited ? this.live.levelOf(this.sourceOf(edited) ?? "") : undefined;
+    return level === undefined ? undefined : this.histogramOf(level);
+  }
+
+  /** A level's histogram, worked out once. */
+  private readonly histograms = new WeakMap<Level8, { lo: number; hi: number; counts: number[] }>();
+  private histogramOf(level: Level8): { lo: number; hi: number; counts: number[] } {
+    let h = this.histograms.get(level);
+    if (h === undefined) this.histograms.set(level, (h = levelHistogram(level)));
+    return h;
   }
 
   /** The editor's canvas and its histogram: shown again from the state (not while a point is dragged). */
@@ -1010,7 +1132,9 @@ class AnatomicalRendering {
   private levelFrame(frame: Frame3d): { axes: NonNullable<ReturnType<typeof levelAxes>>; size: [number, number, number] } | undefined {
     const level = this.live.heldLevel;
     const d = displayFromPhysical(frame.dimensions);
-    const axes = level && d && levelAxes(d, level.voxelToRas);
+    const first = this.target();
+    const placement = first ? this.placementOf(first) : undefined;
+    const axes = level && d && levelAxes(d, placement ? mul(rowMajor(placement), level.voxelToRas) : level.voxelToRas);
     return axes && level ? { axes, size: level.size } : undefined;
   }
 
@@ -1211,12 +1335,12 @@ class AnatomicalRendering {
   /** A "window" preset's range for this image: the store, the image's values and the step; undefined otherwise. */
   private windowRange(): { src: string; lo: number; hi: number; step: number; guess?: [number, number] } | undefined {
     if (this.presetDomain() !== "window") return undefined;
-    const target = this.target();
-    const src = target ? this.sourceOf(target) : undefined;
+    const edited = this.edited();
+    const src = edited ? this.sourceOf(edited) : undefined;
     if (src === undefined) return undefined;
     if (this.saved.where === "browser") {
       // The level held here: its values' range, and the window guessed over them.
-      const level = this.live.heldLevel;
+      const level = this.live.levelOf(src);
       if (level === undefined) return undefined;
       const [lo, hi] = level.range;
       const g = level.window;
@@ -1505,11 +1629,14 @@ class AnatomicalRendering {
       return undefined;
     }
     const s = this.saved;
+    const first = this.target();
+    const density = this.densityOf(first);
+    const name = this.presetName(first);
     const overrides: Record<string, number | number[]> = { exposure: s.exposure };
-    if (s.density !== undefined) overrides.density = s.density;
-    const src = this.target() ? this.sourceOf(this.target()!) : undefined;
-    if (src !== undefined && s.windows[src] && this.presetDomain() === "window") overrides.window = s.windows[src];
-    const tuned = this.tunedPreset();
+    if (density !== undefined) overrides.density = density;
+    const src = first ? this.sourceOf(first) : undefined;
+    if (src !== undefined && s.windows[src] && this.presetDomain(first) === "window") overrides.window = s.windows[src];
+    const tuned = first !== undefined && first.name === this.edited()?.name ? this.tunedPreset() : undefined;
     return {
       inv_view_projection: Array.from(frame.invViewProjection),
       width: frame.width,
@@ -1518,8 +1645,8 @@ class AnatomicalRendering {
       world_from_physical: wfp,
       orbit_center: Array.from(frame.position),
       unit_mm: unitMm(frame.dimensions),
-      preset: tuned ?? (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
-      overrides: tuned ? { exposure: s.exposure, ...(s.density !== undefined ? { density: s.density } : {}) } : overrides,
+      preset: tuned ?? (s.customPresets.find((p) => p.name === name) as Record<string, unknown> | undefined) ?? (name || "HiP-CT brain"),
+      overrides: tuned ? { exposure: s.exposure, ...(density !== undefined ? { density } : {}) } : overrides,
       boxes: s.boxes.filter((b) => b.on).map((b) => ({ lo: b.lo, hi: b.hi, keep: b.keep })),
       // With the object drawn, the light is the object's (fixed in the world); else it turns with the camera.
       light: this.live.ready()
@@ -1542,7 +1669,7 @@ class AnatomicalRendering {
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
     this.syncShapes();
-    const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.looks, this.renderedLayers().map((l) => l.name), this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
     this.drawer.pictureAtRest = this.saved.restPicture;
     // A camera plane of before that turned with the view: fixed now, as the view is.
@@ -1550,6 +1677,12 @@ class AnatomicalRendering {
       this.save((x) => (x.planes = x.planes.map((p) => (p.normal.every((v) => v === 0) ? { ...planeFromView(frame.invViewProjection, frame.position, p.name), on: p.on, offset: p.offset } : p))));
     }
     const local = this.saved.where === "browser" ? this.local : undefined;
+    if (this.saved.where === "browser" && local === undefined && this.live.ready()) {
+      // Several images drawn as one: the object is all the view shows.
+      const spec = this.viewSpec(frame, 1);
+      if (spec !== undefined) this.lastSpec = spec;
+      return;
+    }
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !local.ready)) return;
     if (this.live.ready() && !this.saved.restPicture) {
@@ -1618,16 +1751,55 @@ class AnatomicalRendering {
    * The live image's look for a frame: the view the path tracer would be sent, and its preset whole, at
    * the image's data values as the host resolved it when it has (so the two agree), else as named.
    */
-  private liveLook(frame: Frame3d): { view: ViewSpec; preset: LivePreset } | undefined {
+  private liveLook(frame: Frame3d): LiveLook | undefined {
     const view = this.viewSpec(frame, 1);
     if (view === undefined) return undefined;
-    const host = this.saved.where !== "browser";
-    const r = this.presetRequest();
-    const resolved = r !== undefined && this.resolved?.key === r.key ? this.resolved.preset : undefined;
-    const named = (name: string) => (host ? this.presets.find((p) => p.name === name) : undefined) ?? LOCAL_PRESETS.find((p) => p.name === name);
-    const base = typeof view.preset === "object" ? view.preset : (resolved ?? named(view.preset));
-    const preset = { ...(base ?? LOCAL_PRESETS[0]), ...(view.overrides ?? {}) } as unknown as LivePreset;
-    return Array.isArray(preset.stops) ? { view, preset } : undefined;
+    const first = this.target();
+    if (this.saved.where !== "browser") {
+      // On a computer: the first image alone, as the computer renders it.
+      const r = this.presetRequest();
+      const resolved = r !== undefined && this.resolved?.key === r.key ? this.resolved.preset : undefined;
+      const named = (name: string) => this.presets.find((p) => p.name === name) ?? LOCAL_PRESETS.find((p) => p.name === name);
+      const base = typeof view.preset === "object" ? view.preset : (resolved ?? named(view.preset));
+      const preset = { ...(base ?? LOCAL_PRESETS[0]), ...(view.overrides ?? {}) } as unknown as LivePreset;
+      const url = first ? this.sourceOf(first) : undefined;
+      return Array.isArray(preset.stops) && url !== undefined ? { view, volumes: [{ url, preset, placement: this.placementOf(first!) }] } : undefined;
+    }
+    const volumes: LiveLook["volumes"] = [];
+    for (const layer of this.renderedLayers()) {
+      const url = this.sourceOf(layer);
+      const preset = url !== undefined ? this.layerPreset(layer, url) : undefined;
+      if (url !== undefined && preset !== undefined) volumes.push({ url, preset, placement: this.placementOf(layer) });
+    }
+    return volumes.length > 0 ? { view, volumes } : undefined;
+  }
+
+  /** Presets placed on a level's values, by what they were placed from: placing one reads the level's percentiles. */
+  private readonly placed = new Map<string, LevelPreset>();
+
+  /**
+   * An image's look in this browser, whole: its preset (its own, else the default) placed on its level's values,
+   * with its window, tuned as its colourmap was, at its density and the exposure. Undefined until its level is read.
+   */
+  private layerPreset(layer: LayerInfo, src: string): LivePreset | undefined {
+    const level = this.live.levelOf(src);
+    if (level === undefined) return undefined;
+    const s = this.saved;
+    const name = this.presetName(layer) || "HiP-CT brain";
+    const custom = s.customPresets.find((p) => p.name === name) as unknown as LevelPreset | undefined;
+    const base = custom ?? LOCAL_PRESETS.find((p) => p.name === name) ?? LOCAL_PRESETS[0];
+    const overrides = s.windows[src] && base.domain === "window" ? { window: s.windows[src] } : {};
+    const key = JSON.stringify([src, level.path, level.size, name, overrides, custom ?? null]);
+    let resolved = this.placed.get(key);
+    if (resolved === undefined) {
+      if (this.placed.size > 32) this.placed.clear();
+      resolved = levelResolved({ ...base, ...overrides } as LevelPreset, level);
+      this.placed.set(key, resolved);
+    }
+    const t = s.tunings[src];
+    const tuned: LevelPreset = isTuned(t) ? { ...resolved, stops: tuneStops(resolved.stops as DataStop[], t, this.histogramOf(level)).data, domain: "data", window: null, histogram: null } : resolved;
+    const density = this.densityOf(layer);
+    return { ...tuned, exposure: s.exposure, ...(density !== undefined ? { density } : {}) } as LivePreset;
   }
 
   /** One request at a time; the latest view waits for it. `look`: what the picture of it is drawn for. */
@@ -1746,29 +1918,6 @@ class AnatomicalRendering {
   private currentSpec(): ViewSpec | undefined {
     const f = this.lastFrame;
     return f ? this.viewSpec(f, 1) : this.lastSpec;
-  }
-
-  /** Moves the view to the middle of the tissue and zooms to show all of it. */
-  private centreOnTissue(): void {
-    const box = (this.session?.volume as { tissue_mm?: [number[], number[]] | null } | undefined)?.tissue_mm;
-    const f = this.lastFrame;
-    if (!box || f === undefined) {
-      this.ctx.ui.toast("Render first: the tissue's box comes with the rendered image.", "error");
-      return;
-    }
-    const m = displayFromPhysical(f.dimensions);
-    if (m === undefined) return;
-    const toDisplay = (p: number[]) => [0, 1, 2].map((r) => m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]);
-    const a = toDisplay(box[0]), b = toDisplay(box[1]);
-    const centre = a.map((v, i) => (v + b[i]) / 2);
-    const size = Math.max(...a.map((v, i) => Math.abs(b[i] - v)));
-    this.ctx.viewer.patchState((ng) => {
-      const s = ng as { position?: number[]; projectionScale?: number };
-      const pos = Array.isArray(s.position) ? s.position.slice() : [0, 0, 0];
-      for (let i = 0; i < 3; ++i) pos[i] = centre[i];
-      s.position = pos;
-      s.projectionScale = size * 1.4;
-    });
   }
 
   /** The view now at the output's size and twice its samples, as a job on the host (progress and cancel in the panel and in Activity); saved as a download. */
@@ -1928,7 +2077,9 @@ class AnatomicalRendering {
         this.save((x) => {
           const names = new Set(list.map((p: { name: string }) => p.name));
           x.customPresets = [...x.customPresets.filter((p) => !names.has(p.name as string)), ...list];
-          x.preset = list[0].name;
+          const edited = this.edited();
+          if (edited !== undefined) x.looks = { ...x.looks, [edited.name]: { ...x.looks[edited.name], preset: list[0].name } };
+          else x.preset = list[0].name;
         });
         this.panelUpdate?.();
       } catch (e) {
@@ -2141,19 +2292,26 @@ class AnatomicalRendering {
     const onHost = <E extends HTMLElement>(e: E): E => (hostOnly.push(e), e);
 
     // ---------------------------------------------------------------- head
-    const onSwitch = toggle("Render", saved().on, (v) => this.setOn(v));
+    // Says what it is: Render on, or Render off.
+    // The selected image's own: Render on adds it to the volume rendered, Render off takes it out.
+    const layerOn = () => {
+      const l = this.edited();
+      return l !== undefined && this.saved.on && (this.isImage(l) ? this.isOn(l) : true);
+    };
+    const onSwitch = toggle(layerOn() ? "Render on" : "Render off", layerOn(), (v) => {
+      const l = this.edited();
+      if (l !== undefined && this.isImage(l)) this.setLayerOn(l, v);
+      else this.setOn(v);
+      onSwitch.set(layerOn());
+      switchWords(layerOn());
+    });
+    const switchWords = (on: boolean) => {
+      // The switch is its label: its words are its one span.
+      const words = onSwitch.querySelector("span");
+      if (words && words.textContent !== (on ? "Render on" : "Render off")) words.textContent = on ? "Render on" : "Render off";
+    };
     const status = statusLine();
     const empty = emptyState("No OME-Zarr or N5 image in this scene.", openData);
-    const views = region((buttons: ViewButton[]) => [
-      button("Centre", () => this.centreOnTissue()),
-      ...buttons.map((v) => el("button", { class: "btn outline small", type: "button", title: `Look from ${v.name}`, "aria-label": `Look from ${v.name}`, onclick: () => this.lookFrom(v) }, v.label)),
-      info(
-        buttons[0]?.label.startsWith("+")
-          ? "Centre moves to the middle of the tissue and zooms to show all of it. The others look from each end of x, y and z: the image's metadata does not give its anatomical orientation (in RAS, +x is right, +y anterior and +z superior)."
-          : "Centre moves to the middle of the tissue and zooms to show all of it. The others look from each side of the image, as its metadata names them.",
-        "About the view buttons",
-      ),
-    ], { class: "row" });
 
     // -------------------------------------------------------------- Remote
     const where = select([["browser", "This browser (WebGPU)"], ["host", "A render computer's GPU (CUDA)"]], saved().where, (v) => {
@@ -2167,7 +2325,8 @@ class AnatomicalRendering {
     }, "Computer");
     const gpu = onHost(el("p", { class: "readout" }));
     const reconnect = button("Reconnect", () => void this.connect());
-    const remote = card("anatomical.remote", "Remote", { open: true },
+    // Last: this browser (WebGPU) renders unless a render computer is chosen here.
+    const remote = card("anatomical.remote", "Remote", {},
       field("Where", where),
       onHost(field("Computer", computer)),
       gpu,
@@ -2175,7 +2334,7 @@ class AnatomicalRendering {
     );
 
     // ----------------------------------------------------------- Rendering
-    const image = choices((v) => this.save((x) => (x.layer = v)), "Image");
+    const layersNote = el("p", { class: "hint" });
     const imageNote = el("p", { class: "hint" });
     // An image with several channels or time points: which one is rendered (another opens a new session).
     let channelChoice: Settable<HTMLSelectElement, string> | undefined;
@@ -2202,7 +2361,11 @@ class AnatomicalRendering {
         timeChoice && field("Time point", timeChoice, { info: `This image has ${n.times} time points, numbered from 0: one is rendered at a time.` }),
       ];
     }, { class: "stack" });
-    const preset = choices((v) => this.save((x) => (x.preset = v)), "Preset");
+    const preset = choices((v) => {
+      const l = this.edited();
+      if (l !== undefined && this.isImage(l)) this.setLook(l, { preset: v });
+      else this.save((x) => (x.preset = v));
+    }, "Preset");
     const references = region((refs: ReturnType<AnatomicalRendering["references"]>) =>
       refs.length === 0
         ? null
@@ -2248,17 +2411,23 @@ class AnatomicalRendering {
           ]
         : null,
     { class: "stack" });
-    const density = slider(40, { min: 0, max: 200, label: "Density", unit: "/mm", oninput: (v) => this.preview((x) => (x.density = v)), onchange: (v) => this.save((x) => (x.density = v)) });
+    const setDensity = (v: number, preview: boolean) => {
+      const l = this.edited();
+      if (l !== undefined && this.isImage(l)) this.setLook(l, { density: v }, preview);
+      else if (preview) this.preview((x) => (x.density = v));
+      else this.save((x) => (x.density = v));
+    };
+    const density = slider(40, { min: 0, max: 200, label: "Density", unit: "/mm", oninput: (v) => setDensity(v, true), onchange: (v) => setDensity(v, false) });
     const exposure = slider(1, { min: 0, max: 5, step: 0.05, label: "Exposure", oninput: (v) => this.preview((x) => (x.exposure = v)), onchange: (v) => this.save((x) => (x.exposure = v)) });
     const jar = onHost(checkbox("Hide the jar", false, (v) => {
       this.save((x) => (x.jar = v));
       this.update();
     }, { info: "Renders only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)." }));
     // A Zarr Vectors layer alone has no image to choose, nor its density.
-    const imageField = field("Image", image);
+    // Whose settings follow: the image selected in the Layers panel.
+    const editingNote = el("p", { class: "hint" });
     const densityField = field("Density", density, { info: "How opaque the tissue is: higher gives crisper surfaces, lower more translucent ones." });
     const rendering = card("anatomical.rendering", "Rendering", { open: true },
-      imageField,
       imageNote,
       volumePart,
       el("div", { class: "row" },
@@ -2581,11 +2750,12 @@ class AnatomicalRendering {
     );
 
     host.append(
-      el("div", { class: "row" }, onSwitch),
+      el("div", { class: "row" }, onSwitch, info(`Each image is rendered by its own switch: select it in Layers, and its Render switch, preset, window, colourmap and density show here. The images switched on are rendered together as one volume (up to ${MAX_VOLUMES}), each placed by its layer's transform; where they overlap, the finest shows. On a render computer, only the first is rendered.`, "About rendering per image")),
+      editingNote,
+      layersNote,
       empty,
       status,
-      views,
-      remote, rendering, regions, objectsCard, quality, lighting, crops, output, movie, splat,
+      rendering, regions, objectsCard, quality, lighting, crops, output, movie, splat, remote,
     );
 
     // --------------------------------------------------------------- sync
@@ -2637,11 +2807,10 @@ class AnatomicalRendering {
       for (const e of hostOnly) e.hidden = !onHost_;
 
       // The head: the switch, an empty scene's action, the view buttons.
-      onSwitch.set(s.on);
+      onSwitch.set(layerOn());
+      switchWords(layerOn());
       onSwitch.input.disabled = !scene;
       empty.hidden = scene;
-      views.update(scene ? this.viewButtons() : []);
-      views.hidden = !scene;
 
       // Remote: opened when it needs doing (no computer answers).
       const connected = !onHost_ || this.serviceInfo !== undefined;
@@ -2661,9 +2830,22 @@ class AnatomicalRendering {
 
       // Rendering.
       rendering.hidden = !scene;
-      imageField.hidden = alone;
-      image.update(imgs.map((l) => [l.name, l.name]), target?.name ?? "");
-      imageNote.textContent = axes.problem ?? "";
+      const edited = this.edited();
+      const rendered = this.renderedLayers();
+      const over = imgs.filter((l) => this.isOn(l)).length - rendered.length;
+      layersNote.textContent = imgs.length > 0 && rendered.length === 0
+        ? "No image is rendered: select one in Layers and switch Render on."
+        : over > 0 ? `Only ${MAX_VOLUMES} images are rendered at once: ${over} more ${over === 1 ? "is" : "are"} switched on.`
+        : onHost_ && rendered.length > 1 ? `A render computer renders ${rendered[0].name} alone; the others are drawn in this browser's object.`
+        : "";
+      layersNote.hidden = layersNote.textContent === "";
+      const others = rendered.filter((l) => l.name !== edited?.name).length;
+      editingNote.textContent = edited && !alone
+        ? `${edited.name}${others === 0 ? "" : this.isOn(edited) ? `, rendered with ${others} other image${others === 1 ? "" : "s"}` : `; ${others} other image${others === 1 ? " is" : "s are"} rendered`}. Select another image in Layers for its own settings.`
+        : "";
+      editingNote.hidden = editingNote.textContent === "";
+      const editedAxes = edited ? this.axesOf(edited) : {};
+      imageNote.textContent = editedAxes.problem ?? axes.problem ?? "";
       const counts = target && axes.problem === undefined ? this.volumeCounts(target) : undefined;
       volumePart.update(counts);
       volumePart.hidden = counts === undefined;
@@ -2673,12 +2855,12 @@ class AnatomicalRendering {
         timeChoice?.set(at.time);
       }
       imageNote.hidden = imageNote.textContent === "";
-      imageNote.className = axes.problem !== undefined ? "hint error" : "hint";
+      imageNote.className = imageNote.textContent ? "hint error" : "hint";
       const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "" })) : this.presets;
       const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file" }))];
       // No preset chosen yet is the default one, shown as such. Grouped: the general looks, the organs, the rest
       // by modality, those from files.
-      preset.update(presetChoices(allPresets), s.preset || "HiP-CT brain");
+      preset.update(presetChoices(allPresets), this.presetName(edited) || "HiP-CT brain");
       preset.disabled = allPresets.length === 0;
       references.update(this.references());
       const w = alone ? undefined : this.windowRange();
@@ -2688,14 +2870,16 @@ class AnatomicalRendering {
         if (now) windowSliders.forEach((sl, i) => sl.set(now[i]));
       }
       // The colourmap editor once the preset is placed on this image's values: by the computer, or here from the level held.
-      const placeable = onHost_ ? this.session?.status === "ready" : this.live.heldLevel !== undefined;
+      const editedSrc = edited ? this.sourceOf(edited) : undefined;
+      const placeable = onHost_ ? this.session?.status === "ready" && edited?.name === target?.name : editedSrc !== undefined && this.live.levelOf(editedSrc) !== undefined;
       const tuning = placeable && !alone ? this.currentTuning() : undefined;
       editorPart.update(tuning !== undefined);
       if (tuning) {
         this.editorUpdate?.();
         void this.resolvePreset();
       }
-      density.set(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40));
+      const presetNow = this.presetName(edited);
+      density.set(this.densityOf(edited) ?? Number((onHost_ ? this.presets : LOCAL_PRESETS).find((p) => p.name === presetNow)?.density ?? 40));
       exposure.set(s.exposure);
       jar.set(s.jar);
 

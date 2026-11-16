@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ViewSpec } from "../client.js";
 import { FADE_MS, PictureDrawer } from "../draw.js";
-import { LIGHT_SIDE, lightGrid, liveParams, type LivePreset, liveTable, occupancy } from "../live.js";
+import { LIGHT_SIDE, lightBox, lightGrid, liveParams, type LivePreset, liveTable, occupancy, shareOf, voxelWorldSize } from "../live.js";
 import { levelHistogram, levelResolved, levelTable, TF_SIZE } from "../local/local.js";
 import { frame3d } from "./fake_context.js";
 
@@ -187,5 +187,45 @@ describe("the drawer with a live image", () => {
     d.draw(frame(0.5));
     expect(live.draw).not.toHaveBeenCalled();
     expect(d.stats.flat).toBe(1);
+  });
+});
+
+describe("several images drawn as one volume", () => {
+  const view = { inv_view_projection: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1], width: 8, height: 8, unit_mm: 1, preset: "p" } as ViewSpec;
+  const p = { domain: "data", stops: [], density: 40 } as unknown as LivePreset;
+  // An overview of 2 mm voxels, and a volume of interest of 0.25 mm voxels placed 10 mm along x by its layer's transform.
+  const overview = { size: [10, 10, 10] as [number, number, number], voxelToRas: [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1] };
+  const voi = { size: [8, 8, 8] as [number, number, number], voxelToRas: [0.25, 0, 0, 0, 0, 0.25, 0, 0, 0, 0, 0.25, 0, 0, 0, 0, 1] };
+  const moved = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1]; // column-major: +10 mm along x
+
+  it("places an image where its layer's transform puts it", () => {
+    const q = liveParams(view, p, voi, moved);
+    const m = q.worldFromVox;
+    expect([m[12], m[13], m[14]]).toEqual([10, 0, 0]);
+    // Its first voxel back from the world.
+    const v = q.voxFromWorld;
+    expect(Math.round(v[0] * 10 + v[12])).toBe(0);
+  });
+
+  it("orders them finest first, by a voxel's size in the world", () => {
+    expect(voxelWorldSize(liveParams(view, p, voi).worldFromVox)).toBeCloseTo(0.25, 6);
+    expect(voxelWorldSize(liveParams(view, p, overview).worldFromVox)).toBeCloseTo(2, 6);
+  });
+
+  it("holds the light over a box about all of them, at most LIGHT_SIDE cells along its longest side", () => {
+    const a = liveParams(view, p, overview);
+    const b = liveParams(view, p, voi, moved);
+    const box = lightBox([a, b]);
+    expect(box.lo.map((x) => Math.round(x * 100) / 100)).toEqual([-1, -1, -1]);
+    // The overview reaches 19 mm; the volume of interest, 10 mm on, to 11.875 mm: the overview's edge is further.
+    expect(Math.max(...box.grid)).toBe(LIGHT_SIDE);
+    expect(box.cell).toBeCloseTo(20 / LIGHT_SIDE, 6);
+  });
+
+  it("shares the voxels read among them, but never below 32 M each (or the whole, if less)", () => {
+    expect(shareOf(64e6, 1)).toBe(64e6);
+    expect(shareOf(64e6, 5)).toBe(32e6);
+    expect(shareOf(400e6, 4)).toBe(100e6);
+    expect(shareOf(16e6, 3)).toBe(16e6);
   });
 });

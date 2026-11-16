@@ -53,11 +53,11 @@ describe("layout", () => {
     expect(root.querySelectorAll(".resizer")).toHaveLength(3);
   });
 
-  it("has one column on the left, the layers above the tools, and the views filling the rest", () => {
+  it("has the layers on the left, the tools in a column beside them, and the views filling the rest", () => {
     const workspace = root.querySelector(".workspace")!;
-    expect([...workspace.children].map((e) => e.classList[0])).toEqual(["side", "resizer", "centre"]);
-    const side = workspace.querySelector(".side")!;
-    expect([...side.children].map((e) => e.id || e.className)).toEqual(["dock-left", "resizer resizer-tools", "dock-tools"]);
+    expect([...workspace.children].map((e) => e.className)).toEqual(["side", "resizer resizer-left", "side side-tools", "resizer resizer-tools", "centre"]);
+    expect([...workspace.querySelector(".side")!.children].map((e) => e.id)).toEqual(["dock-left"]);
+    expect([...workspace.querySelector(".side-tools")!.children].map((e) => e.id)).toEqual(["dock-tools"]);
     // Nothing to the right of the views.
     expect(workspace.lastElementChild!.classList.contains("centre")).toBe(true);
     expect(root.querySelector(".dock-right")).toBeNull();

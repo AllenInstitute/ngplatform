@@ -8,6 +8,7 @@ import {
   lookingFrom,
   nearestStandard,
   pickCube,
+  projectCube,
   type Quat,
   shownOrientation,
   slerp,
@@ -148,7 +149,7 @@ describe("the cube", () => {
     expect(pickCube(front, 0, -0.9)).toEqual([0, 1, 1]);
     expect(pickCube(front, -0.9, 0)).toEqual([1, 1, 0]);
     expect(pickCube(front, -0.9, 0.9)).toEqual([1, 1, -1]);
-    expect(pickCube(front, 1.2, 0)).toBeUndefined();
+    expect(pickCube(front, 1.4, 0)).toBeUndefined();
   });
 
   it("picks the face nearer the viewer where faces overlap in depth", () => {
@@ -193,25 +194,34 @@ describe("the cube", () => {
 });
 
 describe("the cube as shown", () => {
-  it("is turned a little more than the view, so face-on it shows its top and right faces too", () => {
-    for (const q of [[0, 0, 0, 1], axisAngle([0, 1, 0], Math.PI / 2), axisAngle([1, 0, 0], -Math.PI / 2)] as Quat[]) {
-      const shown = shownOrientation(q);
-      // About 17° in all (12° each way).
-      expect(angleBetween(q, shown)).toBeGreaterThan(0.25);
-      expect(angleBetween(q, shown)).toBeLessThan(0.35);
-      const faces = visibleFaces(shown);
-      expect(faces).toHaveLength(3);
-      const onScreen = faces.map((f) => toView(shown, f.normal));
-      // The face the view looks at still faces it most; one more up the screen, one more to the right.
-      expect(Math.max(...faces.map((f) => f.facing))).toBeGreaterThan(0.9);
-      expect(onScreen.some((v) => v[1] < -0.9)).toBe(true);
-      expect(onScreen.some((v) => v[0] > 0.9)).toBe(true);
+  it("turns exactly as the view does: no tilt of its own", () => {
+    for (const q of [[0, 0, 0, 1], axisAngle([0, 1, 0], Math.PI / 2), axisAngle([0.3, -0.4, 0.8], 1.1)] as Quat[]) {
+      expect(angleBetween(q, shownOrientation(q))).toBeLessThan(1e-9);
     }
   });
 
-  it("turns in view coordinates: the same tilt after any view", () => {
+  it("is seen in perspective, as the view sees the data: its near face larger than its far one", () => {
+    const front = lookingFrom([0, 1, 0], RAS);
+    const near = projectCube(front, [1, 1, 1]);
+    const far = projectCube(front, [1, -1, 1]);
+    expect(Math.abs(near[0])).toBeGreaterThan(Math.abs(far[0]));
+    // A point through the centre's plane at its own size.
+    close(projectCube(front, [0, 0, 1]).slice(0, 2) as number[], toView(front, [0, 0, 1]).slice(0, 2) as number[]);
+    // Face-on, only the face looked at shows (the eye is in front of no other face's plane).
+    expect(visibleFaces(front).map((f) => f.normal)).toEqual([[0, 1, 0]]);
+  });
+
+  it("picks what it draws: a corner's picture names that corner", () => {
     const q = axisAngle([0.3, -0.4, 0.8], 1.1);
-    const tiltOnly = shownOrientation([0, 0, 0, 1]);
-    for (const v of [[1, 0, 0], [0, 1, 0], [0.2, 0.5, -0.7]] as Vec3[]) close(toView(shownOrientation(q), v), toView(tiltOnly, toView(q, v)));
+    for (const face of visibleFaces(q)) {
+      // Just inside each drawn corner of each face seen.
+      for (const corner of face.corners) {
+        const inside = corner.map((v, i) => (face.normal[i] !== 0 ? v : v * 0.9)) as Vec3;
+        const [sx, sy] = projectCube(q, inside);
+        const t = pickCube(q, sx, sy);
+        if (t === undefined) continue;
+        expect(t.every((v, i) => v === 0 || v === Math.sign(inside[i]))).toBe(true);
+      }
+    }
   });
 });

@@ -60,7 +60,8 @@ describe("the Anatomical panel", () => {
     const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ } });
     const { host } = await open(dom, f);
     const titles = [...host.querySelectorAll("details")].map((d) => dom.text(d.querySelector(".card-title")!));
-    expect(titles).toEqual(["Remote", "Rendering", "Regions", "Objects", "Quality", "Lighting", "Crops", "Output", "Movie", "Splat"]);
+    // Remote last: this browser renders unless a computer is chosen there.
+    expect(titles).toEqual(["Rendering", "Regions", "Objects", "Quality", "Lighting", "Crops", "Output", "Movie", "Splat", "Remote"]);
     const boxes = host.querySelectorAll<HTMLInputElement>("input[type=checkbox]");
     expect(boxes.length).toBeGreaterThan(5);
     for (const b of boxes) {
@@ -190,18 +191,56 @@ describe("the Anatomical panel", () => {
     await vi.waitFor(() => expect(dom.text(cardOf(dom, host, "Output"))).toContain("waiting, 2 jobs ahead"));
   });
 
-  it("labels the view buttons by axis when the image's metadata gives no anatomical orientation", async () => {
+  it("renders each image by its own switch: the one selected in Layers, with its own preset", async () => {
+    const VOI = { ...IMAGE, name: "voi", sources: ["zarr://https://example.org/voi.ome.zarr"] };
+    const f = fakeContext({ layers: [IMAGE, VOI], axes: { brain: XYZ, voi: XYZ } });
+    const { host } = await open(dom, f);
+    const words = () => host.querySelector("label.choice")!.querySelector("span")!.textContent;
+    const flip = () => {
+      const sw = host.querySelector<HTMLInputElement>("input.switch")!;
+      dom.check(sw, !sw.checked);
+    };
+    // No Images list: the switch is the selected image's.
+    expect(dom.text(host).includes("Images")).toBe(false);
+    f.select("voi");
+    await vi.waitFor(() => expect(dom.text(host)).toContain("voi; 1 other image is rendered."));
+    expect(words()).toBe("Render off");
+    // Switched on: rendered beside the first image (on by default, as a scene of before had it), which stays first.
+    flip();
+    let saved = readSaved(f.state());
+    expect(saved.looks).toEqual({ brain: { on: true }, voi: { on: true } });
+    expect(saved.on).toBe(true);
+    expect(words()).toBe("Render on");
+    expect(dom.text(host)).toContain("voi, rendered with 1 other image.");
+    // Its preset is its own: the other image keeps the default.
+    const preset = host.querySelector<HTMLSelectElement>("select[aria-label=Preset]")!;
+    preset.value = "Custom look";
+    dom.fire(preset, "change");
+    expect(readSaved(f.state()).looks.voi.preset).toBe("Custom look");
+    expect(readSaved(f.state()).looks.brain.preset).toBeUndefined();
+    expect(readSaved(f.state()).preset).not.toBe("Custom look");
+    // The first one selected and switched off: the other stays rendered, and is now the one the crops are of.
+    f.select("brain");
+    await vi.waitFor(() => expect(dom.text(host)).toContain("brain, rendered with"));
+    expect(words()).toBe("Render on");
+    flip();
+    saved = readSaved(f.state());
+    expect(saved.looks).toEqual({ brain: { on: false }, voi: { on: true, preset: "Custom look" } });
+    expect(saved.layer).toBe("voi");
+    expect(saved.on).toBe(true);
+    expect(words()).toBe("Render off");
+  });
+
+  it("has no view buttons (the orientation cube turns the view), and says Render on or Render off", async () => {
     const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ } });
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ attributes: { ome: { multiscales: [{ axes: [{ name: "x", type: "space" }] }] } } })));
-    try {
-      const { host } = await open(dom, f);
-      const labels = [...host.querySelectorAll("button[aria-label]")].map((b) => b.getAttribute("aria-label")!).filter((l) => l.startsWith("Look from"));
-      expect(labels).toEqual(["Look from +x", "Look from −x", "Look from +y", "Look from −y", "Look from +z", "Look from −z"]);
-      dom.find(host, "button", "+x").click();
-      expect(f.ng.projectionOrientation).toHaveLength(4);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const { host } = await open(dom, f);
+    const labels = [...host.querySelectorAll("button[aria-label]")].map((b) => b.getAttribute("aria-label")!).filter((l) => l.startsWith("Look from"));
+    expect(labels).toEqual([]);
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Centre")).toBe(false);
+    const words = () => host.querySelector("label.choice")!.querySelector("span")!.textContent;
+    expect(words()).toBe("Render off");
+    f.ctx.state.set({ ...(f.state() as object), on: true });
+    await vi.waitFor(() => expect(words()).toBe("Render on"));
   });
 
   it("keeps the jobs across a reload, follows one still running, and cancels it", async () => {

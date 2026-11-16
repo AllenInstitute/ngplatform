@@ -563,6 +563,12 @@ TIFF as virtual Zarr) is splatted at every resolution.
   as one image, and clamped rather than tone mapped, so a section shows the
   image's own values (on the SRB template, 0.99 of Neuroglancer's drawing).
   Only blocks within a slab around each section are read.
+- The splats are made in the image's own RAS millimetres (its metadata)
+  and moved to where the layer's transform puts the image
+  (`placementMm` in `view_math.ts`: the layer's transform against the
+  source's own), so a source given with a transform of its own (a HiP-CT
+  volume of interest placed in its overview) is drawn where Neuroglancer
+  draws it.
 - Neuroglancer's drawing of the image is hidden while its splats are on
   (`viewer.hideLayerDrawing`: its opacity 0, not saved in the link), and
   the 2-D views' background is black (`viewer.setTemporaryBackground`), as

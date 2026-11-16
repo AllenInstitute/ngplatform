@@ -4,11 +4,12 @@
  * shown and stays mounted (Neuroglancer widgets keep their state), unless it
  * is marked transient, in which case it is disposed whenever it is hidden.
  *
- * The left column holds two of them, one above the other: Layers and
- * Plugins on top, and below a divider the Tools section, the tools that
- * are on (ordered by kind), which is not there while it has none.  The
- * Tools section belongs to the left column: collapsing the column hides it
- * too, and showing a tool opens both.  Each dock shows its tabs as a row.
+ * On the left, two columns side by side: Layers and Plugins, and beside
+ * it, coming out of it, the Tools column, the tools that are on (ordered by
+ * kind), which is not there while it has none.  The Tools column belongs to
+ * the layers: collapsing the layers hides it too, and showing a tool opens
+ * both; folded, it is a rail with its name.  Each dock shows its tabs as a
+ * row.
  * Sizes, open tabs and collapsed docks are remembered per browser; the
  * bottom dock starts collapsed to its status line.
  */
@@ -36,26 +37,26 @@ export const prefs = {
 };
 
 /**
- * Where a dock is: the left column's top (Layers, Plugins), the left
- * column's Tools section below it, or the bottom (Activity).
+ * Where a dock is: the left column (Layers, Plugins), the Tools column
+ * beside it, or the bottom (Activity).
  */
 export type DockPlace = "left" | "tools" | "bottom";
 
 export interface DockTab extends Omit<DockTabSpec, "slot"> {
-  /** A plugin's `right` slot is the Tools section (`tools`), as `asTool` places it. */
+  /** A plugin's `right` slot is the Tools column (`tools`), as `asTool` places it. */
   slot: DockSlot | "tools";
   /** Disposed when hidden, rendered again when shown (e.g. polling views). */
   transient?: boolean;
 }
 
-/** The dock a tab's slot is: the old right dock is the Tools section. */
+/** The dock a tab's slot is: the old right dock is the Tools column. */
 function placeOf(slot: DockTab["slot"]): DockPlace {
   return slot === "right" ? "tools" : slot;
 }
 
 /**
  * Where a plugin's panel goes, TypeScript or Python: one in the left (or
- * right) slot is a tool, so it goes to the Tools section under its group
+ * right) slot is a tool, so it goes to the Tools column under its group
  * (`fallback` when it names none); the bottom slot keeps its own.
  */
 export function asTool(tab: DockTab | DockTabSpec, fallback = "Other"): DockTab {
@@ -70,6 +71,81 @@ interface Mounted {
   dispose?: Disposer;
   /** Counts the renders, so a slow render that a later one overtook disposes of itself. */
   renders: number;
+}
+
+/**
+ * A pane's cards that are not inside another card (a card's own cards fold
+ * with it), and not hidden: what Collapse all folds.
+ */
+export function topCards(pane: HTMLElement): HTMLDetailsElement[] {
+  return [...pane.querySelectorAll<HTMLDetailsElement>("details.card")].filter((d) => {
+    const outer = d.parentElement?.closest("details.card");
+    if (outer && pane.contains(outer)) return false;
+    for (let e: HTMLElement | null = d; e && e !== pane; e = e.parentElement) if (e.hidden) return false;
+    return true;
+  });
+}
+
+/**
+ * The bar at the top of a dock's body: Collapse all (or Expand all, when
+ * every card is folded), there while the pane shown has two cards or more.
+ * It follows the pane as it changes (cards added, shown or hidden, folded
+ * by hand); each card keeps its own state, as when folded by hand.
+ */
+class CardsBar {
+  readonly el = h("div", { class: "cards-bar", hidden: true });
+  private readonly btn: HTMLButtonElement;
+  private pane: HTMLElement | undefined;
+  private queued = false;
+
+  constructor(body: HTMLElement) {
+    this.btn = h("button", { class: "btn small", type: "button", onclick: () => this.flip() }, "Collapse all");
+    this.el.append(this.btn);
+    // The body is empty yet: the bar comes before every pane added to it.
+    body.append(this.el);
+    const later = () => this.later();
+    // Its own changes (its words, hiding it) are not the pane's: left out, or it would follow itself for ever.
+    if (typeof MutationObserver === "function") new MutationObserver((records) => {
+      if (records.some((r) => !this.el.contains(r.target))) later();
+    }).observe(body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "open"] });
+    // A card folded or opened by hand ("toggle" does not bubble: caught on its way down).
+    body.addEventListener("toggle", later, true);
+  }
+
+  show(pane: HTMLElement | undefined): void {
+    this.pane = pane;
+    this.update();
+  }
+
+  private later(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => {
+      this.queued = false;
+      this.update();
+    });
+  }
+
+  private update(): void {
+    const cards = this.pane && !this.pane.hidden ? topCards(this.pane) : [];
+    const hidden = cards.length < 2;
+    if (this.el.hidden !== hidden) this.el.hidden = hidden;
+    if (hidden) return;
+    const open = cards.some((d) => d.open);
+    const words = open ? "Collapse all" : "Expand all";
+    if (this.btn.textContent === words) return;
+    this.btn.textContent = words;
+    this.btn.title = open ? "Fold every card in this panel" : "Open every card in this panel";
+    this.btn.setAttribute("aria-label", this.btn.title);
+  }
+
+  private flip(): void {
+    if (!this.pane) return;
+    const cards = topCards(this.pane);
+    const open = !cards.some((d) => d.open);
+    for (const d of cards) d.open = open;
+    this.update();
+  }
 }
 
 /** What a panel that failed shows: what went wrong, and Retry. */
@@ -118,13 +194,18 @@ export function renderPanel(
 }
 
 const TITLES: Record<DockPlace, string> = { left: "Layers", tools: "Tools", bottom: "Activity" };
-/** The left column's width, the Tools section's height (a share of the column until dragged) and the bottom dock's height. */
-const DEFAULT_SIZE: Record<DockPlace, string> = { left: "300px", tools: "50%", bottom: "190px" };
+/** The left column's width, the Tools column's width and the bottom dock's height. */
+const DEFAULT_SIZE: Record<DockPlace, string> = { left: "300px", tools: "320px", bottom: "190px" };
+/**
+ * Where each size is kept in this browser.  The Tools column's width has a
+ * key of its own: `tools.size` was the height of the section it was below
+ * the layers, which is not a width.
+ */
+const SIZE_KEY: Record<DockPlace, string> = { left: "left.size", tools: "tools.width", bottom: "bottom.size" };
 /** Collapsed until the person opens them: the bottom dock (to its status line). */
 const START_COLLAPSED: Record<DockPlace, boolean> = { left: false, tools: false, bottom: true };
-/** Room the Layers part keeps above the Tools section, and the least the Tools section takes. */
-const LAYERS_MIN = 120;
-const TOOLS_MIN = 96;
+/** The narrowest the Tools column may be. */
+const TOOLS_MIN = 200;
 
 /**
  * Follows a drag on `target` until it ends, however it ends: let go, or
@@ -159,6 +240,8 @@ class Dock {
   readonly body = h("div", { class: "dock-body" });
   readonly tabs = new Map<string, Mounted>();
   selected: string | undefined;
+  /** Collapse all, over the pane shown. */
+  readonly cards: CardsBar;
 
   constructor(
     readonly slot: DockPlace,
@@ -174,7 +257,7 @@ class Dock {
       current: () => (this.selected !== undefined ? this.tabs.get(this.selected)?.button : undefined),
       onMove: (button) => button.click(),
     });
-    // The Tools section folds to its row of tabs; the docks collapse to a rail or a line.
+    // The docks collapse to a rail (the columns) or a line (the bottom).
     const toggle = h(
       "button",
       {
@@ -185,15 +268,16 @@ class Dock {
         "aria-controls": `dock-${slot}`,
         onclick: () => manager.toggle(slot),
       },
-      icon(slot === "left" ? "panel-left" : slot === "tools" ? "chevron-down" : "panel-bottom"),
+      icon(slot === "left" ? "panel-left" : slot === "tools" ? "chevron-right" : "panel-bottom"),
     );
     const rail = h("span", { class: "rail-title" }, TITLES[slot]);
-    if (slot === "left") this.head.append(toggle, this.tabsEl, rail);
+    if (slot === "left" || slot === "tools") this.head.append(toggle, this.tabsEl, rail);
     else this.head.append(this.tabsEl, rail, toggle);
     this.el.append(this.head, this.body);
+    this.cards = new CardsBar(this.body);
   }
 
-  /** The tabs in their order; the Tools section's grouped by kind first (the groups in the order their first tool came). */
+  /** The tabs in their order; the Tools column's grouped by kind first (the groups in the order their first tool came). */
   ordered(): Mounted[] {
     const byOrder = [...this.tabs.values()].sort((a, b) => (a.tab.order ?? 100) - (b.tab.order ?? 100));
     if (this.slot !== "tools") return byOrder;
@@ -224,7 +308,7 @@ export class DockManager {
   ) {
     this.docks = { left: new Dock("left", this), tools: new Dock("tools", this), bottom: new Dock("bottom", this) };
     context.onChange(() => this.applyWhen());
-    // None has a tab yet: the Tools section is not there until a tool is on.
+    // None has a tab yet: the Tools column is not there until a tool is on.
     this.applyEmpty();
   }
 
@@ -250,7 +334,7 @@ export class DockManager {
     dock.head.insertBefore(element, dock.tabsEl.nextSibling);
   }
 
-  /** A dock with no tab to show is not there at all (the Tools section with no tool on, or none for the data selected). */
+  /** A dock with no tab to show is not there at all (the Tools column with no tool on, or none for the data selected). */
   private applyEmpty(): void {
     for (const dock of Object.values(this.docks)) {
       const empty = dock.visibleTabs().length === 0;
@@ -294,6 +378,7 @@ export class DockManager {
     dock.layoutTabs();
     if (dock.selected === id) {
       dock.selected = undefined;
+      dock.cards.show(undefined);
       const next = dock.visibleTabs()[0];
       if (next !== undefined) this.select(slot, next.tab.id);
     }
@@ -326,7 +411,7 @@ export class DockManager {
     renderPanel(mounted, (message) => this.failed(mounted, message));
   }
 
-  /** Whether a dock's panel is on screen: not collapsed, and for the Tools section, its column not collapsed either. */
+  /** Whether a dock's panel is on screen: not collapsed, and for the Tools column, the layers not collapsed either. */
   private isOpen(slot: DockPlace): boolean {
     return !this.isCollapsed(slot) && (slot !== "tools" || !this.isCollapsed("left"));
   }
@@ -351,6 +436,7 @@ export class DockManager {
     mounted.button.setAttribute("aria-selected", "true");
     dock.keys.sync();
     mounted.host.hidden = false;
+    dock.cards.show(mounted.host);
     if (this.isOpen(slot)) this.render(mounted);
     if (chosen) prefs.set(`${slot}.tab`, id);
     for (const listener of this.listeners) listener(id);
@@ -358,7 +444,7 @@ export class DockManager {
 
   /**
    * Shows a tab: selects it and opens its dock.  A tool opens the left
-   * column and the Tools section too, and is scrolled into view.
+   * column and the Tools column too, and is scrolled into view.
    */
   show(id: string): void {
     const redirect = this.redirects.get(id);
@@ -372,7 +458,7 @@ export class DockManager {
     this.setCollapsed(slot, false);
     const mounted = this.docks[slot].tabs.get(id)!;
     if (slot === "tools") {
-      // A tab on a second row, or a column floating over the views on a phone: brought into view.
+      // A tab on a second row: brought into view.
       mounted.button.scrollIntoView?.({ block: "nearest", inline: "nearest" });
       this.docks.tools.body.scrollTop = 0;
     }
@@ -432,7 +518,7 @@ export class DockManager {
     this.root.classList.toggle(`${slot}-collapsed`, collapsed);
     if (remember) prefs.set(`${slot}.collapsed`, collapsed ? "1" : "0");
     this.applyOpen(slot);
-    // The Tools section is in the left column: it opens and shuts with it.
+    // The Tools column comes out of the layers: it opens and shuts with them.
     if (slot === "left") this.applyOpen("tools");
   }
 
@@ -456,7 +542,7 @@ export class DockManager {
   /** Restores remembered sizes and collapsed docks; a narrow window starts with the left column collapsed. */
   restore(narrow: boolean): void {
     for (const slot of ["left", "tools", "bottom"] as const) {
-      this.root.style.setProperty(`--${slot}`, prefs.get(`${slot}.size`) || DEFAULT_SIZE[slot]);
+      this.root.style.setProperty(`--${slot}`, prefs.get(SIZE_KEY[slot]) || DEFAULT_SIZE[slot]);
       const kept = prefs.get(`${slot}.collapsed`);
       const collapsed = (kept === null ? START_COLLAPSED[slot] : kept === "1") || (narrow && slot === "left");
       this.setCollapsed(slot, collapsed, false);
@@ -466,11 +552,7 @@ export class DockManager {
   /** The smallest and largest a dock may be, in pixels, in this window. */
   private limits(slot: DockPlace): [number, number] {
     if (slot === "bottom") return [90, window.innerHeight * 0.6];
-    if (slot === "tools") {
-      // Within the left column, leaving the Layers part some room.
-      const column = this.docks.tools.el.parentElement?.getBoundingClientRect().height || window.innerHeight * 0.8;
-      return [TOOLS_MIN, Math.max(TOOLS_MIN, column - LAYERS_MIN)];
-    }
+    if (slot === "tools") return [TOOLS_MIN, Math.max(TOOLS_MIN, window.innerWidth * (window.innerWidth <= 760 ? 0.34 : 0.4))];
     return [160, window.innerWidth * (window.innerWidth <= 760 ? 0.34 : 0.5)];
   }
 
@@ -486,34 +568,33 @@ export class DockManager {
   /** The size a dock is now: as drawn, or as set. */
   private sizeOf(slot: DockPlace): number {
     const rect = this.docks[slot].el.getBoundingClientRect();
-    const drawn = slot === "left" ? rect.width : rect.height;
-    if (drawn > 0) return drawn;
-    const set = this.root.style.getPropertyValue(`--${slot}`) || DEFAULT_SIZE[slot];
-    // A share of the column (the Tools section until it is dragged): in pixels of the column.
-    return set.endsWith("%") ? (parseFloat(set) / 100) * (this.limits(slot)[1] + LAYERS_MIN) : parseFloat(set);
+    const drawn = slot === "bottom" ? rect.height : rect.width;
+    // A folded column is its rail: the size set is what it opens to.
+    if (drawn > 0 && !this.isCollapsed(slot)) return drawn;
+    return parseFloat(this.root.style.getPropertyValue(`--${slot}`) || DEFAULT_SIZE[slot]);
   }
 
   /**
    * A handle that resizes `slot`: dragged, or with the keyboard, as a
    * separator a screen reader reads with its size.  The arrows move it 10
    * px (40 with Shift), Home and End to the smallest and largest.  The size
-   * is kept when a drag ends, or at each key.  The left column's handle is
-   * at its right edge; the Tools section's and the bottom dock's above them.
+   * is kept when a drag ends, or at each key.  The columns' handles are at
+   * their right edges; the bottom dock's above it.
    */
   resizer(slot: DockPlace): HTMLElement {
-    const vertical = slot !== "left";
+    const vertical = slot === "bottom";
     const el = h("div", {
       class: `resizer resizer-${slot}`,
       role: "separator",
       tabindex: 0,
       "aria-orientation": vertical ? "horizontal" : "vertical",
-      "aria-label": slot === "tools" ? "Resize the Tools section" : `Resize the ${TITLES[slot]} dock`,
+      "aria-label": slot === "tools" ? "Resize the Tools column" : `Resize the ${TITLES[slot]} dock`,
       "aria-controls": `dock-${slot}`,
       title: "Drag to resize",
     });
     describeSize(el, this.sizeOf(slot), ...this.limits(slot));
-    const keep = () => prefs.set(`${slot}.size`, this.root.style.getPropertyValue(`--${slot}`));
-    // Which way grows the dock: right for the left column, up for the Tools section and the bottom dock.
+    const keep = () => prefs.set(SIZE_KEY[slot], this.root.style.getPropertyValue(`--${slot}`));
+    // Which way grows the dock: right for the columns, up for the bottom dock.
     const grow = vertical ? "ArrowUp" : "ArrowRight";
     const shrink = vertical ? "ArrowDown" : "ArrowLeft";
     el.addEventListener("keydown", (e) => {
@@ -537,7 +618,7 @@ export class DockManager {
         el,
         (e) => {
           const now = vertical ? e.clientY : e.clientX;
-          this.resize(slot, startSize + (slot === "left" ? now - start : start - now), el);
+          this.resize(slot, startSize + (vertical ? start - now : now - start), el);
         },
         () => {
           el.classList.remove("dragging");

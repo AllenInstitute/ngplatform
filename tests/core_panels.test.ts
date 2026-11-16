@@ -201,6 +201,14 @@ describe("Layers panel: the list", () => {
     // Its source and its tabs.
     expect(unmount).toHaveBeenCalledTimes(2);
     expect(dom.find<HTMLElement>(cards()[0], "button.ds-expand").getAttribute("aria-expanded")).toBe("false");
+    // A click on the selected row opens its card again, and another closes it.
+    host.querySelectorAll<HTMLElement>(".ds-row")[0].click();
+    expect(open()).toEqual(["brain", "tracts"]);
+    host.querySelectorAll<HTMLElement>(".ds-row")[0].click();
+    expect(open()).toEqual(["tracts"]);
+    // The second click of a double-click (renaming) leaves it as the first did.
+    dom.fire(host.querySelectorAll<HTMLElement>(".ds-row")[0], "click", undefined, { detail: 2 });
+    expect(open()).toEqual(["tracts"]);
   });
 
   it("says when the scene has no data, with the action that adds some", () => {

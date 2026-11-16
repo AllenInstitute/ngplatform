@@ -86,6 +86,64 @@ export function storeToGlobal(transform: LayerTransform): Float64Array {
 }
 
 /**
+ * Where the layer's transform puts its source against where the source
+ * puts itself, as a map on millimetres along the global x, y and z
+ * (column-major): an image read by its own metadata (its splats in its
+ * RAS mm) is moved by this to where Neuroglancer shows it, as a source
+ * given with a transform of its own (a volume of interest placed in an
+ * overview) is.  Undefined when the transform does not move it (no
+ * transform, the source's own, or no x, y and z among its outputs).
+ */
+export function placementMm(transform: LayerTransform | undefined): Mat4 | undefined {
+  if (transform === undefined) return undefined;
+  const r = transform.rank;
+  const n = r + 1;
+  const g = ["x", "y", "z"].map((a) => transform.output.names.indexOf(a));
+  if (g.some((i) => i < 0)) return undefined;
+  // Column-major (rank + 1)² to rows, its last row (0 … 0 1).
+  const rows = (m: Float64Array) => Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === r ? (j === r ? 1 : 0) : m[n * j + i])));
+  const current = rows(storeToGlobal(transform));
+  const own = invertRows(rows(storeToGlobal({ ...transform, matrix: transform.defaultMatrix })));
+  if (own === undefined) return undefined;
+  // Global (as the source puts itself) to global (as the layer puts it).
+  const delta = current.map((row) => own[0].map((_, c) => row.reduce((s, v, k) => s + v * own[k][c], 0)));
+  // Millimetres per global unit on each of x, y and z (a dimension with no unit read as mm, as the 2-D views do).
+  const mm = g.map((i) => transform.output.scales[i] * (transform.output.units[i] === "m" ? 1000 : 1));
+  const out = identity();
+  let moved = false;
+  for (let i = 0; i < 3; ++i) {
+    for (let j = 0; j < 3; ++j) {
+      const v = (delta[g[i]][g[j]] * mm[i]) / mm[j];
+      out[4 * j + i] = v;
+      if (Math.abs(v - (i === j ? 1 : 0)) > 1e-9) moved = true;
+    }
+    out[12 + i] = delta[g[i]][r] * mm[i];
+    if (Math.abs(out[12 + i]) > 1e-9 * Math.max(1, ...mm)) moved = true;
+  }
+  return moved ? out : undefined;
+}
+
+/** The inverse of a square matrix as rows (Gauss-Jordan); undefined when singular. */
+function invertRows(m: number[][]): number[][] | undefined {
+  const n = m.length;
+  const a = m.map((row, i) => [...row, ...row.map((_, j) => (i === j ? 1 : 0))]);
+  for (let c = 0; c < n; ++c) {
+    let p = c;
+    for (let r = c + 1; r < n; ++r) if (Math.abs(a[r][c]) > Math.abs(a[p][c])) p = r;
+    if (!(Math.abs(a[p][c]) > 1e-300)) return undefined;
+    [a[c], a[p]] = [a[p], a[c]];
+    const d = a[c][c];
+    for (let k = 0; k < 2 * n; ++k) a[c][k] /= d;
+    for (let r = 0; r < n; ++r) {
+      if (r === c || a[r][c] === 0) continue;
+      const f = a[r][c];
+      for (let k = 0; k < 2 * n; ++k) a[r][k] -= f * a[c][k];
+    }
+  }
+  return a.map((row) => row.slice(n));
+}
+
+/**
  * Store coordinates (the layer source's x, y, z) to three named global
  * dimensions (a 3-D view's display dimensions), through the layer's
  * transform; undefined when one is not among the layer's outputs.

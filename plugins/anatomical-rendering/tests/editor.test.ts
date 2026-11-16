@@ -43,7 +43,7 @@ describe("the colourmap editor", () => {
 });
 
 import { compressMap, compressWarp, fitView, histogramHandles, type MapPlacement, slideWarp, stretchMap, warpForward, warpInverse } from "../editor.js";
-import { readSaved } from "../plugin.js";
+import { isTuned, readSaved, tuneStops } from "../plugin.js";
 
 describe("the histogram's warp", () => {
   const warp = [{ from: 100, to: 120 }, { from: 200, to: 180 }, { from: 300, to: 330 }];
@@ -120,5 +120,22 @@ describe("crops", () => {
     const s = readSaved({ box: { on: true, lo: [0.1, 0, 0], hi: [0.5, 1, 1] } });
     expect(s.boxes).toEqual([{ name: "Crop 1", on: true, keep: true, lo: [0.1, 0, 0], hi: [0.5, 1, 1] }]);
     expect(readSaved({}).boxes).toEqual([]);
+  });
+});
+
+describe("each image's own look", () => {
+  it("reads each layer's switch, preset and density, and drops what is not one", () => {
+    const s = readSaved({ looks: { "VOI-1": { on: true, preset: "HiP-CT kidney", density: 60 }, "VOI-2": { on: false, density: "x" }, bad: 3 } });
+    expect(s.looks).toEqual({ "VOI-1": { on: true, preset: "HiP-CT kidney", density: 60 }, "VOI-2": { on: false } });
+    expect(readSaved({}).looks).toEqual({});
+  });
+
+  it("tunes any image's preset as the editor does the one shown", () => {
+    const stops = [{ value: 0, color: [0, 0, 0], opacity: 0 }, { value: 100, color: [1, 1, 1], opacity: 1 }];
+    expect(isTuned(undefined)).toBe(false);
+    expect(isTuned({ shift: 0, scale: 1 })).toBe(false);
+    expect(isTuned({ shift: 10, scale: 1 })).toBe(true);
+    const t = tuneStops(stops, { shift: 10, scale: 1, warp: [] }, undefined);
+    expect(t.data.map((x) => x.value)).toEqual([10, 110]);
   });
 });

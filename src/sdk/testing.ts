@@ -23,6 +23,8 @@ export interface FakeEventInit {
   ctrlKey?: boolean;
   altKey?: boolean;
   metaKey?: boolean;
+  /** A click's count (2: the second click of a double-click). */
+  detail?: number;
 }
 
 /** An event: its type, its key (keyboard events) and the keys held with it, and whether it was stopped or prevented. */
@@ -34,6 +36,7 @@ export class FakeEvent {
   readonly ctrlKey: boolean;
   readonly altKey: boolean;
   readonly metaKey: boolean;
+  readonly detail: number;
   constructor(
     readonly type: string,
     readonly bubbles = true,
@@ -44,6 +47,7 @@ export class FakeEvent {
     this.ctrlKey = init.ctrlKey === true;
     this.altKey = init.altKey === true;
     this.metaKey = init.metaKey === true;
+    this.detail = init.detail ?? 0;
   }
   preventDefault(): void {
     this.defaultPrevented = true;

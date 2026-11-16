@@ -210,9 +210,10 @@ export class Shell {
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
-    // One column on the left: the layers, and below a divider the tools that are on; the views fill the rest.
-    const side = h("div", { class: "side" }, this.docks.element("left"), this.docks.resizer("tools"), this.docks.element("tools"));
-    const workspace = h("div", { class: "workspace" }, side, this.docks.resizer("left"), centre);
+    // On the left the layers, and beside them, coming out of them, a column of the tools that are on; the views fill the rest.
+    const side = h("div", { class: "side" }, this.docks.element("left"));
+    const tools = h("div", { class: "side side-tools" }, this.docks.element("tools"));
+    const workspace = h("div", { class: "workspace" }, side, this.docks.resizer("left"), tools, this.docks.resizer("tools"), centre);
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
     this.activityLine.addEventListener("click", () => this.docks.show("activity"));
     // The status line: the activity message on the left, then the items plugins put there (a scale, say).

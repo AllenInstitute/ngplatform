@@ -1,17 +1,18 @@
 /**
  * The orientation cube: a small cube in the 3-D view's top right, turned
- * as the view is (and a little more, CUBE_TILT, so its edges and depth
- * read even face-on), its faces lettered by the data's sides (R/L, A/P, S/I,
+ * exactly as the view is and seen in perspective as the view sees the data
+ * (CUBE_EYE), its faces lettered by the data's sides (R/L, A/P, S/I,
  * else ±x, ±y, ±z), each letter turned by quarters to read upright.  Under the pointer a face, an edge or a corner lights
  * up; a click turns the view to look at it.  Below it, Realign (to the
  * nearest standard view) and Bookmark.
  */
 import { el, iconButton, viewInk } from "@ngplatform/sdk/dom";
-import { type Axes, letterBasis, pickCube, type Quat, shownOrientation, targetLetters, targetWords, toView, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
+import { type Axes, letterBasis, pickCube, projectCube, type Quat, shownOrientation, targetLetters, targetWords, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
 
 /** The cube's picture, CSS pixels square, and its half-size in it. */
 export const CUBE_SIZE = 64;
-const HALF = 18;
+// The nearest corner, in perspective, is at most about 1.8 half-sizes out: within the picture.
+const HALF = 16;
 
 /** How much a face faces the viewer for each of the ink's three greys (`viewInk(…).faces`): lighter as it does on a dark view. */
 const FACE_STEPS = [0.8, 0.45, 0];
@@ -97,9 +98,9 @@ export class OrientationCube {
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, size, size);
     const c = CUBE_SIZE / 2;
-    // Display coordinates (the cube spans −1..1) to the picture's CSS pixels.
+    // Display coordinates (the cube spans −1..1) to the picture's CSS pixels, in perspective as the view is.
     const at = (p: Vec3): [number, number] => {
-      const v = toView(this.q, p);
+      const v = projectCube(this.q, p);
       return [c + v[0] * HALF, c + v[1] * HALF];
     };
     const path = (points: Vec3[]) => {
@@ -127,8 +128,13 @@ export class OrientationCube {
       const k = face.normal.findIndex((v) => v !== 0);
       const letter = axes.ends[k][face.normal[k] > 0 ? 0 : 1];
       const { right, down } = letterBasis(face.normal, axes);
-      const r0 = toView(this.q, right);
-      const d0 = toView(this.q, down);
+      // The face's own right and down as drawn there (foreshortened as the face is), in half-sizes.
+      const along = (dir: Vec3): Vec3 => {
+        const a = at(face.normal), b = at([0, 1, 2].map((i) => face.normal[i] + dir[i] * 0.01) as Vec3);
+        return [(b[0] - a[0]) / (0.01 * HALF), (b[1] - a[1]) / (0.01 * HALF), 0];
+      };
+      const r0 = along(right);
+      const d0 = along(down);
       const neg = (v: Vec3): Vec3 => [-v[0], -v[1], -v[2]];
       const [r, d] = ([
         [r0, d0],

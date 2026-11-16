@@ -18,9 +18,9 @@ every scene, whatever the data.
 
 ## Orientation cube
 
-A small cube in the 3-D view's top right, turned as the view is, and a
-little more (12° to the side and from above, for the picture only), so it
-shows its depth even when the view looks straight at a face.
+A small cube in the 3-D view's top right, turned exactly as the view is
+and seen in perspective as the view sees the data, so its near faces are
+larger than its far ones and it matches the data's turn at any angle.
 
 - **Faces** are lettered by the data's sides when its space reads as
   anatomy (x, y and z in micrometres or more, taken as RAS): **R** and

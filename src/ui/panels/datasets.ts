@@ -5,8 +5,9 @@
  * is (a dataset shown through several layers lists them beneath it), and,
  * opened, the card grown to hold the dataset's settings: its source, then
  * its layer's tabs (Rendering, Annotations…; ./layer.ts), inside the one
- * box with its row.  Selecting a dataset opens its card; its arrow opens
- * and closes it, and several may be open.  Datasets that other
+ * box with its row.  Selecting a dataset opens its card; clicking the
+ * selected one again, or its arrow, opens and closes it, and several may be
+ * open.  Datasets that other
  * scenes show are offered in the Open sheet and the Add a dataset sheet,
  * not here.  Tools are not recommended here (the Plugins panel lists them).
  *
@@ -333,8 +334,11 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
 
   /** A dataset's row (and its views); `focusKey` records the controls that take the keyboard. */
   const drawRow = (row: Row, focusKey: <E extends HTMLElement>(e: E, key: string) => E): HTMLElement => {
-    // Selecting a dataset opens its card.
-    const select = () => {
+    // Selecting a dataset opens its card; choosing the one selected again opens or closes it. The second click of a
+    // double-click (renaming) leaves it as the first left it.
+    const select = (e?: Event) => {
+      if (((e as MouseEvent | undefined)?.detail ?? 0) > 1) return;
+      if (row.selected) return toggle(row.id);
       expanded.add(row.id);
       store.selectDataset(row.id);
       render();
