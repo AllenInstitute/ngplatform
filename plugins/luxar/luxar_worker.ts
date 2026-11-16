@@ -23,7 +23,7 @@
  * as one chunk (its segments sorted into pieces of space, for culling).
  *
  * Messages in:  { type: "open", storeUrl, epoch, headers }   headers: the sign-in's (precomputed_meshes.AuthHeader)
- *               { type: "want", keys, scalar }    keys "<level>|x.y.z"; scalar as styles.scalarOf
+ *               { type: "want", keys, scalar }    keys "<level>|x.y.z" (a chunk: LevelInfo.group cells a side); scalar as styles.scalarOf
  *               { type: "objects", key, level, mode, ids, scalar }   mode "curves" | "skeletons"
  *               { type: "cancelObjects" }         the objects being read are no longer wanted
  * Messages out (each with its `epoch`):
@@ -48,7 +48,8 @@ import { decodeDracoPartitioned } from "neuroglancer/unstable/mesh/draco/index.j
 import { decodeDraco } from "neuroglancer/unstable/mesh/draco/index.js";
 import { type AuthHeader, MeshVolume, parseMeshStoreUrl, type PrecomputedMeshStore, storeAccess } from "./precomputed_meshes.js";
 import { ReadQueue } from "./read_queue.js";
-import { type BuiltChunk, buildChunk, type ChunkInput, curvesInput, type ScalarSource, skeletonsInput, sortIntoPieces } from "./chunk_build.js";
+import { type BuiltChunk, buildChunk, cellGroup, type ChunkInput, curvesInput, mergeInputs, type ScalarSource, skeletonsInput, sortIntoPieces } from "./chunk_build.js";
+import { chunkRange } from "./view_math.js";
 
 // Compressed cells decode in the platform's async-computation worker, with
 // Zarr Vectors' decoders loaded, as the viewer's own workers do.
@@ -61,7 +62,10 @@ const CONCURRENCY = 6;
 export interface LevelInfo {
   index: number;
   vertexCount: number | undefined;
+  /** The chunks the views read and draw: `group` of the store's cells a side (chunk_build's `cellGroup`). */
   chunkShape: number[];
+  /** How many of the store's cells a side each chunk is (1 when absent). */
+  group?: number;
   /** The share of level 0's objects this level holds, when the store says (1 for level 0). */
   objectShare: number | undefined;
   /** How many objects the level's object index lists, when it says. */
@@ -92,6 +96,8 @@ export interface StoreInfo {
 let store: ZarrVectorsStore | undefined;
 let access: ZarrVectorsStoreAccess | undefined;
 const pipelines = new Map<number, LevelPipeline>();
+/** Per level, how many of its cells a side are read as one chunk. */
+let groups: number[] = [];
 /** The store's open: answers carry it, and a read for an earlier one says nothing. */
 let epoch = 0;
 /** The object reads in flight. */
@@ -200,6 +206,7 @@ function reset(): void {
   store = undefined;
   access = undefined;
   pipelines.clear();
+  groups = [];
   objectReaders.clear();
 }
 
@@ -237,13 +244,19 @@ async function open(storeUrl: string, headers: AuthHeader[]): Promise<StoreInfo>
   const primitive = kind === "point_cloud" ? "points" : kind === "mesh" ? "triangles" : "lines";
   const objectRead: ObjectRead = !store.description.hasObjects || primitive === "triangles" ? undefined : primitive === "lines" && store.description.linksConvention === "implicit_sequential" ? "curves" : "skeletons";
   objectReaders.clear();
+  const s = store;
+  groups = s.levels.map((l) => {
+    const range = chunkRange(Array.from(s.lowerBounds), Array.from(s.upperBounds), l.chunkShape);
+    const cells = [0, 1, 2].reduce((n, k) => n * (range.to[k] - range.from[k] + 1), 1);
+    return cellGroup(l.vertexCount, cells, primitive);
+  });
   return {
     objectRead,
     axisNames: store.axisNames,
     axisUnits: store.axisUnits,
     axisScales: store.axisScales,
     bounds: { lower: Array.from(store.lowerBounds), upper: Array.from(store.upperBounds) },
-    levels: store.levels.map((l, i) => ({ index: l.index, vertexCount: l.vertexCount, chunkShape: l.chunkShape, objectShare: shares[i], objects: counts[i] })),
+    levels: store.levels.map((l, i) => ({ index: l.index, vertexCount: l.vertexCount, chunkShape: l.chunkShape.map((c) => c * groups[i]), group: groups[i], objectShare: shares[i], objects: counts[i] })),
     geometry: kind,
     primitive,
     attributes: store.description.attributes.filter((a) => a.objectValue === undefined).map((a) => ({ id: a.id, name: a.name, components: a.components })),
@@ -260,8 +273,7 @@ async function read(key: string, forScalar: string, signal: AbortSignal): Promis
   const level = Number(levelText);
   const coords = coordsText.split(".").map(Number);
   try {
-    // Bridges: the segments that cross into a neighbouring chunk, so lines run on unbroken.
-    const data = await pipelineOf(level).download(coords, signal, { bridges: true });
+    const data = await readGroup(level, coords, signal);
     if (signal.aborted) return;
     if (data === undefined || data.numVertices === 0) {
       post({ type: "empty", key, scalar: forScalar });
@@ -274,6 +286,33 @@ async function read(key: string, forScalar: string, signal: AbortSignal): Promis
     if (signal.aborted) return;
     post({ type: "error", key, scalar: forScalar, message: (e as Error).message ?? String(e), signIn: (e as { signIn?: boolean }).signIn === true });
   }
+}
+
+/** Cells of one group read at once. */
+const GROUP_CONCURRENCY = 8;
+
+/**
+ * A chunk as the views see it: the store's cell, or a group of its cells
+ * (`groups`) read and merged into one.  Bridges: the segments that cross
+ * into a neighbouring cell, so lines run on unbroken.
+ */
+async function readGroup(level: number, coords: number[], signal: AbortSignal): Promise<ChunkInput | undefined> {
+  const pipeline = pipelineOf(level);
+  const g = groups[level] ?? 1;
+  if (g === 1) return pipeline.download(coords, signal, { bridges: true });
+  const cells: number[][] = [];
+  for (let x = 0; x < g; ++x) for (let y = 0; y < g; ++y) for (let z = 0; z < g; ++z) cells.push([coords[0] * g + x, coords[1] * g + y, coords[2] * g + z]);
+  const parts: (ChunkInput | undefined)[] = new Array(cells.length);
+  let next = 0;
+  const work = async () => {
+    while (next < cells.length && !signal.aborted) {
+      const i = next++;
+      parts[i] = await pipeline.download(cells[i], signal, { bridges: true });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GROUP_CONCURRENCY, cells.length) }, work));
+  const found = parts.filter((p): p is ChunkInput => p !== undefined && p.numVertices > 0);
+  return found.length === 0 ? undefined : mergeInputs(found);
 }
 
 const objectReaders = new Map<number, ObjectReader>();

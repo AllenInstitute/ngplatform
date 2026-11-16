@@ -292,6 +292,19 @@ something shows at once, and stand in for a finer chunk until it arrives
 (the finest coarser level that has all of its box). Chunks are read with
 `LevelPipeline.download(…, { bridges: true })`, so lines continue across
 chunk faces; a read the views no longer want is cancelled (`read_queue.ts`).
+A chunk here is a group of the store's cells when they are small for the
+data: a level whose cells hold fewer than 8,192 vertices on average is
+read in groups of *g* × *g* × *g* cells (at most 8 a side), *g* chosen so a
+group holds about that many (`cellGroup` in `chunk_build.ts`), the cells of
+a group read in the worker and merged into one chunk (`mergeInputs`: their
+own vertices first, then their copies of neighbours'). The ABC atlas's
+MERFISH point cloud (3.7 M cells in 26 × 16 × 22 cells of half a millimetre
+at every level, a few vertices a cell at the coarse levels) was 9,152 tiny
+chunks a level, each a message, a panel update, three textures padded to a
+row of 2,048 vertices and a draw call: switching Luxar on froze the page
+and its memory kept climbing. Grouped (3, 5, 8, 8, 8 cells a side), its
+levels are at most 432 chunks. Meshes are not grouped. Chunks arriving
+update the panel at most every 100 ms (`STATUS_MS` in `layer_view.ts`).
 Built chunks are kept on the main thread (384 MiB) and on the GPU (per
 layer at most 768 MiB for 3-D, 512 MiB for 2-D), least recently drawn first
 out, within one budget per context shared by every layer (`gpu_pool.ts`):

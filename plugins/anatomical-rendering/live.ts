@@ -18,10 +18,11 @@
  * path tracer's only.
  *
  * Several images (up to MAX_VOLUMES: an overview and volumes of interest
- * within it, say) are drawn as one volume: each its own level, table and
- * material, placed by its layer's transform, and where they overlap a point
- * is the finest one's. One ray steps through them all, a voxel of whichever
- * it is in a step; the light held covers all of them.
+ * within it, say) are drawn as one volume: each its own level, table,
+ * material, crop and cuts, placed by its layer's transform. Where they
+ * overlap both are there: their extinctions add, and the colour is each
+ * one's in its share of the extinction. One ray steps through them all, a
+ * voxel of the finest it is in a step; the light held covers all of them.
  */
 import type { Frame3d } from "@ngplatform/sdk";
 import { VolumeClient } from "../volume-view/volume_client.js";
@@ -55,7 +56,27 @@ export const liveTable = levelTable;
  */
 export interface LiveLook {
   view: ViewSpec;
-  volumes: { url: string; preset: LivePreset; placement?: ArrayLike<number> }[];
+  volumes: LiveVolumeSpec[];
+  /** The surroundings' light (else the preset's): its colours above, at and below the horizon and its strength. */
+  env?: LiveEnv;
+  /** The light turns with the camera: the light held is path-traced again only once the camera rests. */
+  lightFollows?: boolean;
+}
+
+/** One image of a look: its preset, its placement, and its own crop (fractions of it; null: none) and cuts (else the view's). */
+export interface LiveVolumeSpec {
+  url: string;
+  preset: LivePreset;
+  placement?: ArrayLike<number>;
+  crop?: [number[], number[]] | null;
+  clips?: number[][];
+}
+
+export interface LiveEnv {
+  top?: number[];
+  horizon?: number[];
+  bottom?: number[];
+  scale?: number;
 }
 
 /**
@@ -83,6 +104,8 @@ export function lightGrid(size: readonly number[]): { cell: number; grid: [numbe
 
 /** The most volumes drawn together as one: each takes two of the GPU's texture units (WebGL 2 promises 16). */
 export const MAX_VOLUMES = 5;
+/** The most cuts (planes) a volume is cut by. */
+export const MAX_CLIPS = 6;
 
 /** The shader's values for a view of a level, as the path tracer's parameter block has them (`LocalRenderer.pack`). */
 export type LiveParams = ReturnType<typeof liveParams>;
@@ -91,7 +114,13 @@ export type LiveParams = ReturnType<typeof liveParams>;
  * `placement`: where the layer's own transform moves the image from where its metadata puts it (millimetres to
  * millimetres, column-major; a volume of interest placed in an overview), applied before the view's world.
  */
-export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level8, "size" | "voxelToRas">, placement?: ArrayLike<number>) {
+export function liveParams(
+  view: ViewSpec,
+  preset: LivePreset,
+  level: Pick<Level8, "size" | "voxelToRas">,
+  placement?: ArrayLike<number>,
+  own: { crop?: [number[], number[]] | null; clips?: number[][]; env?: LiveEnv } = {},
+) {
   const inv = rowMajor(view.inv_view_projection);
   const wfp = view.world_from_physical ? rowMajor(view.world_from_physical) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   const ras = placement ? mul(rowMajor(placement), level.voxelToRas) : level.voxelToRas;
@@ -103,10 +132,10 @@ export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level
   const ln = Math.hypot(...L);
   L = L.map((x) => x / ln);
   const ls = preset.light_scale ?? 1;
-  const env = { ...ENV, ...(preset.environment ?? {}) };
+  const env = { ...ENV, ...(preset.environment ?? {}), ...(own.env ?? {}) };
   const keepBox = view.boxes?.find((b) => b.keep);
-  const crop = view.crop_fraction ?? (keepBox ? ([keepBox.lo, keepBox.hi] as [number[], number[]]) : undefined);
-  const clips = (view.clips ?? []).slice(0, 6);
+  const crop = own.crop !== undefined ? (own.crop ?? undefined) : (view.crop_fraction ?? (keepBox ? ([keepBox.lo, keepBox.hi] as [number[], number[]]) : undefined));
+  const clips = (own.clips ?? view.clips ?? []).slice(0, MAX_CLIPS);
   return {
     // Column-major, for the shader.
     voxFromWorld: [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => vfw[4 * r + c])),
@@ -114,7 +143,7 @@ export function liveParams(view: ViewSpec, preset: LivePreset, level: Pick<Level
     dims: level.size,
     cropLo: crop ? crop[0].map((f, a) => f * level.size[a] - 0.5) : [-1e9, -1e9, -1e9],
     cropHi: crop ? crop[1].map((f, a) => f * level.size[a] - 0.5) : [1e9, 1e9, 1e9],
-    clips: Array.from({ length: 24 }, (_, i) => clips[i >> 2]?.[i & 3] ?? 0),
+    clips: Array.from({ length: 4 * MAX_CLIPS }, (_, i) => clips[i >> 2]?.[i & 3] ?? 0),
     nclip: clips.length,
     density: preset.density * (view.unit_mm ?? 1),
     shadeMix: preset.shade_mix ?? 0.8,
@@ -177,10 +206,10 @@ void main() {
 }`;
 
 /**
- * What the shaders read, for `n` volumes drawn as one: each volume's level, its row of the table, its clear bricks
- * and its material; the cuts; the light and the surroundings. The volumes are in order, finest first: where they
- * overlap, a point is the finest one's. A ray carries where it is in each volume and when it is inside each, so a
- * sample costs one look-up whichever volume it falls in. Samplers in arrays may be indexed only by constants in
+ * What the shaders read, for `n` volumes drawn as one: each volume's level, its row of the table, its clear bricks,
+ * its material, its crop and its cuts; the light and the surroundings. The volumes are in order, finest first.
+ * Where they overlap, both are there: the extinction at a point is the sum of theirs. A ray carries where it is in
+ * each volume and when it is inside each (and its crop). Samplers in arrays may be indexed only by constants in
  * GLSL ES 3.00, so each volume's are their own, chosen in a chain of ifs.
  */
 const COMMON = (n: number) => {
@@ -202,11 +231,10 @@ uniform float uGradScale[N];
 uniform float uRoughness[N];
 uniform float uSpecular[N];
 uniform float uInset[N];
-uniform mat4 uCropFromWorld;
-uniform vec3 uCropLo;
-uniform vec3 uCropHi;
-uniform vec4 uClips[6];
-uniform int uNClip;
+uniform vec3 uCropLo[N];
+uniform vec3 uCropHi[N];
+uniform vec4 uClips[${MAX_CLIPS * n}];
+uniform int uNClip[N];
 uniform vec3 uLightDir;
 uniform vec3 uLightRgb;
 uniform vec3 uEnvTop;
@@ -253,22 +281,20 @@ vec2 slab(vec3 ov, vec3 dv, vec3 lo, vec3 hi) {
   vec3 thi = max(ta, tb);
   return vec2(max(max(tlo.x, tlo.y), tlo.z), min(min(thi.x, thi.y), thi.z));
 }
-// A ray from o toward d: where it is in each volume, and when it is inside each and inside the crop.
+// A ray from o toward d: where it is in each volume, and when it is inside each and inside its crop.
 Ray ray(vec3 o, vec3 d) {
   Ray r;
   r.o = o;
   r.d = d;
-  vec3 cv = (uCropFromWorld * vec4(o, 1.0)).xyz;
-  vec2 crop = slab(cv, mat3(uCropFromWorld) * d, uCropLo, uCropHi);
   r.t0 = 1e30;
   r.t1 = -1e30;
   for (int k = 0; k < N; ++k) {
     r.ov[k] = (uVoxFromWorld[k] * vec4(o, 1.0)).xyz;
     r.dv[k] = mat3(uVoxFromWorld[k]) * d;
     r.vox[k] = 1.0 / max(length(r.dv[k]), 1e-12);
-    vec2 s = slab(r.ov[k], r.dv[k], vec3(-0.5), uDims[k] - 0.5);
-    r.tin[k] = max(max(s.x, crop.x), 0.0);
-    r.tout[k] = min(s.y, crop.y);
+    vec2 s = slab(r.ov[k], r.dv[k], max(vec3(-0.5), uCropLo[k]), min(uDims[k] - 0.5, uCropHi[k]));
+    r.tin[k] = max(s.x, 0.0);
+    r.tout[k] = s.y;
     if (r.tout[k] > r.tin[k]) {
       r.t0 = min(r.t0, r.tin[k]);
       r.t1 = max(r.t1, r.tout[k]);
@@ -277,21 +303,26 @@ Ray ray(vec3 o, vec3 d) {
   return r;
 }
 // The ray's helpers read it in place (macros): passing a Ray, arrays and all, to a function copies it at every step.
-// The volume the ray is in at t (the finest of those it is in), else -1.
-#define OWNER(r, t, k) k = -1; for (int j_ = 0; j_ < N; ++j_) { if ((t) >= r.tin[j_] && (t) < r.tout[j_]) { k = j_; break; } }
+#define INSIDE(r, j, t) ((t) >= r.tin[j] && (t) < r.tout[j])
+// The voxel (world units) of the finest volume the ray is in at t; 1e30: none.
+#define FINEST(r, t, m) m = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (INSIDE(r, j_, t)) m = min(m, r.vox[j_]); }
 // Where the ray next enters a volume after t (1e30: none).
 #define NEXT_IN(r, t, n) n = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (r.tout[j_] > r.tin[j_] && r.tin[j_] > (t)) n = min(n, r.tin[j_]); }
-// A clear run cut short where the ray enters a finer volume than k.
-#define CAP_FINER(r, k, t, run) for (int j_ = 0; j_ < N; ++j_) { if (j_ < k && r.tout[j_] > r.tin[j_] && r.tin[j_] > (t)) run = min(run, r.tin[j_] - (t)); }
-bool clipped(vec3 w) {
-  for (int i = 0; i < 6; ++i) {
-    if (i >= uNClip) break;
-    if (dot(uClips[i].xyz, w) + uClips[i].w < 0.0) return true;
+// How far the ray goes from t through bricks every volume it is in leaves clear, cut short where it enters another; 0: not clear.
+#define CLEAR_RUN(r, t, run) run = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (INSIDE(r, j_, t)) run = min(run, clearRun(j_, r.ov[j_] + r.dv[j_] * (t), r.dv[j_])); } { float n2_; NEXT_IN(r, t, n2_) run = run >= 1e29 ? 0.0 : min(run, n2_ - (t)); }
+// The extinction at t: the sum of every volume's the ray is in there.
+#define SIGMA(r, t, s) s = 0.0; { vec3 w_ = r.o + r.d * (t); for (int j_ = 0; j_ < N; ++j_) { if (INSIDE(r, j_, t)) s += sigma(j_, w_, r.ov[j_] + r.dv[j_] * (t)); } }
+// World point w is cut away from volume k.
+bool clipped(int k, vec3 w) {
+  for (int i = 0; i < ${MAX_CLIPS}; ++i) {
+    if (i >= uNClip[k]) break;
+    vec4 c = uClips[k * ${MAX_CLIPS} + i];
+    if (dot(c.xyz, w) + c.w < 0.0) return true;
   }
   return false;
 }
-// The extinction at world point w, voxel point v of volume k.
-float sigma(int k, vec3 w, vec3 v) { return clipped(w) ? 0.0 : uDensity[k] * tf(k, tex(k, v)).a; }
+// The extinction of volume k at world point w, voxel point v.
+float sigma(int k, vec3 w, vec3 v) { return clipped(k, w) ? 0.0 : uDensity[k] * tf(k, tex(k, v)).a; }
 // In a brick of volume k that its table leaves clear, how far (world units) a ray (dv voxels a world unit) at voxel
 // point v goes before it leaves the brick; else 0.
 float clearRun(int k, vec3 v, vec3 dv) {
@@ -306,17 +337,16 @@ float clearRun(int k, vec3 v, vec3 dv) {
 // The transmittance from world point w toward dir (unit), from 1.5 voxels to reach voxels away (of the volume it starts in).
 float clear(vec3 w, vec3 dir, float reach) {
   Ray r = ray(w, dir);
-  int k0;
-  OWNER(r, 0.0, k0)
-  if (k0 < 0) return 1.0;
-  float vox = r.vox[k0];
+  float vox;
+  FINEST(r, 0.0, vox)
+  if (vox >= 1e29) return 1.0;
   float T = 1.0;
   float before = 0.0;
   for (float d = 1.5; d < reach; d *= 2.0) {
     float t = d * vox;
-    int k;
-    OWNER(r, t, k)
-    if (k >= 0) T *= exp(-sigma(k, r.o + r.d * t, r.ov[k] + r.dv[k] * t) * (d - before) * vox);
+    float s;
+    SIGMA(r, t, s)
+    T *= exp(-s * (d - before) * vox);
     before = d;
   }
   return T;
@@ -385,28 +415,28 @@ vec3 hgdir(vec3 w, float g) {
 float transmit(vec3 w, vec3 dir) {
   Ray r = ray(w, dir);
   float tau = 0.0;
-  int k0;
-  OWNER(r, r.t0, k0)
-  float t = r.t0 + 0.5 * (k0 >= 0 ? r.vox[k0] : 0.0);
+  float v0;
+  FINEST(r, r.t0, v0)
+  float t = r.t0 + 0.5 * (v0 < 1e29 ? v0 : 0.0);
   for (int i = 0; i < 4096; ++i) {
     if (t >= r.t1 || tau > 8.0) break;
-    int k;
-    OWNER(r, t, k)
-    if (k < 0) {
+    float dt;
+    FINEST(r, t, dt)
+    if (dt >= 1e29) {
       float n_;
       NEXT_IN(r, t, n_)
       t = n_;
       continue;
     }
-    float dt = r.vox[k];
-    vec3 vk = r.ov[k] + r.dv[k] * t;
-    float run = clearRun(k, vk, r.dv[k]);
+    float run;
+    CLEAR_RUN(r, t, run)
     if (run > 0.0) {
-      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
-    tau += sigma(k, r.o + r.d * t, vk) * dt;
+    float s;
+    SIGMA(r, t, s)
+    tau += s * dt;
     t += dt;
   }
   return exp(-tau);
@@ -418,31 +448,39 @@ bool collide(inout vec3 w, out int at, vec3 dir, float stepVox) {
   float target = -log(1.0 - rnd());
   float tau = 0.0;
   at = -1;
-  int k0;
-  OWNER(r, r.t0, k0)
-  float t = r.t0 + stepVox * (k0 >= 0 ? r.vox[k0] : 0.0) * rnd();
+  float v0;
+  FINEST(r, r.t0, v0)
+  float t = r.t0 + stepVox * (v0 < 1e29 ? v0 : 0.0) * rnd();
   for (int i = 0; i < 8192; ++i) {
     if (t >= r.t1) return false;
-    int k;
-    OWNER(r, t, k)
-    if (k < 0) {
+    float vox;
+    FINEST(r, t, vox)
+    if (vox >= 1e29) {
       float n_;
       NEXT_IN(r, t, n_)
       t = n_;
       continue;
     }
-    float dt = stepVox * r.vox[k];
-    vec3 vk = r.ov[k] + r.dv[k] * t;
-    float run = clearRun(k, vk, r.dv[k]);
+    float dt = stepVox * vox;
+    float run;
+    CLEAR_RUN(r, t, run)
     if (run > 0.0) {
-      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
-    tau += sigma(k, r.o + r.d * t, vk) * dt;
+    float s;
+    SIGMA(r, t, s)
+    tau += s * dt;
     if (tau >= target) {
       w = r.o + r.d * t;
-      at = k;
+      // The volume that scattered it: each in its share of the extinction there.
+      float pick = rnd() * s;
+      for (int j = 0; j < N; ++j) {
+        if (!INSIDE(r, j, t)) continue;
+        at = j;
+        pick -= sigma(j, w, r.ov[j] + r.dv[j] * t);
+        if (pick <= 0.0) break;
+      }
       return true;
     }
     t += dt;
@@ -480,6 +518,30 @@ layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
 
 vec4 lightAt(vec3 w) { return texture(uLight, (w - uLightLo) / (uCellW * vec3(textureSize(uLight, 0)))); }
+// The light sent toward the camera (along -dw) from world point w: its colour, the way its value rises (world),
+// how much it is a surface, and the material of volume k (the one with the most extinction there).
+vec3 shade(int k, vec3 w, vec3 albedo, vec3 gw, float edge, vec3 dw, vec3 around) {
+  vec3 up = length(gw) > 1e-12 ? normalize(gw) : vec3(0.0);
+  // The light held, half a cell out from a surface (so the tissue beneath it does not shade it): the
+  // light's share once it has been marched; the surroundings' coming in as paths gather (a few paths a
+  // cell are blotchy), short rays standing in until then.
+  vec4 held = uHasLight ? lightAt(w - up * (0.5 * uCellW * edge)) : vec4(0.0);
+  float Tl = uHasLight ? held.a : clear(w, uLightDir, 25.0);
+  // One ray stands for the path tracer's many directions to the surroundings: it shades only in part.
+  vec3 amb = uHeldAround < 1.0 ? albedo * around * (0.35 + 0.65 * clear(w, uEnvUp, 13.0)) : vec3(0.0);
+  amb = mix(amb, held.rgb, uHeldAround);
+  vec3 col = albedo * (uLightRgb * (hg(dot(dw, uLightDir), uPhaseG[k]) * Tl) + amb);
+  if (edge > 1e-6 && length(gw) > 1e-12) {
+    vec3 nrm = -up;
+    if (dot(nrm, dw) > 0.0) nrm = -nrm;
+    // What is held is the mean over every direction, the tissue's own light among it.
+    vec3 sky = uHeldAround < 1.0 ? env(nrm) * (0.35 + 0.65 * clear(w, nrm, 13.0)) : vec3(0.0);
+    sky = mix(sky, held.rgb, uHeldAround);
+    vec3 surf = brdfCos(k, nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uSpecular[k]);
+    col = mix(col, surf, uShadeMix[k] * edge);
+  }
+  return col;
+}
 void main() {
   // The pixels this image draws while another (the path-traced one) comes in over it.
   float kn = noise();
@@ -498,58 +560,56 @@ void main() {
   float T = 1.0;
   vec3 hit = vec3(0.0);
   bool met = false;
-  int k0;
-  OWNER(r, r.t0, k0)
-  float t = r.t0 + uStep * (k0 >= 0 ? r.vox[k0] : 0.0) * noise();
+  float v0;
+  FINEST(r, r.t0, v0)
+  float t = r.t0 + uStep * (v0 < 1e29 ? v0 : 0.0) * noise();
   for (int i = 0; i < 4096; ++i) {
     if (t >= t1 || T < 0.02) break;
-    int k;
-    OWNER(r, t, k)
-    if (k < 0) {
+    float vox;
+    FINEST(r, t, vox)
+    if (vox >= 1e29) {
       float n_;
       NEXT_IN(r, t, n_)
       t = n_;
       continue;
     }
-    float dt = uStep * r.vox[k];
-    // A brick the volume's table leaves clear: on to where the ray leaves it, at the same phase of the steps.
-    vec3 vk = r.ov[k] + r.dv[k] * t;
-    float run = clearRun(k, vk, r.dv[k]);
+    float dt = uStep * vox;
+    // Bricks every volume here leaves clear: on to where the ray leaves them, at the same phase of the steps.
+    float run;
+    CLEAR_RUN(r, t, run)
     if (run > 0.0) {
-      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
     vec3 w = r.o + r.d * t;
-    vec3 v = vk;
-    float s = sigma(k, w, v);
+    // Every volume here: their extinctions add, their colours, gradients and surfaces each in its share; lit once.
+    float s = 0.0;
+    float most = 0.0;
+    int km = 0;
+    vec3 albedo = vec3(0.0);
+    vec3 gw = vec3(0.0);
+    float edge = 0.0;
+    for (int k = 0; k < N; ++k) {
+      if (!INSIDE(r, k, t)) continue;
+      vec3 v = r.ov[k] + r.dv[k] * t;
+      if (clipped(k, w)) continue;
+      vec4 c = tf(k, tex(k, v));
+      float sk = uDensity[k] * c.a;
+      if (sk <= 0.0) continue;
+      vec3 g = grad(k, v);
+      s += sk;
+      albedo += sk * c.rgb * uAlbedo[k];
+      gw += sk * worldGrad(k, g);
+      edge += sk * (1.0 - exp(-uGradScale[k] * length(g)));
+      if (sk > most) {
+        most = sk;
+        km = k;
+      }
+    }
     t += dt;
     if (s <= 0.0) continue;
+    vec3 col = shade(km, w, albedo / s, gw / s, edge / s, dw, around);
     float al = 1.0 - exp(-s * dt);
-    vec3 albedo = tf(k, tex(k, v)).rgb * uAlbedo[k];
-    vec3 g = grad(k, v);
-    float gm = length(g);
-    float edge = 1.0 - exp(-uGradScale[k] * gm);
-    vec3 gw = worldGrad(k, g);
-    vec3 up = length(gw) > 1e-12 ? normalize(gw) : vec3(0.0);
-    // The light held, half a cell out from a surface (so the tissue beneath it does not shade it): the
-    // light's share once it has been marched; the surroundings' coming in as paths gather (a few paths a
-    // cell are blotchy), short rays standing in until then.
-    vec4 held = uHasLight ? lightAt(w - up * (0.5 * uCellW * edge)) : vec4(0.0);
-    float Tl = uHasLight ? held.a : clear(w, uLightDir, 25.0);
-    // One ray stands for the path tracer's many directions to the surroundings: it shades only in part.
-    vec3 amb = uHeldAround < 1.0 ? albedo * around * (0.35 + 0.65 * clear(w, uEnvUp, 13.0)) : vec3(0.0);
-    amb = mix(amb, held.rgb, uHeldAround);
-    vec3 col = albedo * (uLightRgb * (hg(dot(dw, uLightDir), uPhaseG[k]) * Tl) + amb);
-    if (gm > 1e-6) {
-      vec3 nrm = -up;
-      if (dot(nrm, dw) > 0.0) nrm = -nrm;
-      // What is held is the mean over every direction, the tissue's own light among it.
-      vec3 sky = uHeldAround < 1.0 ? env(nrm) * (0.35 + 0.65 * clear(w, nrm, 13.0)) : vec3(0.0);
-      sky = mix(sky, held.rgb, uHeldAround);
-      vec3 surf = brdfCos(k, nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uSpecular[k]);
-      col = mix(col, surf, uShadeMix[k] * edge);
-    }
     L += T * al * col;
     T *= 1.0 - al;
     if (!met && T <= 0.5) {
@@ -634,23 +694,24 @@ float firstHit(vec3 ow, vec3 dw) {
   float t = r.t0;
   for (int i = 0; i < 8192; ++i) {
     if (t >= r.t1) break;
-    int k;
-    OWNER(r, t, k)
-    if (k < 0) {
+    float vox;
+    FINEST(r, t, vox)
+    if (vox >= 1e29) {
       float n_;
       NEXT_IN(r, t, n_)
       t = n_;
       continue;
     }
-    float dt = 0.5 * r.vox[k];
-    vec3 vk = r.ov[k] + r.dv[k] * t;
-    float run = clearRun(k, vk, r.dv[k]);
+    float dt = 0.5 * vox;
+    float run;
+    CLEAR_RUN(r, t, run)
     if (run > 0.0) {
-      CAP_FINER(r, k, t, run)
       t += max(ceil(run / dt), 1.0) * dt;
       continue;
     }
-    T *= exp(-sigma(k, ow + dw * t, vk) * dt);
+    float s;
+    SIGMA(r, t, s)
+    T *= exp(-s * dt);
     if (T <= 0.5) {
       vec4 p = uVP * vec4(ow + dw * t, 1.0);
       return clamp((p.z / p.w) * 0.5 + 0.5, 0.0, 0.99999);
@@ -981,9 +1042,9 @@ export class LiveVolume {
     const tables = shown.map(({ vol, spec }) => liveTable(spec.preset, vol.level!));
     const tfKeys = shown.map(({ vol, spec }) => JSON.stringify([vol.url, vol.level!.path, spec.preset.domain, spec.preset.stops, spec.preset.window ?? null]));
     shown.forEach(({ vol }, i) => this.upload(gl, vol, tables[i], tfKeys[i]));
-    const drawn: Drawn[] = shown.map(({ vol, spec }) => ({ vol, q: liveParams(look.view, spec.preset, vol.level!, spec.placement) }));
+    const drawn: Drawn[] = shown.map(({ vol, spec }) => ({ vol, q: liveParams(look.view, spec.preset, vol.level!, spec.placement, { crop: spec.crop, clips: spec.clips, env: look.env }) }));
     const primary = drawn[0].q;
-    // Finest first: where volumes overlap, a point is the finest one's.
+    // Finest first: where volumes overlap, a ray steps a voxel of the finest.
     const order = drawn.map((d, i) => ({ d, i, size: voxelWorldSize(d.q.worldFromVox) })).sort((a, b) => a.size - b.size || a.i - b.i);
     const sorted = order.map((o) => o.d);
     const tfKey = JSON.stringify(order.map((o) => tfKeys[o.i]));
@@ -1007,13 +1068,17 @@ export class LiveVolume {
     }
     // What the light held depends on (not the camera): a change starts it again, the light set from the camera now.
     const light = look.view.light;
-    const materials = sorted.map((d) => [d.vol.url, d.vol.level!.path, d.q.density, d.q.albedo, d.q.phaseG, d.q.worldFromVox]);
-    const heldKey = JSON.stringify([tfKey, materials, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, primary.clips, primary.cropLo, primary.cropHi, box, light?.direction ?? null, light?.camera_space ?? true]);
+    const materials = sorted.map((d) => [d.vol.url, d.vol.level!.path, d.q.density, d.q.albedo, d.q.phaseG, d.q.worldFromVox, d.q.clips.slice(0, 4 * d.q.nclip), d.q.cropLo, d.q.cropHi]);
+    // A light that turns with the camera: its direction to a degree or so, so a still camera keeps what is held.
+    const dir = primary.lightDir.map((x) => Math.round(x * 50) / 50);
+    const heldKey = JSON.stringify([tfKey, materials, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
     if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0 };
     primary.lightDir = this.held.lightDir;
     primary.envUp = this.held.envUp;
-    const scene: Scene = { n, drawn: sorted, primary, crop: drawn[0], box };
-    if (this.canBake && this.held.pass < LIGHT_PASSES) this.bakeSome(gl, scene);
+    const scene: Scene = { n, drawn: sorted, primary, box };
+    // A light that turns with the camera is held again once the camera rests; short rays stand in while it moves.
+    const baking = !(look.lightFollows && frame.moving);
+    if (this.canBake && baking && this.held.pass < LIGHT_PASSES) this.bakeSome(gl, scene);
 
     // The view at rest is path-traced, a pass a frame, once the camera has been still a moment; the
     // samples take the object's pixels from 4 samples on, all of them by 32.
@@ -1052,7 +1117,7 @@ export class LiveVolume {
       gl.activeTexture(gl.TEXTURE0 + UNIT.light);
       gl.bindTexture(gl.TEXTURE_3D, this.lightRead!);
       gl.uniform1i(u("uLight"), UNIT.light);
-      const held = this.canBake ? this.held.pass : 0;
+      const held = this.canBake && baking ? this.held.pass : 0;
       gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
       gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
       gl.bindVertexArray(this.vao!);
@@ -1141,12 +1206,11 @@ export class LiveVolume {
     gl.uniform1fv(u("uSpecular"), each((x) => x.specular));
     gl.uniform1fv(u("uInset"), each((x) => x.inset));
     gl.uniform1iv(u("uHasOcc"), new Int32Array(s.drawn.map((d) => (d.vol.bounds !== undefined ? 1 : 0))));
-    // The crop: a box in the first image's voxels.
-    gl.uniformMatrix4fv(u("uCropFromWorld"), false, s.crop.q.voxFromWorld);
-    gl.uniform3fv(u("uCropLo"), s.crop.q.cropLo);
-    gl.uniform3fv(u("uCropHi"), s.crop.q.cropHi);
-    gl.uniform4fv(u("uClips"), q.clips);
-    gl.uniform1i(u("uNClip"), q.nclip);
+    // Each volume's crop (a box in its voxels) and cuts.
+    gl.uniform3fv(u("uCropLo"), new Float32Array(s.drawn.flatMap((d) => d.q.cropLo)));
+    gl.uniform3fv(u("uCropHi"), new Float32Array(s.drawn.flatMap((d) => d.q.cropHi)));
+    gl.uniform4fv(u("uClips"), new Float32Array(s.drawn.flatMap((d) => d.q.clips)));
+    gl.uniform1iv(u("uNClip"), new Int32Array(s.drawn.map((d) => d.q.nclip)));
     gl.uniform3fv(u("uLightDir"), q.lightDir);
     gl.uniform3fv(u("uLightRgb"), q.lightRgb);
     gl.uniform3fv(u("uEnvTop"), q.envTop);
@@ -1355,12 +1419,11 @@ export class LiveVolume {
   }
 }
 
-/** What a frame's programs are given: the volumes drawn (finest first), the first image's values (crop, light, cuts), and the light held's box. */
+/** What a frame's programs are given: the volumes drawn (finest first), the first image's values (light, surroundings), and the light held's box. */
 interface Scene {
   n: number;
   drawn: Drawn[];
   primary: LiveParams;
-  crop: Drawn;
   box: ReturnType<typeof lightBox>;
 }
 

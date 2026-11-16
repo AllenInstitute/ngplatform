@@ -547,6 +547,8 @@ export class DockManager {
       const collapsed = (kept === null ? START_COLLAPSED[slot] : kept === "1") || (narrow && slot === "left");
       this.setCollapsed(slot, collapsed, false);
     }
+    // The columns ease open and shut from now on (not while the sizes kept are first put back).
+    requestAnimationFrame(() => requestAnimationFrame(() => this.root.classList.add("panels-ease")));
   }
 
   /** The smallest and largest a dock may be, in pixels, in this window. */
@@ -612,6 +614,8 @@ export class DockManager {
       down.preventDefault();
       el.setPointerCapture?.(down.pointerId);
       el.classList.add("dragging");
+      // A column dragged follows the pointer at once.
+      this.root.classList.add("resizing");
       const start = vertical ? down.clientY : down.clientX;
       const startSize = this.sizeOf(slot);
       followDrag(
@@ -622,6 +626,7 @@ export class DockManager {
         },
         () => {
           el.classList.remove("dragging");
+          this.root.classList.remove("resizing");
           keep();
         },
       );

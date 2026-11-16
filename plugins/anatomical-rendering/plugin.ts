@@ -17,11 +17,11 @@ import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, wi
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { cropToDisplay, cutOffset, cutShape, displayToCrop, levelAxes, planeFromShape, planeShape } from "./handles.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
-import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_VOLUMES } from "./live.js";
+import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX_VOLUMES } from "./live.js";
 import { placementMm } from "../luxar/view_math.js";
-import { cameraAxes, type Level8, type LevelPreset, levelHistogram, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
+import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, renderSource, planeClip, planeFromView, safeHref, unitMm, viewForward, viewKey } from "./view.js";
+import { axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, sceneDirection, sceneAngles, renderSource, planeClip, planeFromView, safeHref, unitMm, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
 export interface KeyframeCamera {
@@ -54,15 +54,77 @@ export interface Crop {
   on: boolean;
   /** True keeps the inside; false cuts it out. */
   keep: boolean;
+  /** A layer's own box: fractions of its volume along its axes. A box for all layers: millimetres (`mm`), else (from before) fractions of the first image rendered. */
   lo: [number, number, number];
   hi: [number, number, number];
+  mm?: boolean;
 }
 
-/** An image layer's own look: whether it is rendered, its preset and its density (else the defaults below). */
+/** Crops and cuts: a layer's own, or those for all layers rendered. */
+export interface CropSet {
+  cuts: Cut[];
+  planes: CameraPlane[];
+  boxes: Crop[];
+}
+
+/** An image layer's own look: whether it is rendered, its preset and density (else the defaults below), and its own crops and cuts. */
 export interface LayerLook {
   on?: boolean;
   preset?: string;
   density?: number;
+  cuts?: Cut[];
+  planes?: CameraPlane[];
+  boxes?: Crop[];
+}
+
+/** Whose crops: a layer's own (its name), or all layers' (null). */
+export type CropScope = string | null;
+
+/** A crop's or cut's shape in the views: `box2`, a layer's own; `boxall2`, all layers'. */
+function shapeId(kind: "box" | "plane", scope: CropScope, i: number): string {
+  return `${kind}${scope === null ? "all" : ""}${i}`;
+}
+
+/** The crops and cuts of a scope, to read. */
+export function cropsOf(s: Pick<Saved, "cuts" | "planes" | "boxes" | "looks">, scope: CropScope): CropSet {
+  if (scope === null) return s;
+  const look = s.looks[scope];
+  return { cuts: look?.cuts ?? DEFAULT_CUTS, planes: look?.planes ?? [], boxes: look?.boxes ?? [] };
+}
+
+/**
+ * Edits the crops and cuts of a scope, as new objects: the state saved before (an undo step) keeps its own.
+ */
+export function editCrops(s: Saved, scope: CropScope, edit: (c: CropSet) => void): void {
+  const from = cropsOf(s, scope);
+  const c: CropSet = {
+    cuts: from.cuts.map((q) => ({ ...q })),
+    planes: from.planes.map((q) => ({ ...q, point: [...q.point] as CameraPlane["point"], normal: [...q.normal] as CameraPlane["normal"] })),
+    boxes: from.boxes.map((q) => ({ ...q, lo: [...q.lo] as Crop["lo"], hi: [...q.hi] as Crop["hi"] })),
+  };
+  edit(c);
+  if (scope === null) [s.cuts, s.planes, s.boxes] = [c.cuts, c.planes, c.boxes];
+  else s.looks = { ...s.looks, [scope]: { ...s.looks[scope], ...c } };
+}
+
+/** A box's corners through a placed level (voxels → millimetres, row-major, and its size): fractions to millimetres, as the box about them. */
+export function fractionsToMm(b: { lo: readonly number[]; hi: readonly number[] }, at: { m: readonly number[]; size: readonly number[] }): { lo: [number, number, number]; hi: [number, number, number] } {
+  return boxThrough(b, (f) => f.map((x, a) => x * at.size[a] - 0.5), at.m, (v) => v);
+}
+
+/** Millimetres to fractions of a placed level, as the box about the corners. */
+export function mmToFractions(b: { lo: readonly number[]; hi: readonly number[] }, at: { m: readonly number[]; size: readonly number[] }): { lo: [number, number, number]; hi: [number, number, number] } {
+  return boxThrough(b, (v) => v, invert(at.m as number[]), (v) => v.map((x, a) => (x + 0.5) / at.size[a]));
+}
+
+function boxThrough(b: { lo: readonly number[]; hi: readonly number[] }, pre: (p: number[]) => number[], m: readonly number[], post: (p: number[]) => number[]) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let c = 0; c < 8; ++c) {
+    const p = pre([0, 1, 2].map((a) => ((c >> a) & 1 ? b.hi[a] : b.lo[a])));
+    const q = post([0, 1, 2].map((r) => m[4 * r] * p[0] + m[4 * r + 1] * p[1] + m[4 * r + 2] * p[2] + m[4 * r + 3]));
+    for (let a = 0; a < 3; ++a) [lo[a], hi[a]] = [Math.min(lo[a], q[a]), Math.max(hi[a], q[a])];
+  }
+  return { lo: lo as [number, number, number], hi: hi as [number, number, number] };
 }
 
 export interface Saved {
@@ -75,7 +137,7 @@ export interface Saved {
   /** The preset and density of an image that has none of its own (`looks`). */
   preset: string;
   density?: number;
-  /** Each image layer's own look, by layer name: rendered or not, its preset and density. */
+  /** Each image layer's own look, by layer name: rendered or not, its preset and density, its own crops and cuts. */
   looks: Record<string, LayerLook>;
   exposure: number;
   /** For "window" presets: the data values at the window's ends, per image (its OME-Zarr store); else the host's guess. */
@@ -84,6 +146,9 @@ export interface Saved {
   volumeAt: Record<string, { channel: number; time: number }>;
   /** The colourmap tuned for an image (its OME-Zarr store): stops edited over its histogram (data values), shift and compression. */
   tunings: Record<string, Tuning>;
+  /** Where the key light comes from: in front of the camera, behind the object as the camera sees it (both turning with it), or a direction fixed in the scene. */
+  lightFrom: "front" | "back" | "scene";
+  /** The key light's direction: around and up from the camera's (front, back), or around z from x and up toward z (scene), in degrees. */
   lightAzimuth: number;
   lightElevation: number;
   /** A light map on the host ("" for the preset's sky colours) and its turn in degrees. */
@@ -93,8 +158,9 @@ export interface Saved {
   lightStyle: string;
   envScale: number;
   lightKey: number;
-  /** Cuts across the view, each fixed where it was set (`CameraPlane`). */
+  /** Cuts across the view, each fixed where it was set (`CameraPlane`), for all layers rendered (each layer's own: `looks`). */
   planes: CameraPlane[];
+  /** Planes across x, y and z, for all layers rendered. */
   cuts: Cut[];
   regions: boolean;
   labelMix: number;
@@ -115,7 +181,7 @@ export interface Saved {
   /** Show the path-traced picture of the view when the camera rests, over the object (else the object alone; the host renders stills, movies and splats). */
   restPicture: boolean;
   keyframes: Keyframe[];
-  /** Crops: boxes (fractions of the volume along x, y, z), each keeping its inside or cutting it out; what shows is inside any that keeps and in none that cuts out. */
+  /** Crops for all layers rendered: boxes each keeping its inside or cutting it out; what shows is inside any that keeps and in none that cuts out. */
   boxes: Crop[];
   /** Presets loaded from files (as the service takes them). */
   customPresets: Record<string, unknown>[];
@@ -157,6 +223,23 @@ const DEFAULT_CUTS: Cut[] = [
  * The camera planes saved; from a state of before, its one cut facing the camera: fixed where it was
  * pinned, and one that turned with the camera set from the next frame's view (a zero normal until then).
  */
+function readCuts(v: unknown): Cut[] {
+  return Array.isArray(v) && v.length === 3 ? v.map((c, i) => ({ ...DEFAULT_CUTS[i], ...(c as Partial<Cut>) })) : DEFAULT_CUTS.map((c) => ({ ...c }));
+}
+
+function readBoxes(v: unknown): Crop[] {
+  const tri = (x: unknown): x is [number, number, number] => Array.isArray(x) && x.length === 3 && x.every((n) => typeof n === "number" && Number.isFinite(n));
+  return Array.isArray(v)
+    ? (v as Partial<Crop>[]).filter((b) => b && tri(b.lo) && tri(b.hi)).map((b, i) => ({ name: String(b.name ?? `Crop ${i + 1}`), on: b.on !== false, keep: b.keep !== false, lo: b.lo!, hi: b.hi!, ...(b.mm === true ? { mm: true } : {}) }))
+    : [];
+}
+
+/** A lighting style of before as one of now. */
+function readLightStyle(v: unknown): string {
+  if (v === "hard") return "strong";
+  return typeof v === "string" && v in LIGHTING ? v : "";
+}
+
 function readPlanes(s: Partial<Saved> & { viewCut?: { on?: boolean; offset?: number; fixed?: number[] | null } }): CameraPlane[] {
   const vec = (v: unknown): v is [number, number, number] => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));
   if (Array.isArray(s.planes)) {
@@ -174,7 +257,7 @@ function readPlanes(s: Partial<Saved> & { viewCut?: { on?: boolean; offset?: num
 export function readSaved(raw: unknown): Saved {
   const s = (raw ?? {}) as Partial<Saved>;
   const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
-  const cuts = Array.isArray(s.cuts) && s.cuts.length === 3 ? s.cuts.map((c, i) => ({ ...DEFAULT_CUTS[i], ...c })) : DEFAULT_CUTS.map((c) => ({ ...c }));
+  const cuts = readCuts(s.cuts);
   return {
     on: s.on === true,
     // This browser (WebGPU, and the object drawn on this computer's GPU) unless a render computer was chosen in Remote.
@@ -190,6 +273,9 @@ export function readSaved(raw: unknown): Saved {
           ...(typeof v.on === "boolean" ? { on: v.on } : {}),
           ...(typeof v.preset === "string" && v.preset ? { preset: v.preset } : {}),
           ...(typeof v.density === "number" && Number.isFinite(v.density) ? { density: v.density } : {}),
+          ...(Array.isArray(v.cuts) ? { cuts: readCuts(v.cuts) } : {}),
+          ...(Array.isArray(v.planes) ? { planes: readPlanes({ planes: v.planes }) } : {}),
+          ...(Array.isArray(v.boxes) ? { boxes: readBoxes(v.boxes) } : {}),
         }]),
     ),
     exposure: num(s.exposure, 1),
@@ -213,11 +299,12 @@ export function readSaved(raw: unknown): Saved {
           warp: Array.isArray(t.warp) ? t.warp.filter((p) => p && Number.isFinite(p.from) && Number.isFinite(p.to)) : undefined,
         }]),
     ),
+    lightFrom: s.lightFrom === "back" || s.lightFrom === "scene" ? s.lightFrom : "front",
     lightAzimuth: num(s.lightAzimuth, 30),
     lightElevation: num(s.lightElevation, 40),
     lightMap: typeof s.lightMap === "string" ? s.lightMap : "",
     lightMapRotation: num(s.lightMapRotation, 0),
-    lightStyle: typeof s.lightStyle === "string" ? s.lightStyle : "",
+    lightStyle: readLightStyle(s.lightStyle),
     envScale: num(s.envScale, 1),
     lightKey: num(s.lightKey, 1),
     planes: readPlanes(s),
@@ -236,7 +323,7 @@ export function readSaved(raw: unknown): Saved {
     objectVoxels: num(s.objectVoxels, LIVE_VOXELS),
     keyframes: Array.isArray(s.keyframes) ? s.keyframes.filter((k) => k && typeof k.time === "number" && k.view && typeof k.view === "object") : [],
     boxes: Array.isArray(s.boxes)
-      ? s.boxes.filter((b) => b && Array.isArray(b.lo) && Array.isArray(b.hi)).map((b, i) => ({ name: String(b.name ?? `Crop ${i + 1}`), on: b.on !== false, keep: b.keep !== false, lo: b.lo, hi: b.hi }))
+      ? readBoxes(s.boxes)
       : (s as { box?: { on?: boolean; lo?: [number, number, number]; hi?: [number, number, number] } }).box?.on
         ? [{ name: "Crop 1", on: true, keep: true, lo: (s as { box: { lo?: [number, number, number] } }).box.lo ?? [0, 0, 0], hi: (s as { box: { hi?: [number, number, number] } }).box.hi ?? [1, 1, 1] }]
         : [],
@@ -319,6 +406,8 @@ function bounded(value: number, fix: (v: number) => number, on: (v: number) => v
 const STYLE = `
 .ar-grow { flex: 1 1 140px; min-width: 0; }
 .ar-cut { display: grid; grid-template-columns: 5.5em auto minmax(0, 1fr); align-items: center; gap: var(--sp-3); }
+.ar-cut > .ar-all { grid-column: 3; justify-self: end; }
+.ar-all[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .ar-cut > select { width: auto; }
 .ar-editor-box { display: grid; gap: var(--sp-2); min-width: 0; }
 .ar-editor { display: block; width: 100%; height: 176px; cursor: grab; border: 1px solid var(--line-strong); touch-action: none; }
@@ -457,7 +546,6 @@ class AnatomicalRendering {
   private views = new Map<number, { camera: number[]; look: string }>();
   /** The image as an object in the 3-D view, drawn with each frame's camera. */
   private readonly live = new LiveVolume();
-  private fixedLight: { key: string; direction: [number, number, number] } | undefined;
   private levelShown: Level8 | undefined;
   private lastCursor: number[] | undefined;
   /** Crops and cuts as shapes with handles in the views, by id (`box0`, `plane0`, `cut0`), and what each was made from. */
@@ -1128,11 +1216,99 @@ class AnatomicalRendering {
     return [0, 1, 2].map((i) => g[global.indexOf(names[i])] ?? 0) as [number, number, number];
   }
 
-  /** The held level's voxel axes in display coordinates, and its size; undefined without a level, or with turned axes. */
-  private levelFrame(frame: Frame3d): { axes: NonNullable<ReturnType<typeof levelAxes>>; size: [number, number, number] } | undefined {
-    const level = this.live.heldLevel;
+  /** The image whose crops the panel and the views show (its own, beside all layers'): the one selected, else the first rendered. */
+  private cropLayer(): LayerInfo | undefined {
+    const e = this.edited();
+    return e !== undefined && this.isImage(e) ? e : this.target();
+  }
+
+  /** The scope of the crops a new one is added to: the image's own (all layers' when there is none). */
+  private ownScope(): CropScope {
+    return this.cropLayer()?.name ?? null;
+  }
+
+  /** The planes or boxes the panel and the views show: the image's own, then all layers'. */
+  private cropRows(kind: "planes" | "boxes"): { scope: CropScope; i: number }[] {
+    const own = this.ownScope();
+    const rows: { scope: CropScope; i: number }[] = [];
+    if (own !== null) cropsOf(this.saved, own)[kind].forEach((_, i) => rows.push({ scope: own, i }));
+    this.saved[kind].forEach((_, i) => rows.push({ scope: null, i }));
+    return rows;
+  }
+
+  /** An axis plane's scope: all layers' while that is on, else the image's own. */
+  private cutScope(i: number): CropScope {
+    return this.saved.cuts[i]?.on ? null : this.ownScope();
+  }
+
+  /** A box set from fractions of the image shown: its own as they are, all layers' as millimetres; undefined until its level is read. */
+  private boxFrom(scope: CropScope, f: { lo: number[]; hi: number[] }): Pick<Crop, "lo" | "hi" | "mm"> | undefined {
+    const clamp = (v: number[]) => v.map((x) => Math.min(1, Math.max(0, x))) as [number, number, number];
+    if (scope !== null) return { lo: clamp(f.lo), hi: clamp(f.hi) };
+    const at = this.placedLevel(this.cropLayer());
+    if (at === undefined) return undefined;
+    return { ...fractionsToMm(f, at), mm: true };
+  }
+
+  /** A box as fractions of the image shown (for its sliders and handles); undefined until the levels are read. */
+  private boxShown(scope: CropScope, b: Crop): { lo: number[]; hi: number[] } | undefined {
+    const layer = this.cropLayer();
+    return layer ? this.boxIn(b, scope, layer) : scope === null ? b : undefined;
+  }
+
+  /** Sets a box's ends from fractions of the image shown (a slider, a handle, a card). */
+  private setBox(scope: CropScope, i: number, f: { lo: number[]; hi: number[] }, done: boolean): void {
+    const patch = this.boxFrom(scope, f);
+    if (patch === undefined) return;
+    const change = (x: Saved) => editCrops(x, scope, (c) => void (c.boxes[i] = { ...c.boxes[i], ...patch }));
+    if (done) this.save(change);
+    else this.preview(change);
+  }
+
+  /** Moves a camera plane or box between the image's own and all layers' (each layer rendered is then cut by it). */
+  private shareItem(kind: "planes" | "boxes", scope: CropScope, i: number): void {
+    const own = this.ownScope();
+    if (own === null) return;
+    const item = cropsOf(this.saved, scope)[kind][i];
+    if (item === undefined) return;
+    let moved: CameraPlane | Crop = { ...item };
+    if (kind === "boxes") {
+      const b = item as Crop;
+      const f = scope === null ? this.boxShown(null, b) : b;
+      const patch = f && this.boxFrom(scope === null ? own : null, f);
+      if (patch === undefined) return void this.ctx.ui.toast("The image is still being read: try again in a moment.", "error");
+      const { mm: _mm, ...rest } = b;
+      moved = { ...rest, ...patch };
+    }
+    this.save((x) => {
+      editCrops(x, scope, (c) => void c[kind].splice(i, 1));
+      editCrops(x, scope === null ? own : null, (c) => void (c[kind] as (CameraPlane | Crop)[]).push(moved));
+    });
+  }
+
+  /** Moves an axis plane between the image's own and all layers' (each layer's own across that axis turned off). */
+  private shareCut(i: number, all: boolean): void {
+    const own = this.ownScope();
+    if (own === null) return;
+    this.save((x) => {
+      if (all) {
+        const c = cropsOf(x, own).cuts[i];
+        editCrops(x, null, (s) => void (s.cuts[i] = { ...c, on: true }));
+        for (const name of Object.keys(x.looks)) if (x.looks[name].cuts?.[i]?.on) editCrops(x, name, (s) => void (s.cuts[i].on = false));
+      } else {
+        const c = x.cuts[i];
+        editCrops(x, own, (s) => void (s.cuts[i] = { ...c }));
+        editCrops(x, null, (s) => void (s.cuts[i].on = false));
+      }
+    });
+  }
+
+  /** A layer's held level's voxel axes in display coordinates, and its size; undefined without a level, or with turned axes. */
+  private levelFrame(frame: Frame3d, layer = this.cropLayer()): { axes: NonNullable<ReturnType<typeof levelAxes>>; size: [number, number, number] } | undefined {
+    const src = layer ? this.sourceOf(layer) : undefined;
+    const level = src !== undefined ? this.live.levelOf(src) : this.live.heldLevel;
     const d = displayFromPhysical(frame.dimensions);
-    const first = this.target();
+    const first = layer;
     const placement = first ? this.placementOf(first) : undefined;
     const axes = level && d && levelAxes(d, placement ? mul(rowMajor(placement), level.voxelToRas) : level.voxelToRas);
     return axes && level ? { axes, size: level.size } : undefined;
@@ -1173,54 +1349,63 @@ class AnatomicalRendering {
       const g = (d: ArrayLike<number>) => this.toGlobal(d, names);
       const dsp = (v: ArrayLike<number>) => this.toDisplay(v, names);
       if (held !== undefined) {
-        this.saved.boxes.forEach((b, i) => {
-          if (!b.on) return;
-          const box = cropToDisplay(b, held.size, held.axes);
-          const edit = (lower: number[], upper: number[], done: boolean) => {
-            const crop = displayToCrop(dsp(lower), dsp(upper), held.size, held.axes);
-            const change = (x: Saved) => void (x.boxes = x.boxes.map((q, j) => (j === i ? { ...q, lo: crop.lo, hi: crop.hi } : q)));
-            if (done) this.save(change);
-            else this.preview(change);
-          };
-          want.set(`box${i}`, {
-            key: JSON.stringify(["box", b, held.size, held.axes, names]),
-            shape: { id: `box${i}`, kind: "box", label: b.name, lower: g(box.lower), upper: g(box.upper), card: (host) => this.boxCard(host, i), onChange: ({ lower, upper }, done) => edit(lower, upper, done) },
+        for (const { scope, i } of this.cropRows("boxes")) {
+          const b = cropsOf(this.saved, scope).boxes[i];
+          const f = b.on ? this.boxShown(scope, b) : undefined;
+          if (f === undefined) continue;
+          const box = cropToDisplay(f, held.size, held.axes);
+          const id = shapeId("box", scope, i);
+          want.set(id, {
+            key: JSON.stringify(["box", f, held.size, held.axes, names, b.name]),
+            shape: {
+              id,
+              kind: "box",
+              label: scope === null ? `${b.name} (all layers)` : b.name,
+              lower: g(box.lower),
+              upper: g(box.upper),
+              card: (host) => this.boxCard(host, scope, i),
+              onChange: ({ lower, upper }, done) => this.setBox(scope, i, displayToCrop(dsp(lower), dsp(upper), held.size, held.axes), done),
+            },
           });
-        });
+        }
       }
-      this.saved.planes.forEach((p, i) => {
-        if (!p.on || p.normal.every((v) => v === 0)) return;
+      for (const { scope, i } of this.cropRows("planes")) {
+        const p = cropsOf(this.saved, scope).planes[i];
+        if (!p.on || p.normal.every((v) => v === 0)) continue;
         const at = planeShape(p, mm);
-        want.set(`plane${i}`, {
+        const id = shapeId("plane", scope, i);
+        want.set(id, {
           key: JSON.stringify(["plane", p, size, names, mm]),
           shape: {
-            id: `plane${i}`,
+            id,
             kind: "plane",
-            label: p.name,
+            label: scope === null ? `${p.name} (all layers)` : p.name,
             point: g(at.point),
             normal: this.toGlobal(at.normal, names, true),
             ...(size !== undefined ? { size } : {}),
-            card: (host) => this.planeCard(host, i),
+            card: (host) => this.planeCard(host, scope, i),
             onChange: ({ point, normal }, done) => {
-              const change = (x: Saved) => void (x.planes = x.planes.map((q, j) => (j === i ? planeFromShape(q, dsp(point), dsp(normal), mm) : q)));
+              const change = (x: Saved) => editCrops(x, scope, (c) => void (c.planes[i] = planeFromShape(c.planes[i], dsp(point), dsp(normal), mm)));
               if (done) this.save(change);
               else this.preview(change);
             },
           },
         });
-      });
-      this.saved.cuts.forEach((c, i) => {
+      }
+      [0, 1, 2].forEach((i) => {
+        const scope = this.cutScope(i);
+        const c = cropsOf(this.saved, scope).cuts[i];
         const k = names.indexOf(c.axis);
         if (!c.on || k < 0 || k > 2) return;
         const at = cutShape(c, k, frame.position, mm);
         const normal = [0, 0, 0];
         normal[k] = c.keep;
         want.set(`cut${i}`, {
-          key: JSON.stringify(["cut", c, size, names, mm, Array.from(frame.position)]),
+          key: JSON.stringify(["cut", c, scope === null, size, names, mm, Array.from(frame.position)]),
           shape: {
             id: `cut${i}`,
             kind: "plane",
-            label: `Across ${c.axis}`,
+            label: scope === null ? `Across ${c.axis} (all layers)` : `Across ${c.axis}`,
             point: g(at.point),
             normal: this.toGlobal(normal, names, true),
             turns: false,
@@ -1228,7 +1413,7 @@ class AnatomicalRendering {
             card: (host) => this.cutCard(host, i),
             onChange: ({ point }, done) => {
               const offset = Math.round(cutOffset(dsp(point), k, this.lastFrame?.position ?? frame.position, mm) * 100) / 100;
-              const change = (x: Saved) => void (x.cuts = x.cuts.map((q, j) => (j === i ? { ...q, offset } : q)));
+              const change = (x: Saved) => editCrops(x, scope, (s) => void (s.cuts[i] = { ...s.cuts[i], offset }));
               if (done) this.save(change);
               else this.preview(change);
             },
@@ -1271,63 +1456,87 @@ class AnatomicalRendering {
     };
   }
 
-  /** A crop box's card: keeps or cuts out, its ends as fractions of the volume, remove. */
-  private boxCard(host: HTMLElement, i: number): Disposer {
+  /** The All layers switch beside a crop or cut: pressed while it cuts every image rendered. */
+  private allButton(pressed: boolean, what: string, onclick: () => void): HTMLButtonElement {
+    const b = el("button", {
+      class: "btn outline small ar-all",
+      type: "button",
+      "aria-pressed": String(pressed),
+      title: pressed ? `${what} cuts every image rendered: press to keep it for this image alone` : `${what} cuts this image alone: press to cut every image rendered`,
+      onclick,
+    }, "All layers");
+    b.disabled = this.ownScope() === null;
+    return b;
+  }
+
+  /** A crop box's card: keeps or cuts out, its ends as fractions of the volume, all layers or this one, remove. */
+  private boxCard(host: HTMLElement, scope: CropScope, i: number): Disposer {
     const updates: (() => void)[] = [];
-    const b = () => this.saved.boxes[i];
-    const keep = select([["keep", "Keeps its inside"], ["cut", "Cuts its inside out"]], b()?.keep === false ? "cut" : "keep", (v) => this.save((x) => (x.boxes[i].keep = v === "keep")), "What the box does");
+    const b = () => cropsOf(this.saved, scope).boxes[i];
+    const f = () => {
+      const q = b();
+      return q ? this.boxShown(scope, q) : undefined;
+    };
+    const keep = select([["keep", "Keeps its inside"], ["cut", "Cuts its inside out"]], b()?.keep === false ? "cut" : "keep", (v) => this.save((x) => editCrops(x, scope, (c) => void (c.boxes[i].keep = v === "keep"))), "What the box does");
     updates.push(() => keep.set(b()?.keep === false ? "cut" : "keep"));
-    const end = (which: "lo" | "hi", k: number) => (v: number) =>
-      this.save((x) => {
-        x.boxes = x.boxes.map((q, j) => {
-          if (j !== i) return q;
-          const at: [number, number, number] = [q[which][0], q[which][1], q[which][2]];
-          at[k] = which === "lo" ? Math.max(0, Math.min(v, q.hi[k] - 0.005)) : Math.min(1, Math.max(v, q.lo[k] + 0.005));
-          return { ...q, [which]: at };
-        });
-      });
+    const end = (which: "lo" | "hi", k: number) => (v: number) => {
+      const q = f();
+      if (q === undefined) return;
+      const lo = [...q.lo], hi = [...q.hi];
+      if (which === "lo") lo[k] = Math.max(0, Math.min(v, hi[k] - 0.005));
+      else hi[k] = Math.min(1, Math.max(v, lo[k] + 0.005));
+      this.setBox(scope, i, { lo, hi }, true);
+    };
     const values = (["x", "y", "z"] as const).flatMap((axis, k) => [
-      ...this.cardNumber(`${axis} from`, () => b()?.lo[k], end("lo", k), updates, { step: "0.005", min: "0", max: "1" }),
-      ...this.cardNumber("to", () => b()?.hi[k], end("hi", k), updates, { step: "0.005", min: "0", max: "1" }),
+      ...this.cardNumber(`${axis} from`, () => f()?.lo[k], end("lo", k), updates, { step: "0.005", min: "0", max: "1" }),
+      ...this.cardNumber("to", () => f()?.hi[k], end("hi", k), updates, { step: "0.005", min: "0", max: "1" }),
     ]);
     host.append(
       keep,
       el("div", { class: "view-card-grid" }, ...values),
-      el("p", { class: "hint" }, "Fractions of the volume along its axes."),
-      el("div", { class: "row" }, el("span", { class: "spacer" }), button("Remove", () => this.save((x) => x.boxes.splice(i, 1)), "Remove this box", "btn small danger")),
+      el("p", { class: "hint" }, scope === null ? `Fractions of ${this.cropLayer()?.name ?? "the image"}; it cuts every image rendered.` : "Fractions of the volume along its axes."),
+      el("div", { class: "row" },
+        this.allButton(scope === null, "This box", () => this.shareItem("boxes", scope, i)),
+        el("span", { class: "spacer" }),
+        button("Remove", () => this.save((x) => editCrops(x, scope, (c) => void c.boxes.splice(i, 1))), "Remove this box", "btn small danger")),
     );
     return this.cardDone(updates);
   }
 
-  /** A camera plane's card: its offset in mm, set again from the view, remove. */
-  private planeCard(host: HTMLElement, i: number): Disposer {
+  /** A camera plane's card: its offset in mm, set again from the view, all layers or this one, remove. */
+  private planeCard(host: HTMLElement, scope: CropScope, i: number): Disposer {
     const updates: (() => void)[] = [];
-    const offset = this.cardNumber("Offset (mm)", () => this.saved.planes[i]?.offset, (v) => this.save((x) => (x.planes = x.planes.map((q, j) => (j === i ? { ...q, offset: v } : q)))), updates, { step: "0.5" });
+    const offset = this.cardNumber("Offset (mm)", () => cropsOf(this.saved, scope).planes[i]?.offset, (v) => this.save((x) => editCrops(x, scope, (c) => void (c.planes[i].offset = v))), updates, { step: "0.5" });
     host.append(
       el("div", { class: "view-card-grid" }, ...offset),
       el("p", { class: "hint" }, "Drag its centre along its normal; drag the ring to turn it."),
       el(
         "div",
         { class: "row" },
-        button("Face the camera", () => this.setPlaneToView(i), "Set it across the view as it is now"),
+        button("Face the camera", () => this.setPlaneToView(scope, i), "Set it across the view as it is now"),
+        this.allButton(scope === null, "This plane", () => this.shareItem("planes", scope, i)),
         el("span", { class: "spacer" }),
-        button("Remove", () => this.save((x) => x.planes.splice(i, 1)), "Remove this plane", "btn small danger"),
+        button("Remove", () => this.save((x) => editCrops(x, scope, (c) => void c.planes.splice(i, 1))), "Remove this plane", "btn small danger"),
       ),
     );
     return this.cardDone(updates);
   }
 
-  /** An axis plane's card: the side it keeps, its offset in mm, off. */
+  /** An axis plane's card: the side it keeps, its offset in mm, all layers or this one, off. */
   private cutCard(host: HTMLElement, i: number): Disposer {
     const updates: (() => void)[] = [];
-    const c = () => this.saved.cuts[i];
-    const side = select([["-1", "Keeps the − side"], ["1", "Keeps the + side"]], String(c()?.keep ?? -1), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1)), "Side kept");
+    const c = () => cropsOf(this.saved, this.cutScope(i)).cuts[i];
+    const edit = (f: (q: Cut) => void) => this.save((x) => editCrops(x, this.cutScope(i), (s) => f(s.cuts[i])));
+    const side = select([["-1", "Keeps the − side"], ["1", "Keeps the + side"]], String(c()?.keep ?? -1), (v) => edit((q) => (q.keep = Number(v) as 1 | -1)), "Side kept");
     updates.push(() => side.set(String(c()?.keep ?? -1)));
-    const offset = this.cardNumber("Offset (mm)", () => c()?.offset, (v) => this.save((x) => (x.cuts = x.cuts.map((q, j) => (j === i ? { ...q, offset: v } : q)))), updates, { step: "0.5" });
+    const offset = this.cardNumber("Offset (mm)", () => c()?.offset, (v) => edit((q) => (q.offset = v)), updates, { step: "0.5" });
     host.append(
       side,
       el("div", { class: "view-card-grid" }, ...offset),
-      el("div", { class: "row" }, el("span", { class: "spacer" }), button("Turn off", () => this.save((x) => (x.cuts[i].on = false)), "Turn this axis plane off")),
+      el("div", { class: "row" },
+        this.allButton(this.cutScope(i) === null, "This plane", () => this.shareCut(i, this.cutScope(i) !== null)),
+        el("span", { class: "spacer" }),
+        button("Turn off", () => edit((q) => (q.on = false)), "Turn this axis plane off")),
     );
     return this.cardDone(updates);
   }
@@ -1647,16 +1856,11 @@ class AnatomicalRendering {
       unit_mm: unitMm(frame.dimensions),
       preset: tuned ?? (s.customPresets.find((p) => p.name === name) as Record<string, unknown> | undefined) ?? (name || "HiP-CT brain"),
       overrides: tuned ? { exposure: s.exposure, ...(density !== undefined ? { density } : {}) } : overrides,
-      boxes: s.boxes.filter((b) => b.on).map((b) => ({ lo: b.lo, hi: b.hi, keep: b.keep })),
-      // With the object drawn, the light is the object's (fixed in the world); else it turns with the camera.
-      light: this.live.ready()
-        ? { direction: this.objectLight(frame), camera_space: false, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] }
-        : { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] },
+      // The first image's crops and cuts: its own and all layers'.
+      boxes: first ? this.cropsFor(first, frame).boxes : [],
+      light: this.lightSpec(),
       environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation, scale: s.envScale } : { scale: s.envScale },
-      clips: [
-        ...clipPlanes(s.cuts, frame.position, frame.dimensions),
-        ...s.planes.filter((p) => p.on && p.normal.some((x) => x !== 0)).map((p) => planeClip(p, frame.dimensions)),
-      ].slice(0, LIMITS.maxClips) as [number, number, number, number][],
+      clips: first ? this.cropsFor(first, frame).clips : [],
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
       objects: this.objectsView(),
       background: [0, 0, 0, 0],
@@ -1669,7 +1873,7 @@ class AnatomicalRendering {
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
     this.syncShapes();
-    const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.looks, this.renderedLayers().map((l) => l.name), this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.looks, this.renderedLayers().map((l) => l.name), this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightFrom, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
     this.drawer.pictureAtRest = this.saved.restPicture;
     // A camera plane of before that turned with the view: fixed now, as the view is.
@@ -1732,19 +1936,77 @@ class AnatomicalRendering {
     this.send(sid, spec, look);
   }
 
-  /**
-   * The key light as the object holds it: fixed in the world, from the camera of the frame when it was
-   * last set (around and up), so it stays put as the view turns about the object.
-   */
-  private objectLight(frame: Frame3d): [number, number, number] {
+  /** The key light: from the camera (in front, or behind the object as the camera sees it), turning with it; or fixed in the scene. */
+  private lightSpec(): NonNullable<ViewSpec["light"]> {
     const s = this.saved;
-    const key = JSON.stringify([s.lightAzimuth, s.lightElevation]);
-    if (this.fixedLight?.key !== key) {
-      const [right, up, back] = cameraAxes(rowMajor(frame.invViewProjection));
-      const d = lightDirection(s.lightAzimuth, s.lightElevation);
-      this.fixedLight = { key, direction: [0, 1, 2].map((i) => d[0] * right[i] + d[1] * up[i] + d[2] * back[i]) as [number, number, number] };
+    const rgb: [number, number, number] = [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey];
+    if (s.lightFrom === "scene") return { direction: sceneDirection(s.lightAzimuth, s.lightElevation), camera_space: false, rgb };
+    const d = lightDirection(s.lightAzimuth, s.lightElevation);
+    return { direction: s.lightFrom === "back" ? [d[0], d[1], -d[2]] : d, camera_space: true, rgb };
+  }
+
+  /** The key light from the camera now, fixed in the scene where it is (Light from › Scene). */
+  private fixLight(): void {
+    const f = this.lastFrame;
+    if (f === undefined) return void this.ctx.ui.toast("Look at the image in the 3-D view first.", "error");
+    const d = this.lightSpec().direction;
+    const [right, up, back] = cameraAxes(rowMajor(f.invViewProjection));
+    const w = [0, 1, 2].map((i) => d[0] * right[i] + d[1] * up[i] + d[2] * back[i]);
+    const a = sceneAngles(w);
+    this.save((x) => ([x.lightFrom, x.lightAzimuth, x.lightElevation] = ["scene", a.around, a.up]));
+  }
+
+  // ------------------------------------------------------- crops of each layer
+
+  /** A layer's level held here, placed: voxels to millimetres (row-major) and its size; undefined until it is read. */
+  private placedLevel(layer: LayerInfo | undefined): { m: number[]; size: number[] } | undefined {
+    const src = layer ? this.sourceOf(layer) : undefined;
+    const level = src !== undefined ? this.live.levelOf(src) : undefined;
+    if (level === undefined) return undefined;
+    const p = this.placementOf(layer!);
+    return { m: p ? mul(rowMajor(p), level.voxelToRas) : level.voxelToRas, size: level.size };
+  }
+
+  /** A box's millimetres: one for all layers as it is, else (from before) from the first image's fractions; undefined until that is read. */
+  private boxMm(b: Crop): { lo: number[]; hi: number[] } | undefined {
+    if (b.mm) return b;
+    const at = this.placedLevel(this.target());
+    return at && fractionsToMm(b, at);
+  }
+
+  /** A box as fractions of a layer's volume: its own as they are, else through millimetres; undefined until the levels are read. */
+  private boxIn(b: Crop, scope: CropScope, layer: LayerInfo): { lo: number[]; hi: number[] } | undefined {
+    if (scope !== null || (!b.mm && layer.name === this.target()?.name)) return b;
+    const mm = this.boxMm(b);
+    const at = this.placedLevel(layer);
+    return mm && at ? mmToFractions(mm, at) : undefined;
+  }
+
+  /**
+   * What cuts a layer: its own crops and cuts and all layers' (the boxes as fractions of its volume), the crop the
+   * boxes that keep make (the box about them, null for none) and its cuts as planes (at most MAX_CLIPS).
+   */
+  private cropsFor(layer: LayerInfo, frame: Frame3d): { boxes: { lo: number[]; hi: number[]; keep: boolean }[]; crop: [number[], number[]] | null; clips: [number, number, number, number][] } {
+    const own = cropsOf(this.saved, layer.name);
+    const all = cropsOf(this.saved, null);
+    const boxes: { lo: number[]; hi: number[]; keep: boolean }[] = [];
+    for (const [scope, set] of [[layer.name, own], [null, all]] as const) {
+      for (const b of set.boxes) {
+        if (!b.on) continue;
+        const f = this.boxIn(b, scope, layer);
+        if (f) boxes.push({ lo: f.lo, hi: f.hi, keep: b.keep });
+      }
     }
-    return this.fixedLight.direction;
+    const keep = boxes.filter((b) => b.keep);
+    const crop: [number[], number[]] | null = keep.length
+      ? [[0, 1, 2].map((a) => Math.min(...keep.map((b) => b.lo[a]))), [0, 1, 2].map((a) => Math.max(...keep.map((b) => b.hi[a])))]
+      : null;
+    const planes = [...all.planes, ...own.planes].filter((p) => p.on && p.normal.some((x) => x !== 0));
+    const clips = [
+      ...clipPlanes([...all.cuts, ...own.cuts], frame.position, frame.dimensions),
+      ...planes.map((p) => planeClip(p, frame.dimensions)),
+    ].slice(0, MAX_CLIPS) as [number, number, number, number][];
+    return { boxes, crop, clips };
   }
 
   /**
@@ -1763,15 +2025,25 @@ class AnatomicalRendering {
       const base = typeof view.preset === "object" ? view.preset : (resolved ?? named(view.preset));
       const preset = { ...(base ?? LOCAL_PRESETS[0]), ...(view.overrides ?? {}) } as unknown as LivePreset;
       const url = first ? this.sourceOf(first) : undefined;
-      return Array.isArray(preset.stops) && url !== undefined ? { view, volumes: [{ url, preset, placement: this.placementOf(first!) }] } : undefined;
+      return Array.isArray(preset.stops) && url !== undefined ? { view, volumes: [{ url, preset, placement: this.placementOf(first!) }], ...this.liveLight() } : undefined;
     }
     const volumes: LiveLook["volumes"] = [];
     for (const layer of this.renderedLayers()) {
       const url = this.sourceOf(layer);
       const preset = url !== undefined ? this.layerPreset(layer, url) : undefined;
-      if (url !== undefined && preset !== undefined) volumes.push({ url, preset, placement: this.placementOf(layer) });
+      if (url === undefined || preset === undefined) continue;
+      // Each its own crops and cuts (and all layers'): where one is cut away, the others are still there.
+      const { crop, clips } = this.cropsFor(layer, frame);
+      volumes.push({ url, preset, placement: this.placementOf(layer), crop, clips });
     }
-    return volumes.length > 0 ? { view, volumes } : undefined;
+    return volumes.length > 0 ? { view, volumes, ...this.liveLight() } : undefined;
+  }
+
+  /** The surroundings as the lighting style has them (else the preset's), at the strength set; whether the light turns with the camera. */
+  private liveLight(): Pick<LiveLook, "env" | "lightFollows"> {
+    const s = this.saved;
+    const style = LIGHTING[s.lightStyle];
+    return { env: { ...(style?.env ?? {}), scale: s.envScale }, lightFollows: s.lightFrom !== "scene" };
   }
 
   /** Presets placed on a level's values, by what they were placed from: placing one reads the level's percentiles. */
@@ -1865,24 +2137,27 @@ class AnatomicalRendering {
     return planeFromView(f.invViewProjection, this.lastCursor ?? f.position, name);
   }
 
-  /** A new camera plane through the tissue's centre, facing the camera, selected so its handles can move it at once. */
+  /** A new camera plane of the image's own, through the tissue's centre, facing the camera, selected so its handles can move it at once. */
   private addPlane(): void {
-    const names = new Set(this.saved.planes.map((p) => p.name));
-    let k = this.saved.planes.length + 1;
+    const scope = this.ownScope();
+    const list = cropsOf(this.saved, scope).planes;
+    const names = new Set(list.map((p) => p.name));
+    let k = list.length + 1;
     while (names.has(`Plane ${k}`)) k++;
     const f = this.lastFrame;
     const centre = f && this.tissueCentre(f);
     const p = f && centre ? planeFromView(f.invViewProjection, centre, `Plane ${k}`) : this.planeHere(`Plane ${k}`);
-    if (p === undefined || this.saved.planes.length >= LIMITS.maxClips) return;
-    this.save((x) => x.planes.push(p));
+    if (p === undefined || list.length >= LIMITS.maxClips) return;
+    this.save((x) => editCrops(x, scope, (c) => void c.planes.push(p)));
     this.syncShapes();
-    this.ctx.views.select(`plane${this.saved.planes.length - 1}`);
+    this.ctx.views.select(shapeId("plane", scope, list.length));
   }
 
   /** Sets a camera plane again, from the view now. */
-  private setPlaneToView(i: number): void {
-    const p = this.planeHere(this.saved.planes[i].name);
-    if (p !== undefined) this.save((x) => (x.planes[i] = p));
+  private setPlaneToView(scope: CropScope, i: number): void {
+    const was = cropsOf(this.saved, scope).planes[i];
+    const p = was && this.planeHere(was.name);
+    if (p !== undefined) this.save((x) => editCrops(x, scope, (c) => void (c.planes[i] = { ...p, on: was.on })));
   }
 
   /** A keyframe of the view now (and the look), `at` an index to replace, else added two seconds after the last. */
@@ -2537,118 +2812,146 @@ class AnatomicalRendering {
         const l = LIGHTING[v];
         if (l) [x.lightMap, x.envScale, x.lightKey] = [l.map, l.envScale, l.key];
       }), "Style");
-    lightStyle.update([["", "Custom"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], saved().lightStyle);
+    lightStyle.update([...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name]), ["", "Custom"]], saved().lightStyle);
+    const styleInfo = el("p", { class: "hint" });
+    const lightFrom = choices((v) => this.save((x) => (x.lightFrom = v as Saved["lightFrom"])), "Light from");
+    lightFrom.update([["front", "Front (from the camera)"], ["back", "Back (behind the object)"], ["scene", "A direction in the scene"]], saved().lightFrom);
     const around = slider(30, { min: -180, max: 180, step: 5, unit: "°", label: "Around", oninput: (v) => this.preview((x) => (x.lightAzimuth = v)), onchange: (v) => this.save((x) => (x.lightAzimuth = v)) });
     const up = slider(40, { min: -90, max: 90, step: 5, unit: "°", label: "Up", oninput: (v) => this.preview((x) => (x.lightElevation = v)), onchange: (v) => this.save((x) => (x.lightElevation = v)) });
+    // Fields whose names say what the angles are about (the camera, or the scene's axes).
+    const aroundName = el("span", {}, "Around");
+    const upName = el("span", {}, "Up");
+    const aroundField = el("label", { class: "field" }, aroundName, around);
+    const upField = el("label", { class: "field" }, upName, up);
+    const fix = button("Fix it in the scene", () => this.fixLight(), "Keep the light where it is now as the camera turns");
     const key = slider(1, { min: 0, max: 4, step: 0.05, label: "Key light", oninput: (v) => this.preview((x) => (x.lightKey = v)), onchange: (v) => this.save((x) => ((x.lightKey = v), (x.lightStyle = ""))) });
     const surroundings = slider(1, { min: 0, max: 3, step: 0.05, label: "Surroundings", oninput: (v) => this.preview((x) => (x.envScale = v)), onchange: (v) => this.save((x) => ((x.envScale = v), (x.lightStyle = ""))) });
     const lightMap = choices((v) => this.save((x) => (x.lightMap = v)), "Light map");
     const mapTurn = slider(0, { min: -180, max: 180, step: 5, unit: "°", label: "Turn the light map", oninput: (v) => this.preview((x) => (x.lightMapRotation = v)), onchange: (v) => this.save((x) => (x.lightMapRotation = v)) });
     const mapPart = el("div", { class: "stack" }, field("Light map", lightMap, { info: "HDR panoramas (CC0, Poly Haven), or the preset's sky colours." }), field("Turn", mapTurn));
     const lighting = card("anatomical.lighting", "Lighting", {},
-      onHost(field("Style", lightStyle)),
-      field("Around", around, { info: "The key light turns with the camera: 0 lights from the camera, 90 from the right, -90 from the left." }),
-      field("Up", up, { info: "90 lights from above, -90 from below." }),
-      onHost(field("Key light", key, { info: "The light that makes shadows." })),
-      onHost(field("Surroundings", surroundings, { info: "Light from all round: the light map, or the sky colours." })),
+      field("Style", lightStyle, { info: "Soft: even light from all round. Strong: one hard key light, deep shadows. Studio: a key light under a bright ceiling over a dark floor. Moving Key light or Surroundings makes it Custom." }),
+      styleInfo,
+      field("Light from", lightFrom, { info: "Front: the key light comes from the camera's side and turns with it. Back: from behind the object as the camera sees it (a rim of light), turning with the camera. A direction in the scene: fixed to the object as the camera turns." }),
+      aroundField,
+      upField,
+      el("div", { class: "row" }, fix),
+      field("Key light", key, { info: "The light that makes shadows." }),
+      field("Surroundings", surroundings, { info: "Light from all round: the style's colours, or the light map on a render computer." }),
       mapPart,
     );
 
     // --------------------------------------------------------------- Crops
+    // The image selected's own crops and cuts, and all layers' (each with All layers pressed): each image rendered is
+    // cut by its own and all layers', so where one is cut away the others are still there.
     const toCursor = button("Move to the cursor", () => {
       const o = this.cursorOffsets();
       if (!o) return ctx.ui.toast("Point at the tissue in the 3-D view first.", "error");
+      const names = this.lastFrame!.dimensions.names;
+      const cursor = this.lastCursor;
       this.save((x) => {
-        const names = this.lastFrame!.dimensions.names;
-        for (const c of x.cuts) {
-          const k = names.indexOf(c.axis);
-          if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
-        }
-        for (const p of x.planes) {
-          if (!p.on || !this.lastCursor) continue;
-          p.point = [this.lastCursor[0], this.lastCursor[1], this.lastCursor[2]];
-          p.offset = 0;
+        for (const scope of new Set([this.ownScope(), null])) {
+          editCrops(x, scope, (c) => {
+            for (const q of c.cuts) {
+              const k = names.indexOf(q.axis);
+              if (q.on && k >= 0 && k < 3) q.offset = o.axis[k];
+            }
+            for (const p of c.planes) {
+              if (!p.on || !cursor) continue;
+              p.point = [cursor[0], cursor[1], cursor[2]];
+              p.offset = 0;
+            }
+          });
         }
       });
     });
+    const cropsNote = el("p", { class: "hint" });
     // Camera planes: each a cut across the view as it was when set, fixed there; set again from the view now.
-    let planeControls: { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; offset: Slider }[] = [];
-    const planes = region((count: number) => {
+    type Row = { scope: CropScope; i: number };
+    let planeControls: (Row & { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; offset: Slider })[] = [];
+    const planes = region((rows: Row[]) => {
       planeControls = [];
-      return Array.from({ length: count }, (_, i) => {
-        const p = this.saved.planes[i];
-        const on = toggle(`Plane ${i + 1}`, p.on, (v) => this.save((x) => (x.planes[i].on = v)), { hideLabel: true });
-        const name = el("input", { class: "text-input ar-grow", type: "text", value: p.name, "aria-label": `Name of plane ${i + 1}` }) as Settable<HTMLInputElement, string>;
-        name.onchange = () => this.save((x) => (x.planes[i].name = name.value));
+      return rows.map(({ scope, i }, n) => {
+        const p = cropsOf(this.saved, scope).planes[i];
+        const edit = (f: (q: CameraPlane) => void) => (x: Saved) => editCrops(x, scope, (c) => f(c.planes[i]));
+        const on = toggle(`Plane ${n + 1}`, p.on, (v) => this.save(edit((q) => (q.on = v))), { hideLabel: true });
+        const name = el("input", { class: "text-input ar-grow", type: "text", value: p.name, "aria-label": `Name of plane ${n + 1}` }) as Settable<HTMLInputElement, string>;
+        name.onchange = () => this.save(edit((q) => (q.name = name.value)));
         name.set = (v) => {
           if (name.ownerDocument.activeElement !== name && name.value !== v) name.value = v;
         };
-        // Each edit makes new objects, so the state saved before (an undo step) keeps its planes.
-        const planeOffset = (v: number) => (x: Saved) => void (x.planes = x.planes.map((q, j) => (j === i ? { ...q, offset: v } : q)));
-        const offset = slider(p.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Plane ${i + 1} offset`, unbounded: true, oninput: (v) => this.preview(planeOffset(v)), onchange: (v) => this.save(planeOffset(v)) });
-        planeControls.push({ on, name, offset });
+        const offset = slider(p.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Plane ${n + 1} offset`, unbounded: true, oninput: (v) => this.preview(edit((q) => (q.offset = v))), onchange: (v) => this.save(edit((q) => (q.offset = v))) });
+        planeControls.push({ scope, i, on, name, offset });
         return el("div", { class: "ar-box" },
           el("div", { class: "row" }, on, name,
-            iconButton("camera", `Set plane ${i + 1} to the view now`, () => this.setPlaneToView(i)),
-            iconButton("trash", `Remove plane ${i + 1}`, () => this.save((x) => x.planes.splice(i, 1)))),
-          field("Offset", offset, { info: "Along the plane's own direction (away from the camera when it was set), from where it was set." }));
+            iconButton("camera", `Set plane ${n + 1} to the view now`, () => this.setPlaneToView(scope, i)),
+            iconButton("trash", `Remove plane ${n + 1}`, () => this.save((x) => editCrops(x, scope, (c) => void c.planes.splice(i, 1))))),
+          el("div", { class: "row" }, field("Offset", offset, { info: "Along the plane's own direction (away from the camera when it was set), from where it was set." }), this.allButton(scope === null, `Plane ${n + 1}`, () => this.shareItem("planes", scope, i))));
       });
     }, { class: "stack" });
     const addPlane = button("Add a camera plane", () => this.addPlane());
-    const clipNote = el("p", { class: "hint" }, `At most ${LIMITS.maxClips} cuts apply at once (camera planes and axis planes that are on): the first ones.`);
-    const cutControls = saved().cuts.map((c, i) => {
-      const on = checkbox(`Across ${c.axis}`, c.on, (v) =>
-        this.save((x) => {
-          x.cuts[i].on = v;
+    const clipNote = el("p", { class: "hint" }, `At most ${MAX_CLIPS} cuts apply to an image at once (its own camera and axis planes and all layers' that are on): the first ones.`);
+    const cutControls = saved().cuts.map((c0, i) => {
+      const edit = (f: (q: Cut) => void) => (x: Saved) => editCrops(x, this.cutScope(i), (s) => f(s.cuts[i]));
+      const on = checkbox(`Across ${c0.axis}`, false, (v) =>
+        this.save(edit((q) => {
+          q.on = v;
           // A cut turned on starts through the point the cursor was last over (the axis's display index).
           const o = v ? this.cursorOffsets() : undefined;
-          const k = this.lastFrame?.dimensions.names.indexOf(x.cuts[i].axis) ?? -1;
-          if (o && k >= 0 && k < 3) x.cuts[i].offset = o.axis[k];
-        }));
-      const side = select([["-1", "keep −"], ["1", "keep +"]], String(c.keep), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1)), `Side kept across ${c.axis}`);
-      const cutOffset = (v: number) => (x: Saved) => void (x.cuts = x.cuts.map((q, j) => (j === i ? { ...q, offset: v } : q)));
-      const offset = slider(c.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Offset across ${c.axis}`, unbounded: true, oninput: (v) => this.preview(cutOffset(v)), onchange: (v) => this.save(cutOffset(v)) });
-      return { on, side, offset, row: el("div", { class: "ar-cut" }, on, side, offset) };
+          const k = this.lastFrame?.dimensions.names.indexOf(q.axis) ?? -1;
+          if (o && k >= 0 && k < 3) q.offset = o.axis[k];
+        })));
+      const side = select([["-1", "keep −"], ["1", "keep +"]], String(c0.keep), (v) => this.save(edit((q) => (q.keep = Number(v) as 1 | -1))), `Side kept across ${c0.axis}`);
+      const offset = slider(c0.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Offset across ${c0.axis}`, unbounded: true, oninput: (v) => this.preview(edit((q) => (q.offset = v))), onchange: (v) => this.save(edit((q) => (q.offset = v))) });
+      const all = this.allButton(false, `The plane across ${c0.axis}`, () => this.shareCut(i, this.cutScope(i) !== null));
+      return { on, side, offset, all, row: el("div", { class: "ar-cut" }, on, side, offset, all) };
     });
-    let boxControls: { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; keep: Settable<HTMLSelectElement, string>; ends: [Slider, Slider][] }[] = [];
-    const boxes = region((count: number) => {
+    let boxControls: (Row & { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; keep: Settable<HTMLSelectElement, string>; ends: [Slider, Slider][] })[] = [];
+    const boxes = region((rows: Row[]) => {
       boxControls = [];
-      return Array.from({ length: count }, (_, i) => {
-        const b = this.saved.boxes[i];
-        const on = toggle(`Box ${i + 1}`, b.on, (v) => this.save((x) => (x.boxes[i].on = v)), { hideLabel: true });
-        const name = el("input", { class: "text-input ar-grow", type: "text", value: b.name, "aria-label": `Name of box ${i + 1}` }) as Settable<HTMLInputElement, string>;
-        name.onchange = () => this.save((x) => (x.boxes[i].name = name.value));
+      return rows.map(({ scope, i }, n) => {
+        const b = cropsOf(this.saved, scope).boxes[i];
+        const f = this.boxShown(scope, b) ?? { lo: [0, 0, 0], hi: [1, 1, 1] };
+        const edit = (g: (q: Crop) => void) => (x: Saved) => editCrops(x, scope, (c) => g(c.boxes[i]));
+        const on = toggle(`Box ${n + 1}`, b.on, (v) => this.save(edit((q) => (q.on = v))), { hideLabel: true });
+        const name = el("input", { class: "text-input ar-grow", type: "text", value: b.name, "aria-label": `Name of box ${n + 1}` }) as Settable<HTMLInputElement, string>;
+        name.onchange = () => this.save(edit((q) => (q.name = name.value)));
         name.set = (v) => {
           if (name.ownerDocument.activeElement !== name && name.value !== v) name.value = v;
         };
-        const keepIt = select([["keep", "keep inside"], ["cut", "cut out"]], b.keep ? "keep" : "cut", (v) => this.save((x) => (x.boxes[i].keep = v === "keep")), `Box ${i + 1} keeps`);
-        // One end of the box along an axis, kept 0.005 from the other; new objects, as for the planes.
-        const boxEnd = (end: "lo" | "hi", k: number, v: number) => (x: Saved) => {
-          x.boxes = x.boxes.map((q, j) => {
-            if (j !== i) return q;
-            const at: [number, number, number] = [q[end][0], q[end][1], q[end][2]];
-            at[k] = end === "lo" ? Math.min(v, q.hi[k] - 0.005) : Math.max(v, q.lo[k] + 0.005);
-            return { ...q, [end]: at };
-          });
+        const keepIt = select([["keep", "keep inside"], ["cut", "cut out"]], b.keep ? "keep" : "cut", (v) => this.save(edit((q) => (q.keep = v === "keep"))), `Box ${n + 1} keeps`);
+        // One end of the box along an axis (fractions of the image shown), kept 0.005 from the other.
+        const boxEnd = (end: "lo" | "hi", k: number, v: number, done: boolean) => {
+          const q = cropsOf(this.saved, scope).boxes[i];
+          const now = q && this.boxShown(scope, q);
+          if (now === undefined) return;
+          const lo = [...now.lo], hi = [...now.hi];
+          if (end === "lo") lo[k] = Math.min(v, hi[k] - 0.005);
+          else hi[k] = Math.max(v, lo[k] + 0.005);
+          this.setBox(scope, i, { lo, hi }, done);
         };
         const ends = (["x", "y", "z"] as const).map((axis, k): [Slider, Slider] => [
-          slider(b.lo[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} low ${axis}`, oninput: (v) => this.preview(boxEnd("lo", k, v)), onchange: (v) => this.save(boxEnd("lo", k, v)) }),
-          slider(b.hi[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} high ${axis}`, oninput: (v) => this.preview(boxEnd("hi", k, v)), onchange: (v) => this.save(boxEnd("hi", k, v)) }),
+          slider(f.lo[k], { min: 0, max: 1, step: 0.005, label: `Box ${n + 1} low ${axis}`, oninput: (v) => boxEnd("lo", k, v, false), onchange: (v) => boxEnd("lo", k, v, true) }),
+          slider(f.hi[k], { min: 0, max: 1, step: 0.005, label: `Box ${n + 1} high ${axis}`, oninput: (v) => boxEnd("hi", k, v, false), onchange: (v) => boxEnd("hi", k, v, true) }),
         ]);
-        boxControls.push({ on, name, keep: keepIt, ends });
+        boxControls.push({ scope, i, on, name, keep: keepIt, ends });
         return el("div", { class: "ar-box" },
-          el("div", { class: "row" }, on, name, keepIt, iconButton("trash", `Remove box ${i + 1}`, () => this.save((x) => x.boxes.splice(i, 1)))),
-          el("div", { class: "ar-box-axes" }, ...ends.flatMap(([lo, hi], k) => [el("span", {}, "xyz"[k]), lo, hi])));
+          el("div", { class: "row" }, on, name, keepIt, iconButton("trash", `Remove box ${n + 1}`, () => this.save((x) => editCrops(x, scope, (c) => void c.boxes.splice(i, 1))))),
+          el("div", { class: "ar-box-axes" }, ...ends.flatMap(([lo, hi], k) => [el("span", {}, "xyz"[k]), lo, hi])),
+          el("div", { class: "row" }, el("span", { class: "spacer" }), this.allButton(scope === null, `Box ${n + 1}`, () => this.shareItem("boxes", scope, i))));
       });
     }, { class: "stack" });
     const addBox = button("Add a box", () => {
-      if (this.saved.boxes.length >= LIMITS.maxBoxes) return;
-      this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
+      const scope = this.ownScope();
+      const list = cropsOf(this.saved, scope).boxes;
+      if (list.length >= LIMITS.maxBoxes) return;
+      this.save((x) => editCrops(x, scope, (c) => void c.boxes.push({ name: `Box ${c.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] })));
       // Selected, so its handles show at once (when the image's level is held here to place it).
       this.syncShapes();
-      this.ctx.views.select(`box${this.saved.boxes.length - 1}`);
+      this.ctx.views.select(shapeId("box", scope, list.length));
     });
-    const crops = card("anatomical.crops", "Crops", { info: `Camera planes, axis planes and boxes. A camera plane is a cut across the view as it is when the plane is added, through the point the cursor was last over in the 3-D view, keeping what lies beyond; it stays fixed as the camera moves, and the camera button sets it again from the view then. An axis plane turned on starts through the point the cursor was last over; Move to the cursor moves the planes that are on there. Boxes (up to ${LIMITS.maxBoxes}) are fractions of the volume along x, y and z; what shows is inside any box that keeps and in none that cuts out.` },
+    const crops = card("anatomical.crops", "Crops", { info: `The image selected in Layers: its own camera planes, axis planes and boxes, and those for all layers (All layers pressed), which cut every image rendered. Each image is cut by its own and all layers': where one is cut away, the others are still there. A camera plane is a cut across the view as it is when the plane is added, through the point the cursor was last over in the 3-D view, keeping what lies beyond; it stays fixed as the camera moves, and the camera button sets it again from the view then. An axis plane turned on starts through the point the cursor was last over; Move to the cursor moves the planes that are on there. Boxes (up to ${LIMITS.maxBoxes}) are fractions of the volume along x, y and z; what shows is inside any box that keeps and in none that cuts out.` },
+      cropsNote,
       el("div", { class: "row" }, toCursor),
       el("h4", { class: "section-title" }, "Camera planes"),
       planes,
@@ -2937,8 +3240,16 @@ class AnatomicalRendering {
       // Lighting.
       lighting.hidden = !scene;
       lightStyle.set(s.lightStyle);
+      styleInfo.textContent = LIGHTING[s.lightStyle]?.info ?? "Key light and surroundings as set.";
+      lightFrom.set(s.lightFrom);
       around.set(s.lightAzimuth);
       up.set(s.lightElevation);
+      const inScene = s.lightFrom === "scene";
+      aroundName.textContent = inScene ? "Around z" : "Around";
+      upName.textContent = inScene ? "Toward z" : "Up";
+      around.title = inScene ? "Degrees around the scene's z axis, from +x toward +y" : "0 lights from straight ahead, 90 from the right, -90 from the left";
+      up.title = inScene ? "90 lights from +z, -90 from -z" : "90 lights from above, -90 from below";
+      fix.hidden = inScene;
       key.set(s.lightKey);
       surroundings.set(s.envScale);
       const maps = this.serviceInfo?.lightmaps ?? [];
@@ -2948,29 +3259,42 @@ class AnatomicalRendering {
 
       // Crops.
       crops.hidden = !scene;
-      planes.update(s.planes.length);
-      planeControls.forEach((c, i) => {
-        const p = s.planes[i];
+      const cropName = this.cropLayer()?.name;
+      cropsNote.textContent = cropName ? `${cropName}'s own crops and cuts, and those for all layers.` : "Crops and cuts for all layers.";
+      const ownScope = this.ownScope();
+      const planeRows = this.cropRows("planes");
+      planes.update(planeRows);
+      planeControls.forEach((c) => {
+        const p = cropsOf(s, c.scope).planes[c.i];
+        if (p === undefined) return;
         c.on.set(p.on);
         c.name.set(p.name);
         c.offset.set(p.offset);
       });
-      addPlane.disabled = s.planes.length >= LIMITS.maxClips;
-      clipNote.hidden = s.planes.filter((p) => p.on).length + s.cuts.filter((c) => c.on).length <= LIMITS.maxClips;
+      addPlane.disabled = cropsOf(s, ownScope).planes.length >= LIMITS.maxClips;
+      const counted = (set: CropSet) => set.planes.filter((p) => p.on).length + set.cuts.filter((c) => c.on).length;
+      clipNote.hidden = counted(s) + (ownScope !== null ? counted(cropsOf(s, ownScope)) : 0) <= MAX_CLIPS;
       cutControls.forEach((c, i) => {
-        c.on.set(s.cuts[i].on);
-        c.side.set(String(s.cuts[i].keep));
-        c.offset.set(s.cuts[i].offset);
+        const scope = this.cutScope(i);
+        const q = cropsOf(s, scope).cuts[i];
+        c.on.set(q.on);
+        c.side.set(String(q.keep));
+        c.offset.set(q.offset);
+        c.all.setAttribute("aria-pressed", String(scope === null));
+        c.all.disabled = ownScope === null;
       });
-      boxes.update(s.boxes.length);
-      boxControls.forEach((c, i) => {
-        const b = s.boxes[i];
+      const boxRows = this.cropRows("boxes");
+      boxes.update(boxRows);
+      boxControls.forEach((c) => {
+        const b = cropsOf(s, c.scope).boxes[c.i];
+        if (b === undefined) return;
+        const f = this.boxShown(c.scope, b);
         c.on.set(b.on);
         c.name.set(b.name);
         c.keep.set(b.keep ? "keep" : "cut");
-        c.ends.forEach(([lo, hi], k) => (lo.set(b.lo[k]), hi.set(b.hi[k])));
+        if (f) c.ends.forEach(([lo, hi], k) => (lo.set(f.lo[k]), hi.set(f.hi[k])));
       });
-      addBox.disabled = s.boxes.length >= LIMITS.maxBoxes;
+      addBox.disabled = cropsOf(s, ownScope).boxes.length >= LIMITS.maxBoxes;
 
       // Output, Movie and Splat.
       output.hidden = movie.hidden = splat.hidden = !scene;

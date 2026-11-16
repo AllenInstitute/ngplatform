@@ -393,3 +393,29 @@ export function letterBasis(normal: Vec3, axes: Pick<Axes, "up" | "alt">): { rig
   const m = matrix(lookingFrom(normal, axes));
   return { right: [m[0], m[3], m[6]], down: [m[1], m[4], m[7]] };
 }
+
+/** A quarter turn of the object as the view shows it: left, right, up or down (its front going that way), or clockwise or anticlockwise on the screen. */
+export type QuarterTurn = "left" | "right" | "up" | "down" | "cw" | "ccw";
+
+/** The orientation after a quarter turn of the object as seen (the camera turning the other way about it). */
+export function quarterTurn(q: Quat, turn: QuarterTurn): Quat {
+  const r = toDisplay(q, [1, 0, 0]), d = toDisplay(q, [0, 1, 0]), f = toDisplay(q, [0, 0, 1]);
+  const neg = (v: Vec3): Vec3 => [-v[0], -v[1], -v[2]];
+  switch (turn) {
+    // Its right side comes to the front: the camera looks at it from its right.
+    case "left":
+      return fromBasis(f, d, neg(r));
+    case "right":
+      return fromBasis(neg(f), d, r);
+    // Its underside comes to the front.
+    case "up":
+      return fromBasis(r, f, neg(d));
+    case "down":
+      return fromBasis(r, neg(f), d);
+    // What was at the right of the screen goes to the bottom.
+    case "cw":
+      return fromBasis(neg(d), r, f);
+    case "ccw":
+      return fromBasis(d, neg(r), f);
+  }
+}

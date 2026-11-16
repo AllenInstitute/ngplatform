@@ -433,6 +433,8 @@ export interface FakeViewTools extends ViewToolsApi {
   looking: number[] | undefined;
   /** What `setAllHidden` last set. */
   hiddenAll: boolean;
+  /** What `setLabelsHidden` last set. */
+  hiddenLabels: boolean;
 }
 
 /**
@@ -455,6 +457,7 @@ export function fakeViewTools(options: { centre?: () => number[] } = {}): FakeVi
     shapes,
     looking: undefined,
     hiddenAll: false,
+    hiddenLabels: false,
     add(shape) {
       const id = shape.id;
       const token = {};
@@ -489,6 +492,9 @@ export function fakeViewTools(options: { centre?: () => number[] } = {}): FakeVi
       fake.hiddenAll = hidden;
     },
     allHidden: () => fake.hiddenAll === true,
+    setLabelsHidden: (hidden: boolean) => {
+      fake.hiddenLabels = hidden;
+    },
     drag(id, value, done = true) {
       const shape = shapes.get(id);
       if (shape === undefined) throw new Error(`no shape ${id}`);

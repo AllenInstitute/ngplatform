@@ -279,6 +279,81 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
   };
 }
 
+/** The vertices a chunk read and drawn as one should hold, on average, when a level's cells hold fewer. */
+export const GROUP_VERTICES = 8192;
+/** At most this many cells a side are read as one chunk (so at most 512 cells). */
+export const MAX_GROUP = 8;
+
+/**
+ * How many of a level's cells a side are read and drawn as one chunk: 1
+ * for a level whose cells hold GROUP_VERTICES or more on average, else
+ * enough that a group of g³ cells holds about that many (at most
+ * MAX_GROUP).  A store chunked finely for its size (a point cloud of 3.7 M
+ * cells in 9,152 cells of half a millimetre at every level, its coarse
+ * levels a few vertices a cell) would otherwise be thousands of tiny
+ * chunks, each one message, one panel update, three textures padded to a
+ * row of TEXTURE_WIDTH vertices and a draw call: the page stalls on them.
+ * A mesh's cells are never grouped (its faces and normals are per cell).
+ */
+export function cellGroup(vertexCount: number | undefined, cells: number, primitive: "points" | "lines" | "triangles"): number {
+  if (primitive === "triangles" || vertexCount === undefined || !(vertexCount > 0) || !(cells > 0)) return 1;
+  const mean = vertexCount / cells;
+  if (mean >= GROUP_VERTICES) return 1;
+  return Math.max(1, Math.min(MAX_GROUP, Math.round(Math.cbrt(GROUP_VERTICES / mean))));
+}
+
+/**
+ * Several cells' inputs as one (a group of cells, `cellGroup`): every
+ * cell's own vertices first, then every cell's copies of its neighbours'
+ * vertices (bridges, face corners), so `numOwnVertices` still counts the
+ * own ones; edges and faces follow their vertices.
+ */
+export function mergeInputs(parts: ChunkInput[]): ChunkInput {
+  if (parts.length === 1) return parts[0];
+  const own = parts.reduce((s, p) => s + Math.min(p.numOwnVertices, p.numVertices), 0);
+  const n = parts.reduce((s, p) => s + p.numVertices, 0);
+  const positions = new Float32Array(3 * n);
+  const segmentIds = new Uint32Array(2 * n);
+  const edges = new Uint32Array(parts.reduce((s, p) => s + p.edges.length, 0));
+  const faces = new Uint32Array(parts.reduce((s, p) => s + (p.faces?.length ?? 0), 0));
+  // Per attribute, the floats per vertex (the first part with vertices says).
+  const attributeCount = Math.max(0, ...parts.map((p) => p.attributes.length));
+  const widths = Array.from({ length: attributeCount }, (_, k) => {
+    const p = parts.find((q) => q.numVertices > 0 && q.attributes[k] !== undefined);
+    return p === undefined ? 0 : Math.round(p.attributes[k].length / p.numVertices);
+  });
+  const attributes = widths.map((w) => new Float32Array(w * n));
+  let ownAt = 0;
+  let ghostAt = own;
+  let edgeAt = 0;
+  let faceAt = 0;
+  for (const p of parts) {
+    const pOwn = Math.min(p.numOwnVertices, p.numVertices);
+    const map = new Uint32Array(p.numVertices);
+    for (let v = 0; v < p.numVertices; ++v) map[v] = v < pOwn ? ownAt + v : ghostAt + (v - pOwn);
+    for (let v = 0; v < p.numVertices; ++v) {
+      const to = map[v];
+      positions[3 * to] = p.positions[3 * v];
+      positions[3 * to + 1] = p.positions[3 * v + 1];
+      positions[3 * to + 2] = p.positions[3 * v + 2];
+      segmentIds[2 * to] = p.segmentIds[2 * v] ?? 0;
+      segmentIds[2 * to + 1] = p.segmentIds[2 * v + 1] ?? 0;
+      for (let k = 0; k < attributeCount; ++k) {
+        const w = widths[k];
+        const from = p.attributes[k];
+        for (let j = 0; j < w; ++j) attributes[k][w * to + j] = from !== undefined && from.length >= w * p.numVertices ? from[w * v + j] : NaN;
+      }
+    }
+    // An index past the part's vertices stays past them all (buildChunk drops it).
+    const remap = (i: number) => (i < p.numVertices ? map[i] : n);
+    for (let e = 0; e < p.edges.length; ++e) edges[edgeAt++] = remap(p.edges[e]);
+    for (const f of p.faces ?? []) faces[faceAt++] = remap(f);
+    ownAt += pOwn;
+    ghostAt += p.numVertices - pOwn;
+  }
+  return { numVertices: n, numOwnVertices: own, positions, segmentIds, edges, attributes, ...(faces.length > 0 ? { faces } : {}) };
+}
+
 /**
  * A layer's chosen objects read whole, by id (the Zarr Vectors reader's
  * `ObjectReader.readCurves`), as one chunk's input: each curve's vertices

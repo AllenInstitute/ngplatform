@@ -14,7 +14,7 @@ import type { Disposer, PlatformContext, PluginModule, ViewPanelInfo } from "@ng
 import { el } from "@ngplatform/sdk/dom";
 import { CameraMover, cameraNow } from "./camera.js";
 import { CUBE_SIZE, OrientationCube } from "./cube.js";
-import { type Axes, axesOf, FACES, lookingFrom, nearestStandard, readQuat, targetLetters, targetWords, type Vec3 } from "./geometry.js";
+import { type Axes, axesOf, FACES, lookingFrom, nearestStandard, quarterTurn, type QuarterTurn, readQuat, targetLetters, targetWords, type Vec3 } from "./geometry.js";
 import { PointLabels } from "./labels.js";
 import { type Bookmark, graphicsNow, graphicsOff, nextName, readSaved, type Saved, THUMB } from "./state.js";
 import { BookmarkStrip } from "./strip.js";
@@ -64,6 +64,7 @@ class ViewAids {
     this.cube = new OrientationCube({
       pick: (target) => void this.lookFrom(target),
       realign: () => void this.realign(),
+      turn: (how) => void this.turn(how),
       bookmark: () => void this.addBookmark(),
     });
     this.labels = new PointLabels(ctx);
@@ -87,6 +88,8 @@ class ViewAids {
         onChange: (v) => this.setGraphics(v),
       }),
     };
+    // Labels off hides every name drawn in the views: the zoom boxes' and other plugins' shapes' too.
+    ctx.views.setLabelsHidden?.(!this.saved.labels);
     this.offs.push(
       ctx.state.onChanged(() => {
         this.saved = readSaved(ctx.state.get());
@@ -94,6 +97,7 @@ class ViewAids {
         this.toggles.labels.set(this.saved.labels);
         this.toggles.graphics.set(this.saved.hidden === undefined);
         this.ctx.views.setAllHidden(this.saved.hidden !== undefined);
+        this.ctx.views.setLabelsHidden?.(!this.saved.labels);
         this.schedule();
       }),
       ctx.viewer.onRendered(() => this.schedule()),
@@ -116,6 +120,7 @@ class ViewAids {
     this.faceCommands.splice(0).forEach((off) => off());
     this.bookmarkCommands.splice(0).forEach((off) => off());
     for (const toggle of Object.values(this.toggles)) toggle.dispose();
+    this.ctx.views.setLabelsHidden?.(false);
     this.strip.dispose();
     this.fallback.element.remove();
     this.overlay.dispose();
@@ -259,6 +264,15 @@ class ViewAids {
   private lookFrom(target: Vec3): Promise<boolean> {
     this.stopPlaying();
     return this.mover.to({ projectionOrientation: lookingFrom(target, this.axes) }, TURN_MS);
+  }
+
+  /** A quarter turn of the object as seen, from where the view is turning to (else is). */
+  private turn(how: QuarterTurn): Promise<boolean> {
+    // Clicked again while turning: on from where the turn was going, so turns add up to whole quarters.
+    const going = this.mover.target?.projectionOrientation;
+    const from = going !== undefined ? readQuat(going) : this.orientation();
+    this.stopPlaying();
+    return this.mover.to({ projectionOrientation: quarterTurn(from, how) }, TURN_MS);
   }
 
   private realign(): Promise<boolean> {

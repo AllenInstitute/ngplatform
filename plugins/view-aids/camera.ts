@@ -115,8 +115,16 @@ export class CameraMover {
     return this.frame !== undefined;
   }
 
+  /** Where a move under way is going; undefined when none is. */
+  get target(): Camera | undefined {
+    return this.frame !== undefined ? this.goal : undefined;
+  }
+
+  private goal: Camera | undefined;
+
   to(target: Camera, ms: number): Promise<boolean> {
     this.stop();
+    this.goal = target;
     const from = cameraNow(this.ctx);
     const layoutChanges = target.layout !== undefined && JSON.stringify(target.layout) !== JSON.stringify(from.layout);
     const write = (camera: Camera, withLayout: boolean) => this.ctx.viewer.patchState((ng) => writeCamera(ng, camera, withLayout));

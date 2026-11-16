@@ -4,6 +4,11 @@ export const STYLE = `
 .view-aids-cube { position: absolute; width: 64px; display: grid; gap: var(--sp-2); pointer-events: none; }
 .view-aids-cube-canvas { display: block; pointer-events: auto; }
 .view-aids-cube-buttons { display: flex; justify-content: center; gap: var(--sp-1); }
+.view-aids-cube-turns { display: grid; grid-template-columns: repeat(3, 20px); justify-content: center; gap: 2px; pointer-events: auto; }
+.view-aids-cube-turns .btn.icon { width: 20px; height: 20px; min-width: 0; min-height: 0; padding: 0; border: 1px solid var(--line); background: var(--ink-2); color: var(--text-dim); pointer-events: auto; }
+.view-aids-cube-turns .btn.icon:hover { background: var(--ink-3); color: var(--text); border-color: var(--line-hover); }
+.view-aids-cube-turns .btn.icon svg { width: 14px; height: 14px; }
+.view-aids-cube-turns .btn.icon:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .view-aids-cube-buttons .btn.icon, .view-aids-strip > .btn.icon {
   pointer-events: auto; width: 24px; height: 24px; min-width: 24px; padding: 0;
   background: var(--ink-1); border: 1px solid var(--line); color: var(--muted);

@@ -289,7 +289,7 @@ export class View2d {
       // More of the chosen objects' lines near the section than the Detail: a sample of them,
       // whole.  The pieces in the slab are thicker than it (half a level-0 chunk): about the
       // slab's share of their lines show.
-      const piece = Math.min(...info.levels[0].chunkShape) / 2;
+      const piece = Math.min(...info.levels[0].chunkShape) / (2 * (info.levels[0].group ?? 1));
       const slabShare = m.slab > 0 ? Math.min(1, (2 * m.slab) / piece) : 1;
       const samples = sets.length > 0 ? samplesFor(sets, inSlab, (style.detail * 1e6) / slabShare) : SAMPLES;
       fewest = Math.min(fewest, samples);

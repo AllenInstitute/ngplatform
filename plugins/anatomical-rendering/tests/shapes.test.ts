@@ -38,17 +38,39 @@ describe("cuts in the views", () => {
 
   it("shows the planes that are on, and moves a camera plane along its normal by its offset", async () => {
     const plane = { name: "Plane 1", on: true, normal: [0, 0, 1] as [number, number, number], point: [1, 2, 3] as [number, number, number], offset: 0 };
-    const { f } = await rendering({ planes: [plane, { ...plane, name: "Plane 2", on: false }] });
-    expect(f.views.shapes.get("plane0")).toMatchObject({ kind: "plane", point: [1, 2, 3], normal: [0, 0, 1], label: "Plane 1" });
-    expect(f.views.shapes.has("plane1")).toBe(false);
-    f.views.drag("plane0", { point: [1, 2, 7], normal: [0, 0, 1] }, false);
+    // All layers' planes (a state of before), beside the image's own.
+    const { f } = await rendering({ planes: [plane, { ...plane, name: "Plane 2", on: false }], looks: { brain: { planes: [{ ...plane, name: "Own", point: [4, 5, 6] }] } } });
+    expect(f.views.shapes.get("planeall0")).toMatchObject({ kind: "plane", point: [1, 2, 3], normal: [0, 0, 1], label: "Plane 1 (all layers)" });
+    expect(f.views.shapes.has("planeall1")).toBe(false);
+    expect(f.views.shapes.get("plane0")).toMatchObject({ point: [4, 5, 6], label: "Own" });
+    f.views.drag("planeall0", { point: [1, 2, 7], normal: [0, 0, 1] }, false);
     // While dragged: not written.
     expect(saved(f).planes[0].offset).toBe(0);
-    f.views.drag("plane0", { point: [1, 2, 8], normal: [0, 0, 1] }, true);
+    f.views.drag("planeall0", { point: [1, 2, 8], normal: [0, 0, 1] }, true);
     expect(saved(f).planes[0]).toMatchObject({ offset: 5, point: [1, 2, 3] });
     // Turned about where it passes.
-    f.views.drag("plane0", { point: [1, 2, 8], normal: [1, 0, 0] }, true);
+    f.views.drag("planeall0", { point: [1, 2, 8], normal: [1, 0, 0] }, true);
     expect(saved(f).planes[0].normal).toEqual([1, 0, 0]);
+    // The image's own, written to its own.
+    f.views.drag("plane0", { point: [4, 5, 8], normal: [0, 0, 1] }, true);
+    expect(saved(f).looks.brain.planes![0]).toMatchObject({ offset: 2, point: [4, 5, 6] });
+    expect(saved(f).planes[0].offset).toBe(5);
+  });
+
+  it("moves a plane to all layers and back with its All layers button", async () => {
+    const { f, host } = await rendering();
+    dom.find(host, "button", "Add a camera plane").click();
+    expect(saved(f).looks.brain.planes).toHaveLength(1);
+    expect(saved(f).planes).toHaveLength(0);
+    const all = () => [...host.querySelectorAll("button")].filter((b) => b.textContent === "All layers" && b.getAttribute("title")?.startsWith("Plane 1"));
+    expect(all()[0].getAttribute("aria-pressed")).toBe("false");
+    all()[0].click();
+    expect(saved(f).looks.brain.planes).toHaveLength(0);
+    expect(saved(f).planes).toHaveLength(1);
+    expect(all()[0].getAttribute("aria-pressed")).toBe("true");
+    all()[0].click();
+    expect(saved(f).looks.brain.planes).toHaveLength(1);
+    expect(saved(f).planes).toHaveLength(0);
   });
 
   it("moves an axis plane by its offset from the position, without turning it", async () => {
@@ -66,7 +88,9 @@ describe("cuts in the views", () => {
   it("starts a new camera plane facing the camera, selected", async () => {
     const { f, host } = await rendering();
     dom.find(host, "button", "Add a camera plane").click();
-    expect(saved(f).planes).toHaveLength(1);
+    // The image's own.
+    expect(saved(f).looks.brain.planes).toHaveLength(1);
+    expect(saved(f).planes).toHaveLength(0);
     expect(f.views.selected()).toBe("plane0");
     expect(f.views.shapes.get("plane0")).toMatchObject({ kind: "plane", label: "Plane 1" });
   });

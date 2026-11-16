@@ -34,6 +34,9 @@ larger than its far ones and it matches the data's turn at any angle.
   Neuroglancer's own way up.
 - **Realign** (the cube button below it) turns to the nearest of the six
   standard views. **Bookmark** (beside it) keeps the view (below).
+- **Quarter turns** (the arrows below): turn the data 90° left, right, up
+  or down as you see it, or clockwise or anticlockwise on the screen.
+  Clicked again while turning, the turns add up to whole quarters.
 - The palette has *3-D view: look from …* for each face and *3-D view:
   realign*.
 
@@ -49,7 +52,8 @@ with a thin line to its point.
 - When a side is full, the points nearest you keep their labels.
 - Labels are drawn into captures and Neuroglancer's screenshots; the cube
   and the strip are not.
-- **Labels** beside **Sections** shows or hides them.
+- **Labels** beside **Sections** shows or hides them, and with them every
+  name drawn beside a shape in the views (the zoom boxes' names, say).
 - Only annotations kept in the layer (local annotation layers) are read,
   not precomputed annotation sources. A point hidden behind tissue is not
   greyed.

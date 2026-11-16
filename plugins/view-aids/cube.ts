@@ -4,10 +4,11 @@
  * (CUBE_EYE), its faces lettered by the data's sides (R/L, A/P, S/I,
  * else ±x, ±y, ±z), each letter turned by quarters to read upright.  Under the pointer a face, an edge or a corner lights
  * up; a click turns the view to look at it.  Below it, Realign (to the
- * nearest standard view) and Bookmark.
+ * nearest standard view) and Bookmark, and quarter turns of the object
+ * (left, right, up, down, and about the view's axis).
  */
 import { el, iconButton, viewInk } from "@ngplatform/sdk/dom";
-import { type Axes, letterBasis, pickCube, projectCube, type Quat, shownOrientation, targetLetters, targetWords, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
+import { type Axes, letterBasis, pickCube, projectCube, type Quat, type QuarterTurn, shownOrientation, targetLetters, targetWords, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
 
 /** The cube's picture, CSS pixels square, and its half-size in it. */
 export const CUBE_SIZE = 64;
@@ -21,6 +22,7 @@ export interface CubeActions {
   pick(target: Vec3): void;
   realign(): void;
   bookmark(): void;
+  turn(how: QuarterTurn): void;
 }
 
 export class OrientationCube {
@@ -44,6 +46,17 @@ export class OrientationCube {
         { class: "view-aids-cube-buttons" },
         iconButton("realign", "Realign: turn to the nearest standard view", () => actions.realign()),
         iconButton("bookmark", "Bookmark this view", () => actions.bookmark()),
+      ),
+      // Quarter turns of the object as seen: on the screen, then left, up, down and right.
+      el(
+        "div",
+        { class: "view-aids-cube-turns" },
+        iconButton("rotate-ccw", "Turn 90° anticlockwise", () => actions.turn("ccw")),
+        iconButton("arrow-up", "Turn 90° up", () => actions.turn("up")),
+        iconButton("rotate-cw", "Turn 90° clockwise", () => actions.turn("cw")),
+        iconButton("arrow-left", "Turn 90° left", () => actions.turn("left")),
+        iconButton("arrow-down", "Turn 90° down", () => actions.turn("down")),
+        iconButton("arrow-right", "Turn 90° right", () => actions.turn("right")),
       ),
     );
     this.canvas.addEventListener("pointermove", (e) => this.setHover(this.pick(e)));

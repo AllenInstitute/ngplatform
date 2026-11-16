@@ -251,6 +251,7 @@
   --t-fast: 120ms;       /* a control's own change: a switch, a chevron */
   --t: 200ms;            /* a part that grows or moves: a progress bar */
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --t-panel: 240ms;      /* a column opening or shutting, the views gliding with it */
 }
 /* Sheets and the top bar are the larger context. */
 .sheet, .topbar { --ctl-h: var(--ctl-h-sheet); --ctl-fs: var(--fs-control); font-size: var(--fs-control); }
@@ -307,6 +308,10 @@ input[type="checkbox"].switch::after {
 input[type="checkbox"].switch:checked { background: var(--on); }
 input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: var(--accent-ink); }
 input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
+
+/* The columns' widths as lengths, so a column opening or shutting eases (.panels-ease) and the views glide with it. */
+@property --lw { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --tw { syntax: "<length>"; inherits: true; initial-value: 0px; }
 
 .app {
   --lw: var(--left, 300px);
@@ -1395,6 +1400,20 @@ textarea.state-input.tall { min-height: 50vh; }
   /* A half-width window: the left column takes at most a third, so the views keep room. */
   .app:not(.left-collapsed) { --lw: min(var(--left, 300px), 34vw); }
   .app:not(.left-collapsed):not(.tools-collapsed):not(.tools-empty) { --tw: min(var(--tools, 320px), 34vw); }
+  .app.panels-ease .workspace > .side:not(.side-tools) > .dock:not(.collapsed) { min-width: calc(min(var(--left, 300px), 34vw) - 1px); }
+  .app.panels-ease .workspace > .side-tools > .dock:not(.collapsed) { min-width: calc(min(var(--tools, 320px), 34vw) - 1px); }
+}
+/* Columns opening and shutting: their widths ease (Neuroglancer's views resize with them each frame, so the data
+   glides rather than jumps), and an opening column's contents keep their width and are uncovered, not squeezed.
+   A drag follows the pointer at once; with reduced motion, and on a phone (where the column floats), no easing. */
+@media (min-width: 521px) and (prefers-reduced-motion: no-preference) {
+  .app.panels-ease { transition: --lw var(--t-panel) var(--ease-out), --tw var(--t-panel) var(--ease-out); }
+  .app.panels-ease.resizing { transition: none; }
+  .app.panels-ease .workspace > .side { overflow: hidden; }
+}
+@media (min-width: 761px) and (prefers-reduced-motion: no-preference) {
+  .app.panels-ease .workspace > .side:not(.side-tools) > .dock:not(.collapsed) { min-width: calc(var(--left, 300px) - 1px); }
+  .app.panels-ease .workspace > .side-tools > .dock:not(.collapsed) { min-width: calc(var(--tools, 320px) - 1px); }
 }
 @media (max-width: 520px) {
   /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */

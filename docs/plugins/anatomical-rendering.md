@@ -157,14 +157,23 @@ takes images with one of each only.
   again.
 - **Density** (opacity per mm), **Exposure** and the other settings are
   sliders with their numbers beside them (a budget applies when its slider
-  is let go); and the key light's direction
-  (set relative to the camera; it then stays fixed to the image as you turn
-  the view about it, until you set it again).
-- **Lighting** (on a host): a style, **Studio** (a photographer's studio),
-  **Soft** (light from all round, faint shadows), **Hard** (one strong light,
-  deep shadows) or **Sky** (daylight), or as set by hand: the key light's
-  direction (around the view and up, sliders, from the camera when set) and
-  the strengths of the key light and of the light from all round.
+  is let go).
+- **Each image its own**: the panel shows the image selected in Layers.
+  Its **Render on / Render off**, preset, colourmap, density and crops are
+  its own. Up to five images switched on are drawn as one volume (an
+  overview with its volumes of interest, placed by their transforms);
+  where they overlap both are there, their opacities adding, so cutting
+  one away leaves the others whole.
+- **Lighting**: a style, **Soft** (light from all round, faint shadows),
+  **Strong** (one strong key light, deep shadows) or **Studio** (a key
+  light under a bright ceiling over a dark floor), or Custom once the key
+  light or surroundings are moved. **Light from**: **Front** (from the
+  camera's side) or **Back** (from behind the image as the camera sees it,
+  a rim of light), both turning with the camera, **Around** and **Up**
+  from it; or **A direction in the scene**, fixed to the image as you turn
+  (**Around z** from +x toward +y, **Toward z**). **Fix it in the scene**
+  keeps the light where it is now. **Key light** and **Surroundings** set
+  their strengths.
 - **Light map** (on a host): image-based light from an HDR panorama
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
   reduced to 256 × 128), turned about the view's vertical; or the preset's
@@ -176,10 +185,16 @@ takes images with one of each only.
   D, V and the like for other anatomy) and keep superior up; otherwise they
   are named by axis (**+x**, **−x**, …: from +x looks towards −x; in RAS,
   +x is right, +y anterior and +z superior).
+- **Crops of each image**: the Crops card shows the selected image's own
+  boxes and planes, which cut it alone, and those for all layers. **All
+  layers** beside one moves it to every image switched on (pressed), or
+  back to this image alone.
 - **Boxes** (Crops): as many as eight, each with a name, a switch, keeping
   its inside or cutting it out (fractions of the volume along x, y and z,
-  sliders): what shows is inside any crop that keeps and in none that cuts
-  out (in this browser's renderer, only the first that keeps).
+  sliders; a box for all layers is kept in millimetres and shown as
+  fractions of the image selected): what shows is inside any crop that
+  keeps and in none that cuts out (in this browser's renderer, the box
+  about those that keep).
 - **Camera planes** (Crops): **Add a camera plane** cuts across the view as
   it is now, through the tissue's centre, keeping what lies beyond it, and
   selects it so it can be dragged at once. The plane stays where it was
@@ -187,8 +202,8 @@ takes images with one of each only.
   then. There can be several, each named, on or off, with an offset in mm
   along its own direction, and removed with its bin. **Move to the cursor**
   moves the planes (and axis planes) that are on to the point the cursor
-  was last over in the 3-D view. At most six cuts apply at once (camera
-  planes and axis planes that are on).
+  was last over in the 3-D view. At most six cuts apply to an image at
+  once (its own camera and axis planes and all layers' that are on).
 - **Axis planes** (Crops): clips through the current position across x, y or z, keeping
   either side, with an offset in mm (a slider or a number). Regions listed under **Kept whole** (Regions)
   stay whole (vessels through a cut brain, say).

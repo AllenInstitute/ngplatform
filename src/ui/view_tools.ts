@@ -240,6 +240,8 @@ export class ViewTools {
   private order = 0;
   /** Hide graphics: no shape is drawn or taken, and the card is hidden, until shown again. */
   private hiddenAll = false;
+  /** Labels off: shapes are drawn without their names and captions. */
+  private hiddenLabels = false;
   private readonly offs: Disposer[] = [];
 
   constructor(private readonly host: ViewToolsHost) {
@@ -288,6 +290,7 @@ export class ViewTools {
       lookingAt: () => this.lookingAt(),
       setAllHidden: (hidden) => this.setAllHidden(hidden),
       allHidden: () => this.hiddenAll,
+      setLabelsHidden: (hidden) => this.setLabelsHidden(hidden),
     };
   }
 
@@ -450,6 +453,13 @@ export class ViewTools {
     this.hover = undefined;
     if (this.card !== undefined) this.card.element.hidden = hidden;
     this.updateCursors();
+    this.redraw();
+  }
+
+  /** Draws shapes without their names and captions (View aids' Labels switch), or with them again. */
+  setLabelsHidden(hidden: boolean): void {
+    if (this.hiddenLabels === hidden) return;
+    this.hiddenLabels = hidden;
     this.redraw();
   }
 
@@ -947,7 +957,7 @@ export class ViewTools {
         context.strokeRect(Math.round(d.point[0] - 7) + 0.5, Math.round(d.point[1] - 7) + 0.5, 14, 14);
       }
     }
-    if (d.label !== undefined) {
+    if (d.label !== undefined && !this.hiddenLabels) {
       context.font = LOOK.font;
       context.textBaseline = "middle";
       context.lineWidth = 3;
@@ -959,7 +969,7 @@ export class ViewTools {
       context.fillText(d.label.text, x, y);
     }
     const caption = d.entry.shape.caption;
-    if (caption !== undefined && d.lines.length > 0) {
+    if (caption !== undefined && d.lines.length > 0 && !this.hiddenLabels) {
       // At the top left of what is drawn, above it (inside it when that is off the top).
       const points = d.lines.flatMap((l) => l.points);
       const left = Math.min(...points.map((p) => p[0]));

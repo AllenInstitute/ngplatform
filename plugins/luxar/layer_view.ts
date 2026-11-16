@@ -39,6 +39,9 @@ export interface LayerDrawing {
   table: boolean;
 }
 
+/** How often, at most, chunks arriving update the panel (ms). */
+export const STATUS_MS = 100;
+
 export class LayerView {
   readonly client: StoreClient;
   private handle: { redraw(): void; dispose(): void };
@@ -101,7 +104,7 @@ export class LayerView {
     );
     this.client.onChunk = () => {
       this.redraw();
-      this.onStatus?.();
+      this.statusSoon();
     };
     void this.client.ready.then(
       () => {
@@ -394,7 +397,24 @@ export class LayerView {
     this.view2d.setVisible(visible);
   }
 
+  /**
+   * The panel told of chunks arriving at most every STATUS_MS: a store of
+   * thousands of chunks answers thousands of times, and each update reads
+   * the viewer's state (all of its layers) to bring the panel up to date.
+   */
+  private statusSoon(): void {
+    if (this.statusTimer !== undefined) return;
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = undefined;
+      if (!this.disposed) this.onStatus?.();
+    }, STATUS_MS);
+  }
+
+  private statusTimer: ReturnType<typeof setTimeout> | undefined;
+
   dispose(): void {
+    clearTimeout(this.statusTimer);
+    this.statusTimer = undefined;
     this.disposed = true;
     this.offs.forEach((off) => off());
     this.handle.dispose();

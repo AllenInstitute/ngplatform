@@ -26,6 +26,23 @@ The production polish: the work of an audit of every panel and plugin
   extra tilt, so its faces match the view.
 - Luxar places images by their source transforms.
 
+### Crops and light per image, quarter turns, gliding columns
+
+- Anatomical rendering's crops, camera planes and axis planes belong to
+  the image selected; **All layers** beside one cuts every image switched
+  on. Images drawn together are both there where they overlap (their
+  opacities add), so cutting the overview leaves a volume of interest
+  whole. Older links' crops apply to all layers.
+- Lighting: **Soft**, **Strong** and **Studio** styles, now in the browser
+  too; the key light from the **Front** or **Back** (turning with the
+  camera) or a direction fixed in the scene (**Fix it in the scene**).
+- Quarter-turn buttons under the view cube (left, right, up, down,
+  clockwise, anticlockwise). **Labels** off also hides the names beside
+  shapes in the views (the zoom boxes').
+- The left columns ease open and shut, the views gliding with them.
+- Luxar on a large point store (Zarr Vectors with many small cells) reads
+  its cells in groups and no longer freezes the browser.
+
 ### One left column, views first
 
 - The Tools dock on the right is gone: the tools that are on are a section

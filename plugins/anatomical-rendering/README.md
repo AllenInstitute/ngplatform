@@ -83,10 +83,17 @@ Its light is held in it: a coarser 3-D texture (at most 96 cells a side)
 of how much of the light reaches each cell and of the light arriving there
 from all round, path-traced as the path tracer does (a path from each cell
 scattering up to three times, the light at each scattering, the
-surroundings where it leaves), eight layers a frame over 48 passes. The
-light keeps the direction it had (from the camera) when it was set, so it
-stays fixed to the object as the camera goes round it; changing the
-light, the preset or a cut path-traces it again. Until the first two
+surroundings where it leaves), eight layers a frame over 48 passes. A
+light fixed in the scene stays so as the camera goes round; one from the
+camera (front or back) is held again once the camera rests, short rays
+standing in while it moves. Changing the light, the preset or a cut
+path-traces it again.
+
+Several images are one volume: each its own level, table, material, crop
+(a box in its own voxels) and cuts. Where they overlap their extinctions
+add; a sample's colour, gradient and surface are each image's in its
+share of the extinction, lit once with the material of the one with the
+most. A ray steps a voxel of the finest image it is in. Until the first two
 passes are done, short rays toward the light and along the normal stand
 in. The Quality card says how far it has got ("light 12 of 47 passes").
 

@@ -9,6 +9,7 @@ import {
   nearestStandard,
   pickCube,
   projectCube,
+  quarterTurn,
   type Quat,
   shownOrientation,
   slerp,
@@ -223,5 +224,32 @@ describe("the cube as shown", () => {
         expect(t.every((v, i) => v === 0 || v === Math.sign(inside[i]))).toBe(true);
       }
     }
+  });
+});
+
+describe("quarter turns", () => {
+  const near = (a: number[], b: number[]) => a.forEach((x, i) => expect(x).toBeCloseTo(b[i], 6));
+  const axes = (q: Quat) => ({ r: toDisplay(q, [1, 0, 0]), d: toDisplay(q, [0, 1, 0]), f: toDisplay(q, [0, 0, 1]) });
+
+  it("turns the object a quarter as seen, and back", () => {
+    const q: Quat = [0.2, -0.4, 0.1, 0.89];
+    const a = axes(q);
+    // Left: what was on the right faces the camera.
+    near(axes(quarterTurn(q, "left")).f, a.r.map((x) => -x));
+    near(axes(quarterTurn(q, "left")).d, a.d);
+    // Up: the underside faces the camera.
+    near(axes(quarterTurn(q, "up")).f, a.d.map((x) => -x));
+    // Clockwise: the screen's right goes down, the view's direction kept.
+    near(axes(quarterTurn(q, "cw")).d, a.r);
+    near(axes(quarterTurn(q, "cw")).f, a.f);
+    for (const [there, back] of [["left", "right"], ["up", "down"], ["cw", "ccw"]] as const) {
+      const r = axes(quarterTurn(quarterTurn(q, there), back));
+      near(r.r, a.r);
+      near(r.d, a.d);
+    }
+    // Four make a whole turn.
+    let p = q;
+    for (let i = 0; i < 4; ++i) p = quarterTurn(p, "up");
+    near(axes(p).f, a.f);
   });
 });

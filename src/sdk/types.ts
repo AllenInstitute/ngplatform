@@ -697,6 +697,12 @@ export interface ViewToolsApi {
    */
   setAllHidden(hidden: boolean): void;
   allHidden(): boolean;
+  /**
+   * Hides the names and captions drawn beside every plugin's shapes (a
+   * zoom box's name, say), the shapes still drawn: View aids' Labels
+   * switch.  Not saved.
+   */
+  setLabelsHidden?(hidden: boolean): void;
 }
 
 /** One frame of the 3-D view, as a plugin draws into it. */

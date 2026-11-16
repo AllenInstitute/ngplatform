@@ -110,14 +110,57 @@ export function planeClip(p: CameraPlane, d: Dimensions): [number, number, numbe
   return [n[0], n[1], n[2], -(n[0] * q[0] + n[1] * q[1] + n[2] * q[2])];
 }
 
-/** Lighting styles: the light map and how strong it is, and the key light's strength. */
-export const LIGHTING: Record<string, { name: string; map: string; envScale: number; key: number }> = {
-  studio: { name: "Studio", map: "photo-studio", envScale: 1.0, key: 1.0 },
-  soft: { name: "Soft (diffuse, faint shadows)", map: "studio", envScale: 1.7, key: 0.25 },
-  hard: { name: "Hard (one strong light, deep shadows)", map: "studio", envScale: 0.2, key: 2.2 },
-  sky: { name: "Sky (daylight)", map: "sky", envScale: 1.0, key: 1.2 },
-  plain: { name: "The preset's own (sky colours)", map: "", envScale: 1.0, key: 1.0 },
+/**
+ * Lighting styles: the key light's strength, the surroundings' strength and colours (above, at and below the
+ * horizon, as this browser draws them), and the light map a render computer uses for them.
+ */
+export interface LightingStyle {
+  name: string;
+  info: string;
+  map: string;
+  envScale: number;
+  key: number;
+  env: { top: number[]; horizon: number[]; bottom: number[] };
+}
+
+export const LIGHTING: Record<string, LightingStyle> = {
+  soft: {
+    name: "Soft",
+    info: "Light from all round and a faint key light: even, with soft, faint shadows.",
+    map: "studio",
+    envScale: 1.6,
+    key: 0.45,
+    env: { top: [0.95, 0.95, 0.97], horizon: [0.82, 0.82, 0.84], bottom: [0.55, 0.54, 0.52] },
+  },
+  strong: {
+    name: "Strong",
+    info: "One strong key light and little else: deep shadows that show the shape.",
+    map: "studio",
+    envScale: 0.25,
+    key: 2.4,
+    env: { top: [0.8, 0.85, 0.95], horizon: [0.45, 0.45, 0.5], bottom: [0.06, 0.06, 0.06] },
+  },
+  studio: {
+    name: "Studio",
+    info: "A key light with a bright ceiling and a dark floor: a photographer's studio.",
+    map: "photo-studio",
+    envScale: 1.0,
+    key: 1.3,
+    env: { top: [1.15, 1.12, 1.08], horizon: [0.42, 0.42, 0.45], bottom: [0.04, 0.04, 0.05] },
+  },
 };
+
+/** A direction fixed in the scene (display coordinates) from degrees around z (from +x toward +y) and up toward +z. */
+export function sceneDirection(around: number, up: number): [number, number, number] {
+  const a = (around * Math.PI) / 180, e = (up * Math.PI) / 180;
+  return [Math.cos(a) * Math.cos(e), Math.sin(a) * Math.cos(e), Math.sin(e)];
+}
+
+/** The degrees around z and up toward z of a direction in the scene (whole degrees). */
+export function sceneAngles(d: readonly number[]): { around: number; up: number } {
+  const l = Math.hypot(d[0], d[1], d[2]) || 1;
+  return { around: Math.round((Math.atan2(d[1], d[0]) * 180) / Math.PI), up: Math.round((Math.asin(Math.max(-1, Math.min(1, d[2] / l))) * 180) / Math.PI) };
+}
 
 /** A direction in camera space (x right, y up, z towards the viewer) from azimuth and elevation in degrees. */
 export function lightDirection(azimuth: number, elevation: number): [number, number, number] {
