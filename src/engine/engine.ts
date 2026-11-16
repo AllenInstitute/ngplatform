@@ -155,6 +155,7 @@ export const LAYOUTS: [string, string][] = [
  * inside a layer-change dispatch makes Neuroglancer drop the layer.
  */
 /** A segment id no store uses: the temporary set that hides a segmentation layer's drawing. */
+// No object has this id, so a layer's drawing shows nothing; the Zarr Vectors layer reads nothing then (its NO_OBJECT).
 const HIDDEN_SEGMENTS = new BigUint64Array([0xffffffffffffffffn]);
 const segmentColourScratch = new Float32Array(4);
 

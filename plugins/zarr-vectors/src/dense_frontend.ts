@@ -59,8 +59,10 @@ import {
   denseLevelSpacing,
   DRAWS_2D,
   DRAWS_3D,
+  NO_OBJECT,
   perChunkLevels,
   regionDrawn,
+  selectionOf,
   selectDense3dChunks,
   selectDenseLevel,
   setNodePosition,
@@ -1274,13 +1276,19 @@ function denseDrawState(
   isSliceView: boolean,
 ) {
   const groupState = displayState.segmentationGroupState.value;
+  const visible = getVisibleSegments(groupState);
+  const size = visible.hashTable.size;
   return {
     visibleAlpha: isSliceView
       ? displayState.selectedAlpha.value
       : displayState.objectAlpha.value,
     notSelectedAlpha: displayState.notSelectedAlpha.value,
-    numVisibleSegments: getVisibleSegments(groupState).hashTable.size,
-    ignoreNullVisibleSet: displayState.ignoreNullVisibleSet.value,
+    // The layer hidden while a plugin draws it: nothing chosen, so no chunk is read.
+    ...selectionOf(
+      size,
+      size === 1 && visible.has(NO_OBJECT),
+      displayState.ignoreNullVisibleSet.value,
+    ),
     objectsDrawnElsewhere: displayState.objectsDrawnElsewhere.value,
   };
 }

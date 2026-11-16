@@ -67,6 +67,8 @@ export interface LiveLook {
 export interface LiveVolumeSpec {
   url: string;
   preset: LivePreset;
+  /** The table to draw with (TF_SIZE RGBA entries), else the preset's at the level's values; `key` names it. */
+  table?: { rgba: Float32Array; key: string };
   placement?: ArrayLike<number>;
   crop?: [number[], number[]] | null;
   clips?: number[][];
@@ -221,6 +223,7 @@ precision highp sampler3D;
 ${each((k) => `uniform sampler3D uVol${k};\nuniform highp sampler3D uOcc${k};`)}
 uniform sampler2D uTf;
 uniform bool uHasOcc[N];
+uniform bool uLabelled[N];
 uniform mat4 uVoxFromWorld[N];
 uniform vec3 uDims[N];
 uniform float uDensity[N];
@@ -260,10 +263,16 @@ struct Ray {
 float tex(int k, vec3 v) {
   ${chain((k) => `return texture(uVol${k}, (v + 0.5) / uDims[${k}]).r;`, "return 0.0;")}
 }
+// A voxel's label (0..1: label / 255) in a labelled volume (a point cloud's groups), the voxel nearest v.
+float labelAt(int k, vec3 v) {
+  ${chain((k) => `return texelFetch(uVol${k}, ivec3(clamp(floor(v + 0.5), vec3(0.0), uDims[${k}] - 1.0)), 0).g;`, "return 0.0;")}
+}
 bool occupied(int k, vec3 cell) {
   ${chain((k) => `return texelFetch(uOcc${k}, ivec3(clamp(cell, vec3(0.0), vec3(textureSize(uOcc${k}, 0) - 1))), 0).r != 0.0;`, "return true;")}
 }
 vec4 tf(int k, float t) { return texture(uTf, vec2((clamp(t, 0.0, 1.0) * ${TF_SIZE - 1}.0 + 0.5) / ${TF_SIZE}.0, (float(k) + 0.5) / float(N))); }
+// The colour of volume k at voxel point v, whose table entry there is c: a labelled volume's its label's.
+vec3 colourAt(int k, vec3 v, vec4 c) { return uLabelled[k] ? tf(k, labelAt(k, v)).rgb : c.rgb; }
 vec3 grad(int k, vec3 v) {
   return vec3(tex(k, v + vec3(1.0, 0.0, 0.0)) - tex(k, v - vec3(1.0, 0.0, 0.0)),
               tex(k, v + vec3(0.0, 1.0, 0.0)) - tex(k, v - vec3(0.0, 1.0, 0.0)),
@@ -598,7 +607,7 @@ void main() {
       if (sk <= 0.0) continue;
       vec3 g = grad(k, v);
       s += sk;
-      albedo += sk * c.rgb * uAlbedo[k];
+      albedo += sk * colourAt(k, v, c) * uAlbedo[k];
       gw += sk * worldGrad(k, g);
       edge += sk * (1.0 - exp(-uGradScale[k] * length(g)));
       if (sk > most) {
@@ -649,7 +658,8 @@ vec3 incoming(vec3 w, vec3 dir) {
   for (int bounce = 0; bounce < 3; ++bounce) {
     int k;
     if (!collide(w, k, dir, 1.5)) return L + thr * env(dir);
-    thr *= tf(k, tex(k, voxOf(k, w))).rgb * uAlbedo[k];
+    vec3 vk = voxOf(k, w);
+    thr *= colourAt(k, vk, tf(k, tex(k, vk))) * uAlbedo[k];
     L += thr * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG[k]) * lightAt(w));
     dir = hgdir(dir, uPhaseG[k]);
   }
@@ -749,10 +759,10 @@ void main() {
     }
     if (bounce == 0) alpha = 1.0;
     vec3 v = voxOf(k, w);
-    vec3 albedo = tf(k, tex(k, v)).rgb * uAlbedo[k];
+    vec3 albedo = colourAt(k, v, tf(k, tex(k, v))) * uAlbedo[k];
     vec3 g = grad(k, v);
     float gm = length(g);
-    if (uInset[k] > 0.0 && gm > 1e-6) {
+    if (uInset[k] > 0.0 && gm > 1e-6 && !uLabelled[k]) {
       // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
       vec3 d = g * (uInset[k] / gm);
       vec4 ca = tf(k, tex(k, v + d));
@@ -1039,8 +1049,8 @@ export class LiveVolume {
     if (program === undefined) return false;
 
     // Each image's level on the GPU, and its table's row and clear bricks.
-    const tables = shown.map(({ vol, spec }) => liveTable(spec.preset, vol.level!));
-    const tfKeys = shown.map(({ vol, spec }) => JSON.stringify([vol.url, vol.level!.path, spec.preset.domain, spec.preset.stops, spec.preset.window ?? null]));
+    const tables = shown.map(({ vol, spec }) => spec.table?.rgba ?? liveTable(spec.preset, vol.level!));
+    const tfKeys = shown.map(({ vol, spec }) => JSON.stringify([vol.url, vol.level!.path, spec.table?.key ?? null, spec.table ? null : [spec.preset.domain, spec.preset.stops, spec.preset.window ?? null]]));
     shown.forEach(({ vol }, i) => this.upload(gl, vol, tables[i], tfKeys[i]));
     const drawn: Drawn[] = shown.map(({ vol, spec }) => ({ vol, q: liveParams(look.view, spec.preset, vol.level!, spec.placement, { crop: spec.crop, clips: spec.clips, env: look.env }) }));
     const primary = drawn[0].q;
@@ -1156,7 +1166,12 @@ export class LiveVolume {
     if (v.uploaded !== level) {
       gl.activeTexture(gl.TEXTURE0 + UNIT.vol);
       gl.bindTexture(gl.TEXTURE_3D, v.tex);
-      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, level.size[0], level.size[1], level.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, level.data);
+      if (level.labels !== undefined) {
+        // Occupancy and label in one texture (red, green): the label read voxel by voxel, never blended.
+        const rg = new Uint8Array(level.data.length * 2);
+        for (let i = 0; i < level.data.length; ++i) [rg[2 * i], rg[2 * i + 1]] = [level.data[i], level.labels[i]];
+        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG8, level.size[0], level.size[1], level.size[2], 0, gl.RG, gl.UNSIGNED_BYTE, rg);
+      } else gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, level.size[0], level.size[1], level.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, level.data);
       v.uploaded = level;
       v.occKey = undefined;
     }
@@ -1206,6 +1221,7 @@ export class LiveVolume {
     gl.uniform1fv(u("uSpecular"), each((x) => x.specular));
     gl.uniform1fv(u("uInset"), each((x) => x.inset));
     gl.uniform1iv(u("uHasOcc"), new Int32Array(s.drawn.map((d) => (d.vol.bounds !== undefined ? 1 : 0))));
+    gl.uniform1iv(u("uLabelled"), new Int32Array(s.drawn.map((d) => (d.vol.level?.labels !== undefined ? 1 : 0))));
     // Each volume's crop (a box in its voxels) and cuts.
     gl.uniform3fv(u("uCropLo"), new Float32Array(s.drawn.flatMap((d) => d.q.cropLo)));
     gl.uniform3fv(u("uCropHi"), new Float32Array(s.drawn.flatMap((d) => d.q.cropHi)));

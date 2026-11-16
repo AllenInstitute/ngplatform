@@ -358,8 +358,14 @@ the budget:
 cell atlas, a tractogram, a surface), is rendered by itself: it is the
 scene, in an empty volume about it, with the panel's lighting, quality,
 crops, stills and movies. The image's own settings (its choice, density,
-window, the colourmap editor, the jar, regions) are hidden. It needs a
-render computer.
+window, the colourmap editor, the jar, regions) are hidden. A render
+computer draws any kind as exact geometry. This browser draws a point
+cloud: the finest level within 1.5 million points, each point a small
+sphere in a grid of at most 32 million voxels, coloured as the layer
+colours it (its Vertex colour's groups, in the store's colours or the
+palette's, the groups not shown left out), lit and path-traced as an
+image is. Neuroglancer's own drawing of the layer is hidden meanwhile.
+Lines and surfaces still need a render computer.
 
 Cuts and crops apply to objects as to the volume. Stills and movies
 draw them too. This browser's renderer does not draw objects yet.

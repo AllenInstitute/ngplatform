@@ -58,7 +58,8 @@ export class StoreClient {
 
   constructor(
     readonly storeUrl: string,
-    options: { adopt?: StoreClient; headers?: readonly AuthHeader[] } = {},
+    /** `attributes`: vertex attributes the store is opened with (a point cloud's group and colour, say); else none. */
+    options: { adopt?: StoreClient; headers?: readonly AuthHeader[]; attributes?: readonly string[] } = {},
   ) {
     this.worker = options.adopt?.handOff() ?? new Worker(new URL("./luxar_worker.ts", import.meta.url), { type: "module", name: "luxar" });
     let opened!: (info: StoreInfo) => void;
@@ -128,7 +129,7 @@ export class StoreClient {
       this.requested.clear();
       this.onChunk?.();
     };
-    this.worker.postMessage({ type: "open", storeUrl, epoch: this.epoch, headers: options.headers ?? [] });
+    this.worker.postMessage({ type: "open", storeUrl, epoch: this.epoch, headers: options.headers ?? [], attributes: options.attributes ?? [] });
     this.objects = new ObjectSets((key, plan, ids) => {
       if (!this.detached) this.worker.postMessage({ type: "objects", key, level: plan.level, mode: plan.mode, ids, scalar: this.scalar }, [ids.buffer]);
     });

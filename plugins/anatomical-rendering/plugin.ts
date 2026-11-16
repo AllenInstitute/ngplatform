@@ -21,6 +21,8 @@ import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX
 import { placementMm } from "../luxar/view_math.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
+import { type PointsLevel, pointsTable, readPoints } from "./points.js";
+import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, sceneDirection, sceneAngles, renderSource, planeClip, planeFromView, safeHref, unitMm, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
@@ -931,6 +933,10 @@ class AnatomicalRendering {
     this.watchObjects();
     const found = this.target();
     const browser = this.saved.where === "browser";
+    // A point cloud drawn here: Neuroglancer's own drawing of it hidden once the object shows (it then reads nothing).
+    const alone = this.vectorsAlone();
+    const pointsShown = this.saved.on && browser && alone !== undefined && found?.name === alone.name && this.points?.level !== undefined && this.live.levelOf(this.sourceOf(alone)!) === this.points.level;
+    this.hidePointsDrawing(pointsShown ? alone.name : undefined);
     // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
     const target = found !== undefined && this.axesOf(found).problem === undefined ? found : undefined;
     if (!this.saved.on || target === undefined || (!browser && this.serviceInfo === undefined)) {
@@ -957,11 +963,10 @@ class AnatomicalRendering {
       });
     }
     if (browser && target.name === this.vectorsAlone()?.name) {
-      // This browser's renderer draws images only: a Zarr Vectors layer alone needs a render computer.
+      // A Zarr Vectors point cloud alone: its points as a volume of small spheres, drawn here as an image is.
       this.closeLocal();
       this.closeSession();
-      this.problem = "A Zarr Vectors layer without an image renders on a render computer (Remote: Where).";
-      this.statusUpdate?.();
+      this.ensurePoints(target);
     } else if (browser) {
       this.closeSession();
       // Several images: drawn together as one volume, each read here (this browser's path tracer takes one).
@@ -981,6 +986,61 @@ class AnatomicalRendering {
     }
     this.handle?.redraw();
     this.panelUpdate?.();
+  }
+
+  /** The layer whose own drawing is hidden while its points are drawn here. */
+  private pointsHidden: string | undefined;
+
+  private hidePointsDrawing(name: string | undefined): void {
+    if (name === this.pointsHidden) return;
+    if (this.pointsHidden !== undefined) this.ctx.viewer.hideLayerDrawing(this.pointsHidden, false);
+    this.pointsHidden = name;
+    if (name !== undefined) this.ctx.viewer.hideLayerDrawing(name, true);
+  }
+
+  /** A point cloud read in this browser: what it was read for (store, colours, voxels), and the grid once made. */
+  private points: { key: string; level?: PointsLevel; text: string; failed?: boolean } | undefined;
+
+  /**
+   * Reads a Zarr Vectors layer's points (once for its store, its Vertex colour and the voxels) and makes them a
+   * volume the object draws: the live object's level for the layer's source.
+   */
+  private ensurePoints(layer: LayerInfo): void {
+    const src = this.sourceOf(layer)!;
+    // The store as the reader opens it (gs:// and s3:// as https), as Luxar reads it.
+    const store = storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
+    const look = this.lookOf(layer);
+    const voxels = Math.min(this.saved.objectVoxels, 32e6);
+    const key = JSON.stringify([store, look?.by === "group" ? look.group : null, voxels]);
+    if (this.points?.key === key) {
+      if (this.points.level && this.live.levelOf(src) !== this.points.level) this.live.setLevel(this.points.level, src);
+      return;
+    }
+    const mine: NonNullable<typeof this.points> = { key, text: "Object: reading the points" };
+    this.points = mine;
+    this.problem = "";
+    const say = (text: string) => {
+      if (this.points !== mine) return;
+      mine.text = `Object: ${text}`;
+      this.statusUpdate?.();
+    };
+    void readPoints(store, look, voxels, say, () => this.points !== mine).then(
+      (level) => {
+        if (this.points !== mine) return;
+        mine.level = level;
+        mine.text = `Object: ${level.path} as ${level.size.join(" × ")} voxels`;
+        this.live.setLevel(level, src);
+        this.update();
+      },
+      (e: Error) => {
+        if (this.points !== mine || e.message === "stale") return;
+        mine.failed = true;
+        mine.text = "";
+        this.problem = `The points could not be read: ${e.message}`;
+        this.statusUpdate?.();
+      },
+    );
+    this.statusUpdate?.();
   }
 
   /** The layers that can be objects: precomputed segmentations (their chosen segments) and Zarr Vectors stores (their geometry). */
@@ -2028,8 +2088,20 @@ class AnatomicalRendering {
       return Array.isArray(preset.stops) && url !== undefined ? { view, volumes: [{ url, preset, placement: this.placementOf(first!) }], ...this.liveLight() } : undefined;
     }
     const volumes: LiveLook["volumes"] = [];
-    for (const layer of this.renderedLayers()) {
+    // The images switched on; a Zarr Vectors point cloud alone when there is no image.
+    const alone = this.images().length === 0 ? this.vectorsAlone() : undefined;
+    for (const layer of alone ? [alone] : this.renderedLayers()) {
       const url = this.sourceOf(layer);
+      const level = url !== undefined ? this.live.levelOf(url) : undefined;
+      if (url !== undefined && level?.labels !== undefined) {
+        // A point cloud: its spheres opaque within, each in its group's colour, at its density.
+        const colours = (level as PointsLevel).colours;
+        const density = this.densityOf(layer) ?? 400;
+        const preset = { name: "Points", domain: "data", stops: [], density, exposure: this.saved.exposure, shade_mix: 0.9, gradient_scale: 12, roughness: 0.4, specular: 0.2, albedo: 0.9, phase_g: 0, surface_inset: 0 } as unknown as LivePreset;
+        const { crop, clips } = this.cropsFor(layer, frame);
+        volumes.push({ url, preset, table: { rgba: pointsTable(colours), key: JSON.stringify(colours) }, placement: this.placementOf(layer), crop, clips });
+        continue;
+      }
       const preset = url !== undefined ? this.layerPreset(layer, url) : undefined;
       if (url === undefined || preset === undefined) continue;
       // Each its own crops and cuts (and all layers'): where one is cut away, the others are still there.
@@ -2541,6 +2613,7 @@ class AnatomicalRendering {
     if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
     if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
     if (!host && this.local && !this.local.ready && this.localText) return { progress: this.localText };
+    if (!host && this.points !== undefined && this.points.level === undefined && !this.points.failed && this.vectorsAlone() !== undefined) return { progress: this.points.text.replace(/^Object: /, "") };
     return {};
   }
 
@@ -2702,12 +2775,13 @@ class AnatomicalRendering {
     // Whose settings follow: the image selected in the Layers panel.
     const editingNote = el("p", { class: "hint" });
     const densityField = field("Density", density, { info: "How opaque the tissue is: higher gives crisper surfaces, lower more translucent ones." });
+    const presetRow = el("div", { class: "row" },
+      field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
+      button("Load…", () => this.loadPresetFile()));
     const rendering = card("anatomical.rendering", "Rendering", { open: true },
       imageNote,
       volumePart,
-      el("div", { class: "row" },
-        field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
-        button("Load…", () => this.loadPresetFile())),
+      presetRow,
       references,
       windowPart,
       editorPart,
@@ -3191,6 +3265,8 @@ class AnatomicalRendering {
       regions.hidden = !onHost_ || imgs.length === 0;
       jar.hidden = !onHost_ || alone;
       densityField.hidden = alone;
+      // A point cloud drawn here has no preset: its spheres are coloured as the layer colours its points.
+      presetRow.hidden = alone && this.saved.where === "browser";
       regionsEmpty.hidden = segs.length > 0;
       regionsBody.hidden = segs.length === 0;
       segmentation.update(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0]?.name ?? "");
@@ -3344,6 +3420,7 @@ class AnatomicalRendering {
 
   dispose(): void {
     this.disposed = true;
+    this.hidePointsDrawing(undefined);
     this.objectsWatch?.off();
     this.panelUpdate = this.statusUpdate = this.jobsUpdate = this.editorUpdate = undefined;
     this.closeSession();

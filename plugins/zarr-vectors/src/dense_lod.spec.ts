@@ -18,6 +18,8 @@ import { describe, expect, it } from "vitest";
 import { mat4 } from "neuroglancer/unstable/util/geom.js";
 import {
   denseLayerDraws,
+  NO_OBJECT,
+  selectionOf,
   levelDensities,
   selectDenseLevel,
 } from "./dense_lod.js";
@@ -224,5 +226,25 @@ describe("a cross-section's level", () => {
     expect(deep).toBeGreaterThan(whole);
     // Zoomed in to cells (5 um a pixel), a thin slab: the finest.
     expect(selectDenseLevel(section(0.005, 10), sources, densities, 1, true)).toBe(0);
+  });
+});
+
+describe("a layer hidden while a plugin draws it", () => {
+  it("reads its one no-object id as nothing chosen, so nothing is read", () => {
+    const hidden = selectionOf(1, true, true);
+    expect(hidden).toEqual({ numVisibleSegments: 0, ignoreNullVisibleSet: false });
+    expect(
+      denseLayerDraws({ visibleAlpha: 1, notSelectedAlpha: 0, objectsDrawnElsewhere: false, ...hidden }),
+    ).toBe(false);
+    // Its faint objects shown would still be drawn.
+    expect(
+      denseLayerDraws({ visibleAlpha: 1, notSelectedAlpha: 0.2, objectsDrawnElsewhere: false, ...hidden }),
+    ).toBe(true);
+  });
+  it("keeps any other selection as it is", () => {
+    expect(selectionOf(0, false, true)).toEqual({ numVisibleSegments: 0, ignoreNullVisibleSet: true });
+    expect(selectionOf(2, true, true)).toEqual({ numVisibleSegments: 2, ignoreNullVisibleSet: true });
+    expect(selectionOf(1, false, true)).toEqual({ numVisibleSegments: 1, ignoreNullVisibleSet: true });
+    expect(NO_OBJECT).toBe(2n ** 64n - 1n);
   });
 });

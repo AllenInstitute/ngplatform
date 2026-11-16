@@ -41,7 +41,11 @@ The production polish: the work of an audit of every panel and plugin
   shapes in the views (the zoom boxes').
 - The left columns ease open and shut, the views gliding with them.
 - Luxar on a large point store (Zarr Vectors with many small cells) reads
-  its cells in groups and no longer freezes the browser.
+  its cells in groups and no longer freezes the browser; and while Luxar
+  draws a Zarr Vectors layer, Neuroglancer no longer reads it as well.
+- Anatomical rendering draws a Zarr Vectors point cloud on its own (a cell
+  atlas) in this browser: each point a small lit, path-traced sphere in
+  its group's colour as the layer colours it; no render computer needed.
 
 ### One left column, views first
 

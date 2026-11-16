@@ -52,6 +52,28 @@ export interface DenseDrawState {
 }
 
 /**
+ * The id the platform's engine shows alone to hide a segmentation layer's
+ * drawing while a plugin draws it instead (its `hideLayerDrawing`): no
+ * object has it, so a visible set of it alone shows nothing.
+ */
+export const NO_OBJECT = 0xffffffffffffffffn;
+
+/**
+ * The selection as {@link denseLayerDraws} reads it: a visible set of
+ * {@link NO_OBJECT} alone is nothing chosen, and not the empty selection
+ * that shows every object.
+ */
+export function selectionOf(
+  size: number,
+  hasNoObject: boolean,
+  ignoreNullVisibleSet: boolean,
+): { numVisibleSegments: number; ignoreNullVisibleSet: boolean } {
+  return size === 1 && hasNoObject
+    ? { numVisibleSegments: 0, ignoreNullVisibleSet: false }
+    : { numVisibleSegments: size, ignoreNullVisibleSet };
+}
+
+/**
  * Whether the dense layer would draw anything for a view: what its shader
  * is told (`beginLayer`), decided before any chunk is requested. Nothing
  * shows when every vertex would be drawn at alpha 0: objects not selected

@@ -22,7 +22,7 @@
  * reader's object index (`ObjectReader`): a batch of ids at a time, built
  * as one chunk (its segments sorted into pieces of space, for culling).
  *
- * Messages in:  { type: "open", storeUrl, epoch, headers }   headers: the sign-in's (precomputed_meshes.AuthHeader)
+ * Messages in:  { type: "open", storeUrl, epoch, headers, attributes? }   headers: the sign-in's (precomputed_meshes.AuthHeader); attributes: vertex attributes to read (else none)
  *               { type: "want", keys, scalar }    keys "<level>|x.y.z" (a chunk: LevelInfo.group cells a side); scalar as styles.scalarOf
  *               { type: "objects", key, level, mode, ids, scalar }   mode "curves" | "skeletons"
  *               { type: "cancelObjects" }         the objects being read are no longer wanted
@@ -210,7 +210,7 @@ function reset(): void {
   objectReaders.clear();
 }
 
-async function open(storeUrl: string, headers: AuthHeader[]): Promise<StoreInfo> {
+async function open(storeUrl: string, headers: AuthHeader[], attributes: string[] = []): Promise<StoreInfo> {
   const at = epoch;
   const meshes = parseMeshStoreUrl(storeUrl);
   let opening: ZarrVectorsStoreAccess;
@@ -230,7 +230,7 @@ async function open(storeUrl: string, headers: AuthHeader[]): Promise<StoreInfo>
   }
   // Listing where the server allows it: a mesh's faces that span chunks are found only so.
   else opening = httpAccess(storeUrl, { listing: true });
-  const opened = await openZarrVectorsStore(opening, []);
+  const opened = await openZarrVectorsStore(opening, attributes);
   // Another store was opened meanwhile: this one is not used.
   if (at !== epoch) throw new Superseded();
   access = opening;
@@ -390,7 +390,7 @@ self.onmessage = (event: MessageEvent) => {
   if (msg.type === "open") {
     reset();
     epoch = msg.epoch ?? epoch + 1;
-    open(msg.storeUrl, msg.headers ?? []).then(
+    open(msg.storeUrl, msg.headers ?? [], Array.isArray(msg.attributes) ? msg.attributes : []).then(
       (info) => post({ type: "opened", info }),
       (e) => {
         if (!(e instanceof Superseded)) post({ type: "error", message: (e as Error).message ?? String(e), signIn: (e as { signIn?: boolean }).signIn === true });
