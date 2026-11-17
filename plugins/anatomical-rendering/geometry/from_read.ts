@@ -1,5 +1,5 @@
 /**
- * A layer's geometry, as read (points.ts readPoints), as primitives to
+ * A layer's geometry, as read (points.ts readGeometry), as primitives to
  * trace: a mesh's triangles, points as spheres, lines as tubes. A mesh's
  * objects take their segments' colours as the frame draws them; points'
  * and lines' are coloured once, as the layer colours them (by group, else

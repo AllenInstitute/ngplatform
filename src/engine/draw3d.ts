@@ -4,6 +4,11 @@
  * opaque pass, depth-tested with everything else there.  The plugin gets
  * the WebGL2 context and the frame's matrices, and writes the panel's three
  * outputs itself (colour, depth, pick id).
+ *
+ * A drawer may pick segments (Frame3d.registerPicks): each segmentation
+ * layer it picks in gets a render layer that draws nothing, against which
+ * the segments' pick IDs are registered, so Neuroglancer takes a picked ID
+ * as that layer's segment.
  */
 import type { Drawer3d, Frame3d } from "../sdk/types.js";
 import {
@@ -59,10 +64,20 @@ setPerspectiveSectionClip((renderContext) => {
   return undefined;
 });
 
+/** A render layer that draws nothing: the segments a drawer picks are its layer's through it. */
+class PickRenderLayer extends PerspectiveViewRenderLayer {
+  isReady(): boolean {
+    return true;
+  }
+
+  draw(): void {}
+}
+
 class PluginRenderLayer extends PerspectiveViewRenderLayer {
   constructor(
     private readonly gl: WebGL2RenderingContext,
     private readonly drawer: Drawer3d,
+    private readonly picker?: (renderContext: PerspectiveViewRenderContext, layer: string, segments: readonly bigint[]) => number,
   ) {
     super();
     // Read by a Neuroglancer that can draw a layer after its sections; others ignore it.
@@ -77,7 +92,8 @@ class PluginRenderLayer extends PerspectiveViewRenderLayer {
     // Only the colour pass: the drawer writes all three outputs at once.
     if (!renderContext.emitColor) return;
     const { gl } = this;
-    const frame: Frame3d = { gl, ...frameOf(renderContext) };
+    const picker = this.picker;
+    const frame: Frame3d = { gl, ...frameOf(renderContext), ...(picker ? { registerPicks: (layer: string, segments: readonly bigint[]) => picker(renderContext, layer, segments) } : {}) };
     drewIn.set(this, { frame: renderContext.frameNumber, projection: renderContext.projectionParameters });
     try {
       this.drawer.draw(frame);
@@ -106,6 +122,29 @@ export function draw3d(viewer: Viewer, name: string, drawer: Drawer3d): { redraw
   let managed: ManagedUserLayer | undefined;
   let attached: { user: UserLayer; layer: PluginRenderLayer } | undefined;
   let offManaged: (() => void) | undefined;
+  // The pick layers added for this drawer, by the user layer they are in.
+  const pickers = new Map<UserLayer, PickRenderLayer>();
+  const picker = (renderContext: PerspectiveViewRenderContext, name: string, segments: readonly bigint[]): number => {
+    const ids = (renderContext as { pickIDs?: { registerUint64(l: unknown, x: bigint, count?: number): number } }).pickIDs;
+    const user = viewer.layerManager.getLayerByName(name)?.layer ?? undefined;
+    if (ids === undefined || user == null || segments.length === 0) return 0;
+    const pl = pickers.get(user);
+    if (pl === undefined || !user.renderLayers.includes(pl)) {
+      // Added between frames (not while this one is drawn): picked from the next.
+      if (pl === undefined) {
+        const made = new PickRenderLayer();
+        pickers.set(user, made);
+        queueMicrotask(() => {
+          if (pickers.get(user) === made && !user.wasDisposed) user.addRenderLayer(made);
+        });
+      }
+      return 0;
+    }
+    // Consecutive: one ID a segment.
+    const first = ids.registerUint64(pl, segments[0]);
+    for (let i = 1; i < segments.length; ++i) ids.registerUint64(pl, segments[i]);
+    return first;
+  };
   // The drawer outlives each render layer: only the last one disposes it.
   const keep: Drawer3d = {
     draw: (f) => drawer.draw(f),
@@ -130,7 +169,7 @@ export function draw3d(viewer: Viewer, name: string, drawer: Drawer3d): { redraw
     if (attached?.user === user) return;
     detach();
     if (user == null) return;
-    const layer = new PluginRenderLayer(viewer.display.gl as unknown as WebGL2RenderingContext, keep);
+    const layer = new PluginRenderLayer(viewer.display.gl as unknown as WebGL2RenderingContext, keep, picker);
     // Before adding it: adding it changes the layer, which calls sync again.
     attached = { user, layer };
     user.addRenderLayer(layer);
@@ -143,6 +182,8 @@ export function draw3d(viewer: Viewer, name: string, drawer: Drawer3d): { redraw
       offLayers();
       offManaged?.();
       detach();
+      for (const [user, pl] of pickers) if (!user.wasDisposed && user.renderLayers.includes(pl)) user.removeRenderLayer(pl);
+      pickers.clear();
       drawer.dispose?.();
     },
   };

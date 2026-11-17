@@ -1,47 +1,20 @@
 /**
- * A Zarr Vectors point cloud (cells of a spatial atlas, say) as a volume
- * this browser's renderer can draw: an 8-bit grid of how near each voxel
- * is to the nearest point (drawn as a sphere a voxel in radius; a mesh's
- * surface as a shell about a voxel thick), and each voxel the group (a
- * cell type, a class) of that point, coloured as the layer colours it
- * (its Vertex colour: the store's colour for each group, or a palette's;
- * the groups not shown left out).  The grid is then drawn, lit and path
- * traced as an image is, cut by its own crops, and drawn together with
- * images as one volume.
- *
- * The points are read by Luxar's reader (its worker and chunk building),
- * at the finest level within POINTS_MAX points.
+ * A Zarr Vectors store (or a segmentation's meshes) read for this browser's
+ * path tracer: one level's built chunks, by Luxar's reader (its worker and
+ * chunk building), at the finest level within the geometry budget, with
+ * how its points are grouped and coloured. geometry/from_read.ts makes
+ * them primitives: triangles, spheres and tubes.
  */
 import { type ColourByLook, groupPalette, unpackRgb } from "@ngplatform/sdk/colour_by";
 import type { BuiltChunk } from "../luxar/chunk_build.js";
 import { keyOf } from "../luxar/chunks.js";
 import { StoreClient, type StoreInfo } from "../luxar/client.js";
 import { chunkRange, chunksIn } from "../luxar/view_math.js";
-import { type Level8, TF_SIZE } from "./local/local.js";
 import { httpAccess, openZarrVectorsStore } from "neuroglancer-zarr-vectors/reader";
 import { readShaderObjectValues } from "../zarr-vectors/src/objects.js";
 
-/** The most points read. */
-export const POINTS_MAX = 1.5e6;
-/** The most voxels of the grid, and its longest side. */
-const GRID_VOXELS = 64e6;
-const GRID_SIDE = 2048;
-/** How far (voxels) a point's distance is kept: the most a point's radius can be drawn. */
-const BAND = 2;
-/** A point's radius as drawn (voxels), and half a surface's shell. */
-export const POINT_RADIUS = 1;
-export const SHELL_RADIUS = 0.6;
-/** The most groups coloured apart (label 0 is empty). */
-const MAX_LABELS = 255;
-
-/** A point cloud as a level: occupancy 0..255 and, per voxel, its label (1..255; 0 none); and each label's colour. */
-export interface PointsLevel extends Level8 {
-  labels: Uint8Array;
-  colours: [number, number, number][];
-  points: number;
-  /** The radius (voxels) a point is drawn: half a surface's thickness. */
-  radius: number;
-}
+/** The primitives read across the geometry layers drawn, unless Quality › Geometry says otherwise. */
+export const GEOMETRY_BUDGET = 2e6;
 
 /** Millimetres a store unit along each axis. */
 export function mmPerUnit(info: Pick<StoreInfo, "axisScales" | "axisUnits">): number[] {
@@ -65,13 +38,35 @@ export function mmPerUnit(info: Pick<StoreInfo, "axisScales" | "axisUnits">): nu
 }
 
 /** The level read: the finest within `max` points (its count unknown: the coarsest). */
-export function pointsLevelIndex(info: Pick<StoreInfo, "levels">, max = POINTS_MAX): number {
+export function pointsLevelIndex(info: { levels: readonly { vertexCount: number | undefined }[] }, max = GEOMETRY_BUDGET): number {
   let best = info.levels.length - 1;
   for (let i = info.levels.length - 1; i >= 0; --i) {
     const n = info.levels[i].vertexCount;
     if (n !== undefined && n <= max) best = i;
   }
   return Math.max(0, best);
+}
+
+/**
+ * Levels for several stores sharing `max` vertices (a layer's segments): each from its coarsest, the cheapest finer
+ * level that still fits taken in turn, so small segments come in finer and large ones as fine as is left room for.
+ * A level of unknown size is never taken over a known one.
+ */
+export function allocateLevels(stores: readonly { levels: readonly { vertexCount: number | undefined }[] }[], max: number): number[] {
+  const size = (s: number, l: number) => stores[s].levels[l].vertexCount ?? Infinity;
+  const at = stores.map((s) => Math.max(0, s.levels.length - 1));
+  let total = stores.reduce((n, _, s) => n + (Number.isFinite(size(s, at[s])) ? size(s, at[s]) : 0), 0);
+  for (;;) {
+    let best = -1, cost = Infinity;
+    for (let s = 0; s < stores.length; ++s) {
+      if (at[s] === 0) continue;
+      const more = size(s, at[s] - 1) - (Number.isFinite(size(s, at[s])) ? size(s, at[s]) : 0);
+      if (more < cost && total + more <= max) [best, cost] = [s, more];
+    }
+    if (best < 0) return at;
+    --at[best];
+    total += cost;
+  }
 }
 
 /** How a point's group is coloured, and whether it shows. */
@@ -100,91 +95,6 @@ export interface Point {
   stored?: number;
 }
 
-/** A grid's voxel side (mm) for store coordinates `lower`..`upper`: within `voxels`, at most GRID_SIDE a side. */
-export function gridVoxel(lower: number[], upper: number[], mm: number[], voxels = GRID_VOXELS): number {
-  const ext = [0, 1, 2].map((a) => Math.max(upper[a] - lower[a], 1e-9) * mm[a]);
-  const h = Math.cbrt((ext[0] * ext[1] * ext[2]) / voxels);
-  return Math.max(h, Math.max(...ext) / (GRID_SIDE - 2 * BAND - 2));
-}
-
-/**
- * Points as a distance grid (store coordinates in `lower`..`upper`, at most `voxels` voxels): each voxel's value
- * how near the nearest point is, 255 at it falling to 0 at BAND voxels (so the drawing's table, not the grid, sets
- * how large a point is drawn: see pointsTable), and its label that point's group. Points as small as a voxel stay
- * whole wherever they fall between voxel centres, and a surface's points (trianglePoints) make a shell as thin.
- */
-export function splatPoints(points: Iterable<Point>, lower: number[], upper: number[], mm: number[], voxels = GRID_VOXELS, colours: GroupColours = groupColours(undefined)): PointsLevel {
-  const ext = [0, 1, 2].map((a) => Math.max(upper[a] - lower[a], 1e-9) * mm[a]);
-  // A voxel's side (mm); a margin of BAND + 1 about the points.
-  const h = gridVoxel(lower, upper, mm, voxels);
-  const m = BAND + 1;
-  const size = ext.map((e) => Math.max(1, Math.ceil(e / h) + 2 * m)) as [number, number, number];
-  const n = size[0] * size[1] * size[2];
-  const data = new Uint8Array(n);
-  const labels = new Uint8Array(n);
-  const labelOf = new Map<number, number>();
-  const palette: [number, number, number][] = [[0.8, 0.8, 0.8]];
-  const origin = [0, 1, 2].map((a) => lower[a] * mm[a] - m * h);
-  const sx = size[0], sxy = size[0] * size[1];
-  const scale = 255 / BAND;
-  let count = 0;
-  for (const p of points) {
-    if (!colours.shows(p.group)) continue;
-    let label = labelOf.get(p.group);
-    if (label === undefined) {
-      label = palette.length <= MAX_LABELS ? palette.length : 1 + (labelOf.size % MAX_LABELS);
-      labelOf.set(p.group, label);
-      if (palette.length <= MAX_LABELS) palette.push(colours.colour(p.group, p.stored));
-    }
-    ++count;
-    // The point in voxels (centres at whole numbers).
-    const cx = (p.x * mm[0] - origin[0]) / h - 0.5, cy = (p.y * mm[1] - origin[1]) / h - 0.5, cz = (p.z * mm[2] - origin[2]) / h - 0.5;
-    const i0 = Math.max(0, Math.ceil(cx - BAND)), i1 = Math.min(size[0] - 1, Math.floor(cx + BAND));
-    const j0 = Math.max(0, Math.ceil(cy - BAND)), j1 = Math.min(size[1] - 1, Math.floor(cy + BAND));
-    const k0 = Math.max(0, Math.ceil(cz - BAND)), k1 = Math.min(size[2] - 1, Math.floor(cz + BAND));
-    for (let k = k0; k <= k1; ++k) {
-      const dz = (k - cz) ** 2;
-      for (let j = j0; j <= j1; ++j) {
-        const dyz = dz + (j - cy) ** 2;
-        if (dyz >= BAND * BAND) continue;
-        const row = sx * j + sxy * k;
-        for (let i = i0; i <= i1; ++i) {
-          const d2 = dyz + (i - cx) ** 2;
-          if (d2 >= BAND * BAND) continue;
-          const v = Math.round(255 - Math.sqrt(d2) * scale);
-          const at = row + i;
-          if (v > data[at]) {
-            data[at] = v;
-            labels[at] = label;
-          }
-        }
-      }
-    }
-  }
-  // Voxel centres to millimetres, row-major.
-  const voxelToRas = [h, 0, 0, origin[0] + 0.5 * h, 0, h, 0, origin[1] + 0.5 * h, 0, 0, h, origin[2] + 0.5 * h, 0, 0, 0, 1];
-  return { data, labels, colours: palette, points: count, size, voxelToRas, range: [0, 255], pct: new Map(), window: undefined, path: "points", radius: POINT_RADIUS };
-}
-
-/**
- * The table a point cloud is drawn with (TF_SIZE entries, RGBA): opaque within `radius` voxels of a point (or of a
- * surface: half its shell's thickness), clear beyond, and at each label's place (label / 255) that label's colour.
- */
-export function pointsTable(colours: readonly [number, number, number][], radius = POINT_RADIUS): Float32Array {
-  const t = new Float32Array(TF_SIZE * 4);
-  const r = Math.min(Math.max(radius, 0.3), BAND - 0.3);
-  for (let i = 0; i < TF_SIZE; ++i) {
-    const v = (i / (TF_SIZE - 1)) * 255;
-    const label = Math.round(v);
-    const rgb = colours[label] ?? colours[0] ?? [0.8, 0.8, 0.8];
-    // The distance (voxels) the value stands for; the edge a quarter of a voxel soft either side of `radius`.
-    const d = BAND * (1 - v / 255);
-    const s = Math.min(1, Math.max(0, (r + 0.25 - d) / 0.5));
-    t.set([rgb[0], rgb[1], rgb[2], s * s * (3 - 2 * s)], 4 * i);
-  }
-  return t;
-}
-
 /** The store coordinates the chunks' vertices span (their chunks' bounds when they have none). */
 export function vertexBounds(chunks: readonly BuiltChunk[]): { lower: number[]; upper: number[] } {
   const lower = [Infinity, Infinity, Infinity], upper = [-Infinity, -Infinity, -Infinity];
@@ -202,41 +112,6 @@ export function vertexBounds(chunks: readonly BuiltChunk[]): { lower: number[]; 
     return { lower: [0, 1, 2].map((a) => Math.min(...chunks.map((c) => c.lower[a]))), upper: [0, 1, 2].map((a) => Math.max(...chunks.map((c) => c.upper[a]))) };
   }
   return { lower, upper };
-}
-
-/**
- * Points over the surfaces of built chunks' triangles, a third of a voxel (`h`, mm) apart, so the distance grid
- * holds each surface (to within a fifth of a voxel) as a shell; each point's group the index of its object (`objects`: ids in the order first met).
- */
-export function* trianglePoints(chunks: Iterable<BuiltChunk>, h: number, mm: number[], objects: bigint[]): Generator<Point> {
-  const indexOf = new Map<bigint, number>();
-  const step = 0.35 * h;
-  for (const c of chunks) {
-    const v = c.vertices, t = c.triangles;
-    const slotGroup = Array.from({ length: c.objectIds.length / 2 }, (_, s) => {
-      const id = (BigInt(c.objectIds[2 * s + 1]) << 32n) | BigInt(c.objectIds[2 * s]);
-      let g = indexOf.get(id);
-      if (g === undefined) {
-        g = objects.length;
-        indexOf.set(id, g);
-        objects.push(id);
-      }
-      return g;
-    });
-    for (let f = 0; f < c.triangleCount; ++f) {
-      const a = t[3 * f], b = t[3 * f + 1], d = t[3 * f + 2];
-      const group = slotGroup[c.slots[a]] ?? 0;
-      const P = [a, b, d].map((i) => [v[4 * i], v[4 * i + 1], v[4 * i + 2]]);
-      const len = (p: number[], q: number[]) => Math.hypot((p[0] - q[0]) * mm[0], (p[1] - q[1]) * mm[1], (p[2] - q[2]) * mm[2]);
-      const n = Math.min(64, Math.max(1, Math.ceil(Math.max(len(P[0], P[1]), len(P[1], P[2]), len(P[2], P[0])) / step)));
-      for (let i = 0; i <= n; ++i) {
-        for (let j = 0; j <= n - i; ++j) {
-          const u = i / n, w = j / n, s = 1 - u - w;
-          yield { x: s * P[0][0] + u * P[1][0] + w * P[2][0], y: s * P[0][1] + u * P[1][1] + w * P[2][1], z: s * P[0][2] + u * P[1][2] + w * P[2][2], group };
-        }
-      }
-    }
-  }
 }
 
 /** Each object's group and stored colour, by its id (a store whose groups are per object: a cell's class). */
@@ -290,11 +165,6 @@ async function objectGroups(storeUrl: string, attribute: string, colour: string 
 }
 
 /**
- * Reads a store's points (the finest level within POINTS_MAX), coloured as `look` says, and makes the grid.
- * `scalar` is what Luxar's reader is asked for (`group:<attribute>[:<colour attribute>]`, else "none").
- */
-/** A store's mesh, read for the path tracer to trace as surfaces: its chunks at the level read, and millimetres a store unit. */
-/**
  * A store's geometry, read for the path tracer to trace as surfaces, spheres or tubes: its chunks at the level
  * read, millimetres a store unit, and how its points are grouped (as `chunkPoints` takes them).
  */
@@ -313,25 +183,30 @@ export interface GeometryRead {
   byObject?: ObjectGroups;
   /** Lines: each vertex's value is its radius (store units). */
   radii: boolean;
+  /** The store's levels' vertex counts (finest first): which level another budget would read. */
+  levels: { vertexCount: number | undefined }[];
 }
 
-export async function readPoints(storeUrl: string, look: ColourByLook | undefined, voxels: number, say: (text: string) => void, stale: () => boolean, segmentColour?: (id: bigint) => [number, number, number] | undefined, surfaces = false): Promise<PointsLevel | GeometryRead> {
-  const g0 = look?.by === "group" ? look.group : undefined;
+/**
+ * Reads a store's geometry for the path tracer: level `at`, else the finest within `budget` primitives (a mesh's
+ * taken as two triangles a vertex), grouped as `look` colours it.
+ */
+export async function readGeometry(storeUrl: string, look: ColourByLook | undefined, budget: number, say: (text: string) => void, stale: () => boolean, at?: number): Promise<GeometryRead> {
+  const g = look?.by === "group" ? look.group : undefined;
   // The group's index and colour attributes read with the points (a taxonomy's tier: a cell's class).
-  const client = new StoreClient(storeUrl, { attributes: g0 !== undefined ? [g0.attribute, ...(g0.colorAttribute ? [g0.colorAttribute] : [])] : [] });
+  const client = new StoreClient(storeUrl, { attributes: g !== undefined ? [g.attribute, ...(g.colorAttribute ? [g.colorAttribute] : [])] : [] });
   try {
     const info = await client.ready;
     const meshes = info.primitive === "triangles";
     const lines = info.primitive === "lines";
-    if (lines && !surfaces) throw new Error("this browser draws lines as tubes only (a render computer draws them otherwise)");
-    const g = look?.by === "group" ? look.group : undefined;
     // Groups per vertex (an attribute the reader exposes), else per object (the object table's columns: a cell's class).
     const perVertex = g !== undefined && info.attributes.some((a) => a.id === g.attribute);
     // Lines not grouped by vertex: each vertex's radius (an SWC's), where the store has one.
     const radius = lines && !perVertex ? info.attributes.find((a) => /^radi(us|i)$/i.test(a.id) && a.components === 1) : undefined;
     client.setScalar(g !== undefined && perVertex ? `group:${g.attribute}${g.colours === "stored" && g.colorAttribute ? `:${g.colorAttribute}` : ""}` : radius ? `attribute:${radius.id}` : "object");
     const objects = g !== undefined && !perVertex ? objectGroups(storeUrl, g.attribute, g.colours === "stored" ? g.colorAttribute : undefined) : undefined;
-    const level = pointsLevelIndex(info);
+    // A level asked for (where it exists), else the finest within the budget.
+    const level = at !== undefined && at < info.levels.length ? at : pointsLevelIndex(info, meshes ? budget / 2 : budget);
     const shape = info.levels[level].chunkShape;
     const keys = chunksIn(chunkRange(info.bounds.lower, info.bounds.upper, shape)).map((c) => keyOf(level, c));
     client.want("anatomical-rendering", keys);
@@ -339,7 +214,7 @@ export async function readPoints(storeUrl: string, look: ColourByLook | undefine
       const check = () => {
         if (stale()) return reject(new Error("stale"));
         const done = keys.filter((k) => client.has(k)).length;
-        say(`reading the points: ${done} of ${keys.length} pieces`);
+        say(`reading the geometry: ${done} of ${keys.length} pieces`);
         if (done === keys.length) resolve();
         else if (client.error !== undefined && client.pending === 0) reject(new Error(client.error));
       };
@@ -347,35 +222,13 @@ export async function readPoints(storeUrl: string, look: ColourByLook | undefine
       check();
     });
     const chunks = keys.map((k) => client.get(k)).filter((c): c is BuiltChunk => !!c);
-    if (chunks.length === 0) throw new Error("the store has no points");
-    // The grid about the points themselves (finer than about their chunks).
+    if (chunks.length === 0) throw new Error("the store has no geometry");
     const { lower, upper } = vertexBounds(chunks);
-    say("placing the points");
-    await new Promise((r) => setTimeout(r, 0));
-    if (surfaces) {
-      const kind = meshes ? "meshes" : lines ? "lines" : "points";
-      const count = chunks.reduce((n, c) => n + (meshes ? c.triangleCount : lines ? c.segmentCount : c.pointCount || c.vertexCount), 0);
-      const byObject = await objects;
-      return { kind, chunks, mm: mmPerUnit(info), level, count, lower, upper, perVertex, byObject, radii: radius !== undefined };
-    }
-    if (meshes) {
-      // Surfaces: their triangles as thin shells, each object in its segment colour.
-      say("placing the surfaces");
-      await new Promise((r) => setTimeout(r, 0));
-      const mm = mmPerUnit(info);
-      const ids: bigint[] = [];
-      const surfaces = trianglePoints(chunks, gridVoxel(lower, upper, mm, voxels), mm, ids);
-      const byId: GroupColours = { shows: () => true, colour: (group) => segmentColour?.(ids[group]) ?? groupPalette(group) };
-      const out = splatPoints(surfaces, lower, upper, mm, voxels, byId);
-      out.radius = SHELL_RADIUS;
-      out.path = `${level}, ${ids.length} object${ids.length === 1 ? "" : "s"}`;
-      return out;
-    }
+    const kind = meshes ? "meshes" : lines ? "lines" : "points";
+    const count = chunks.reduce((n, c) => n + (meshes ? c.triangleCount : lines ? c.segmentCount : c.pointCount || c.vertexCount), 0);
     const byObject = await objects;
-    if (g !== undefined && !perVertex && byObject === undefined) say(`placing the points (no ${g.attribute} column: one colour)`);
-    const out = splatPoints(chunkPoints(chunks, perVertex, byObject), lower, upper, mmPerUnit(info), voxels, byObject !== undefined || perVertex ? groupColours(look) : groupColours(undefined));
-    out.path = `${level}, ${out.points.toLocaleString()} points`;
-    return out;
+    if (g !== undefined && !perVertex && byObject === undefined) say(`no ${g.attribute} column: one colour`);
+    return { kind, chunks, mm: mmPerUnit(info), level, count, lower, upper, perVertex, byObject, radii: radius !== undefined, levels: info.levels.map((l) => ({ vertexCount: l.vertexCount })) };
   } finally {
     client.dispose();
   }

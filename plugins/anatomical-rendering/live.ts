@@ -28,7 +28,7 @@ import type { Frame3d } from "@ngplatform/sdk";
 import { VolumeClient } from "../volume-view/volume_client.js";
 import type { ViewSpec } from "./client.js";
 import { brickBounds, cameraAxes, invert, type Level8, type LevelPreset, levelTable, mul, readLevel, rowMajor, TF_SIZE } from "./local/local.js";
-import { GeometryTextures, geometryGlsl, geoWidth, type LiveGeometryLook } from "./geometry/live_geometry.js";
+import { bindPicks, GEO_PICK_GLSL, GeometryTextures, geometryGlsl, geoWidth, type LiveGeometryLook } from "./geometry/live_geometry.js";
 import type { Surfaces } from "./geometry/surfaces.js";
 
 /** The voxels of the level read for the object by default (Quality › Object); this browser's path tracer shares its own. */
@@ -227,7 +227,6 @@ precision highp sampler3D;
 ${each((k) => `uniform sampler3D uVol${k};\nuniform highp sampler3D uOcc${k};`)}
 uniform sampler2D uTf;
 uniform bool uHasOcc[N];
-uniform bool uLabelled[N];
 uniform mat4 uVoxFromWorld[N];
 uniform vec3 uDims[N];
 uniform float uDensity[N];
@@ -267,16 +266,10 @@ struct Ray {
 float tex(int k, vec3 v) {
   ${chain((k) => `return texture(uVol${k}, (v + 0.5) / uDims[${k}]).r;`, "return 0.0;")}
 }
-// A voxel's label (0..1: label / 255) in a labelled volume (a point cloud's groups), the voxel nearest v.
-float labelAt(int k, vec3 v) {
-  ${chain((k) => `return texelFetch(uVol${k}, ivec3(clamp(floor(v + 0.5), vec3(0.0), uDims[${k}] - 1.0)), 0).g;`, "return 0.0;")}
-}
 bool occupied(int k, vec3 cell) {
   ${chain((k) => `return texelFetch(uOcc${k}, ivec3(clamp(cell, vec3(0.0), vec3(textureSize(uOcc${k}, 0) - 1))), 0).r != 0.0;`, "return true;")}
 }
 vec4 tf(int k, float t) { return texture(uTf, vec2((clamp(t, 0.0, 1.0) * ${TF_SIZE - 1}.0 + 0.5) / ${TF_SIZE}.0, (float(k) + 0.5) / float(N))); }
-// The colour of volume k at voxel point v, whose table entry there is c: a labelled volume's its label's.
-vec3 colourAt(int k, vec3 v, vec4 c) { return uLabelled[k] ? tf(k, labelAt(k, v)).rgb : c.rgb; }
 vec3 grad(int k, vec3 v) {
   return vec3(tex(k, v + vec3(1.0, 0.0, 0.0)) - tex(k, v - vec3(1.0, 0.0, 0.0)),
               tex(k, v + vec3(0.0, 1.0, 0.0)) - tex(k, v - vec3(0.0, 1.0, 0.0)),
@@ -522,12 +515,12 @@ int scatterEvent(inout vec3 w, out int at, out vec3 sn, out vec3 sc, vec3 dir, f
   w = w0 + dir * ts + sn * uGeoEps;
   return 2;
 }
-// A direction off a surface (normal n, toward wo): a glossy lobe about the mirror direction at the surfaces'
-// specular share, else cosine-weighted (the throughput then takes the colour); false: below the surface.
+// A direction off a surface (normal n, toward wo): a glossy lobe about the mirror direction at its specular
+// share, else cosine-weighted (the throughput then takes the colour); false: below the surface.
 bool geoBounce(vec3 n, vec3 wo, vec3 albedo, inout vec3 thr, out vec3 nd) {
-  if (rnd() < uGeoSpec) {
+  if (rnd() < geoSpec) {
     vec3 rf = normalize(n * (2.0 * dot(n, wo)) - wo);
-    float e = max(1.0, 2.0 / max(uGeoRough * uGeoRough, 1e-4) - 2.0);
+    float e = max(1.0, 2.0 / max(geoRough * geoRough, 1e-4) - 2.0);
     float ct = pow(rnd(), 1.0 / (e + 1.0));
     float st = sqrt(max(0.0, 1.0 - ct * ct));
     float ph = 6.2831853 * rnd();
@@ -619,6 +612,7 @@ void main() {
   float T = 1.0;
   vec3 hit = vec3(0.0);
   bool met = false;
+  float pick = 0.0;
   float v0;
   FINEST(r, r.t0, v0)
   float t = r.t0 + uStep * (v0 < 1e29 ? v0 : 0.0) * noise();
@@ -657,7 +651,7 @@ void main() {
       if (sk <= 0.0) continue;
       vec3 g = grad(k, v);
       s += sk;
-      albedo += sk * colourAt(k, v, c) * uAlbedo[k];
+      albedo += sk * c.rgb * uAlbedo[k];
       gw += sk * worldGrad(k, g);
       edge += sk * (1.0 - exp(-uGradScale[k] * length(g)));
       if (sk > most) {
@@ -688,12 +682,14 @@ void main() {
     float Tl = geoAny(p, uLightDir, uGeoEps, 1e30) ? 0.0 : (uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).a : clear(p, uLightDir, 25.0));
     vec3 sky = env(nrm);
     sky = mix(sky, uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).rgb : sky, uHeldAround * 0.5);
-    vec3 col = geoBrdfCos(nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uGeoSpec);
+    vec3 col = geoBrdfCos(nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * (sky * (1.0 - geoSpec) + geoEmit);
     L += T * col;
     T = 0.0;
     if (!met) {
       met = true;
       hit = w;
+      // The surface is what the pixel shows: its segment picked there.
+      pick = geoPickOf(geoObjectOf(sPrim));
     }
   }` : ""}
   // As the picture: drawn where the ray met tissue, at the depth where it did.
@@ -704,7 +700,7 @@ void main() {
   gl_FragDepth = d;
   out_color = vec4(c, 1.0);
   out_z = vec4(1.0 - d);
-  out_pickId = vec4(0.0);
+  out_pickId = vec4(pick);
 }`);
 
 // One layer of the light held, a cell a pixel. Pass 0: how much of the light reaches the cell's centre
@@ -735,7 +731,7 @@ vec3 incoming(vec3 w, vec3 dir) {
     if (ev == 0) return L + thr * env(dir);
     if (ev == 2) {
       // A surface: the key light on it, then on off it.
-      L += thr * geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * transmit(w, uLightDir);
+      L += thr * (geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * transmit(w, uLightDir) + sc * geoEmit);
       vec3 nd;
       if (!geoBounce(sn, -dir, sc, thr, nd)) return L;
       dir = nd;
@@ -745,7 +741,7 @@ vec3 incoming(vec3 w, vec3 dir) {
     if (!collide(w, k, dir, 1.5)) return L + thr * env(dir);
 #endif
     vec3 vk = voxOf(k, w);
-    thr *= colourAt(k, vk, tf(k, tex(k, vk))) * uAlbedo[k];
+    thr *= tf(k, tex(k, vk)).rgb * uAlbedo[k];
     L += thr * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG[k]) * lightAt(w));
     dir = hgdir(dir, uPhaseG[k]);
   }
@@ -795,14 +791,20 @@ float glDepth(vec3 w) {
   vec4 p = uVP * vec4(w, 1.0);
   return clamp((p.z / p.w) * 0.5 + 0.5, 0.0, 0.99999);
 }
-float firstHit(vec3 ow, vec3 dw) {
+// The depth where the ray first meets tissue or a surface; the surface's object + 1 when it is one (else 0).
+float firstHit(vec3 ow, vec3 dw, out float obj) {
   float tsurf = 1e30;
+  obj = 0.0;
+  float sObj = 0.0;
 #ifdef GEO
   {
     int p_;
     vec2 c_;
     float h = geoHit(ow, dw, 0.0, 1e30, p_, c_);
-    if (h > 0.0) tsurf = h;
+    if (h > 0.0) {
+      tsurf = h;
+      sObj = float(geoObjectOf(p_) + 1);
+    }
   }
 #endif
   Ray r = ray(ow, dw);
@@ -831,7 +833,9 @@ float firstHit(vec3 ow, vec3 dw) {
     if (T <= 0.5) return glDepth(ow + dw * t);
     t += dt;
   }
-  return tsurf < 1e30 ? glDepth(ow + dw * tsurf) : 1.0;
+  if (tsurf >= 1e30) return 1.0;
+  obj = sObj;
+  return glDepth(ow + dw * tsurf);
 }
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
@@ -849,7 +853,11 @@ void main() {
   vec4 b = uInvVP * vec4(ndc, 1.0, 1.0);
   vec3 w = a.xyz / a.w;
   vec3 dir = normalize(b.xyz / b.w - w);
-  if (aux.g == 0.0) aux.r = firstHit(w, dir);
+  if (aux.g == 0.0) {
+    float ob;
+    aux.r = firstHit(w, dir, ob);
+    aux.b = ob;
+  }
   vec3 L = vec3(0.0);
   vec3 thr = vec3(1.0);
   float alpha = 0.0;
@@ -868,6 +876,7 @@ void main() {
       // A surface: the key light on it (shadowed by surfaces and the volumes), then a bounce off it.
       float Ts = transmit(w, uLightDir);
       if (Ts > 0.0) L += thr * geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * Ts;
+      L += thr * sc * geoEmit;
       vec3 nd;
       if (!geoBounce(sn, -dir, sc, thr, nd)) break;
       dir = nd;
@@ -886,10 +895,10 @@ void main() {
     if (bounce == 0) alpha = 1.0;
 #endif
     vec3 v = voxOf(k, w);
-    vec3 albedo = colourAt(k, v, tf(k, tex(k, v))) * uAlbedo[k];
+    vec3 albedo = tf(k, tex(k, v)).rgb * uAlbedo[k];
     vec3 g = grad(k, v);
     float gm = length(g);
-    if (uInset[k] > 0.0 && gm > 1e-6 && !uLabelled[k]) {
+    if (uInset[k] > 0.0 && gm > 1e-6) {
       // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
       vec3 d = g * (uInset[k] / gm);
       vec4 ca = tf(k, tex(k, v + d));
@@ -928,7 +937,7 @@ void main() {
     }
   }
   oSum = sum + vec4(L, alpha);
-  oAux = vec4(aux.r, aux.g + 1.0, 0.0, 0.0);
+  oAux = vec4(aux.r, aux.g + 1.0, aux.b, 0.0);
 }`);
 
 // The path-traced samples so far in the 3-D view: their mean where most met tissue, at the depth where
@@ -945,20 +954,24 @@ uniform float uMinCover;
 layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
+precision highp int;
+${GEO_PICK_GLSL}
 ${TONE}
 void main() {
   float k = noise();
   if (k < uBand.x || k >= uBand.y) discard;
   ivec2 px = ivec2(gl_FragCoord.xy - uViewport.xy);
   vec4 s = texelFetch(uSum, px, 0);
-  vec2 a = texelFetch(uAux, px, 0).rg;
+  vec4 ax = texelFetch(uAux, px, 0);
+  vec2 a = ax.rg;
   float cover = a.g >= 1.0 ? s.a / a.g : 0.0;
   if (cover < uMinCover || s.a <= 0.0 || a.r >= 1.0) discard;
   gl_FragDepth = a.r;
   // Where only some of a pixel's paths met something (a dendrite thinner than the pixel): that share of it.
   out_color = vec4(tone(s.rgb / s.a * uExposure), uMinCover < 0.5 ? cover : 1.0);
   out_z = vec4(1.0 - a.r);
-  out_pickId = vec4(0.0);
+  // A surface first met there: its segment picked.
+  out_pickId = vec4(ax.b > 0.0 ? geoPickOf(int(ax.b) - 1) : 0.0);
 }`;
 
 /**
@@ -1074,11 +1087,10 @@ export class LiveVolume {
   async open(urls: string | string[], voxels = LIVE_VOXELS): Promise<void> {
     const list = [...new Set(typeof urls === "string" ? [urls] : urls)].slice(0, MAX_VOLUMES);
     const each = shareOf(voxels, list.length);
-    // A level put here (a point cloud's grid, `putLevel`) is not read: kept while it is wanted.
-    for (const [url, v] of this.vols) if (!list.includes(url) || (v.voxels !== each && !isPut(url))) this.drop(url);
+    for (const [url, v] of this.vols) if (!list.includes(url) || v.voxels !== each) this.drop(url);
     this.wanted = list;
     this.failed = "";
-    const todo = list.filter((u) => !this.vols.has(u) && !isPut(u));
+    const todo = list.filter((u) => !this.vols.has(u));
     for (const url of todo) this.vols.set(url, { url, voxels: each, text: "Object: waiting to read the image" });
     if (todo.length === 0) return;
     this.onChange?.();
@@ -1120,15 +1132,6 @@ export class LiveVolume {
     this.failed = "";
     const v = this.vols.get(url) ?? { url, voxels: Math.round(level.size[0] * level.size[1] * level.size[2]), text: "" };
     this.vols.set(url, v);
-    this.held = undefined;
-    this.put(v, level);
-  }
-
-  /** A level made here (a point cloud's grid) for an image of the look (`url`, as `open` was given it), beside the others. */
-  putLevel(level: Level8, url: string): void {
-    const v = this.vols.get(url) ?? { url, voxels: Math.round(level.size[0] * level.size[1] * level.size[2]), text: "" };
-    this.vols.set(url, v);
-    if (v.level === level) return;
     this.held = undefined;
     this.put(v, level);
   }
@@ -1177,7 +1180,7 @@ export class LiveVolume {
 
   /** A volume of nothing filling the surfaces' box (millimetres), for frames that draw the surfaces alone. */
   private emptyAbout(s: Surfaces): Vol {
-    const lo = s.bvh.lo, hi = s.bvh.hi;
+    const lo = s.lo, hi = s.hi;
     const key = JSON.stringify([lo, hi]);
     if (this.empty?.key === key) return this.empty.vol;
     if (this.empty && this.gl) for (const t of [this.empty.vol.tex, this.empty.vol.occ]) if (t) this.gl.deleteTexture(t);
@@ -1220,7 +1223,7 @@ export class LiveVolume {
       if (shown.length >= MAX_VOLUMES) break;
     }
     // The surfaces, where the look draws them: two texture units of their own, so a volume fewer.
-    const surf = look.geometry !== undefined && this.surfaces !== undefined && this.surfaces.bvh.n > 0 ? this.surfaces : undefined;
+    const surf = look.geometry !== undefined && this.surfaces !== undefined && this.surfaces.n > 0 ? this.surfaces : undefined;
     if (surf !== undefined) {
       if (shown.length >= MAX_VOLUMES) shown.length = MAX_VOLUMES - 1;
       const why = this.geoTex.upload(gl, surf, look.geometry!);
@@ -1275,7 +1278,7 @@ export class LiveVolume {
     const materials = sorted.map((d) => [d.vol.url, d.vol.level!.path, d.q.density, d.q.albedo, d.q.phaseG, d.q.worldFromVox, d.q.clips.slice(0, 4 * d.q.nclip), d.q.cropLo, d.q.cropHi]);
     // A light that turns with the camera: its direction to a degree or so, so a still camera keeps what is held.
     const dir = primary.lightDir.map((x) => Math.round(x * 50) / 50);
-    const geoKey = surf ? [surf.bvh.n, surf.bvh.lo, surf.bvh.hi, look.geometry!.key, look.geometry!.layers, look.geometry!.roughness, look.geometry!.specular] : null;
+    const geoKey = surf ? [surf.n, surf.lo, surf.hi, look.geometry!.key, look.geometry!.layers] : null;
     const heldKey = JSON.stringify([tfKey, materials, geoKey, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
     if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0 };
     primary.lightDir = this.held.lightDir;
@@ -1353,6 +1356,7 @@ export class LiveVolume {
       gl.activeTexture(gl.TEXTURE0 + UNIT.aux);
       gl.bindTexture(gl.TEXTURE_2D, this.auxRead!);
       gl.uniform1i(u("uAux"), UNIT.aux);
+      bindPicks(gl, p, look.geometry ?? { colours: new Float32Array(), key: "", layers: [], exposure: 1 });
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       if (ext !== null && !blendWas) ext.disableiOES(gl.BLEND, frame.outputs.color);
@@ -1373,12 +1377,7 @@ export class LiveVolume {
     if (v.uploaded !== level) {
       gl.activeTexture(gl.TEXTURE0 + UNIT.vol);
       gl.bindTexture(gl.TEXTURE_3D, v.tex);
-      if (level.labels !== undefined) {
-        // Occupancy and label in one texture (red, green): the label read voxel by voxel, never blended.
-        const rg = new Uint8Array(level.data.length * 2);
-        for (let i = 0; i < level.data.length; ++i) [rg[2 * i], rg[2 * i + 1]] = [level.data[i], level.labels[i]];
-        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG8, level.size[0], level.size[1], level.size[2], 0, gl.RG, gl.UNSIGNED_BYTE, rg);
-      } else gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, level.size[0], level.size[1], level.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, level.data);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, level.size[0], level.size[1], level.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, level.data);
       v.uploaded = level;
       v.occKey = undefined;
     }
@@ -1428,7 +1427,6 @@ export class LiveVolume {
     gl.uniform1fv(u("uSpecular"), each((x) => x.specular));
     gl.uniform1fv(u("uInset"), each((x) => x.inset));
     gl.uniform1iv(u("uHasOcc"), new Int32Array(s.drawn.map((d) => (d.vol.bounds !== undefined ? 1 : 0))));
-    gl.uniform1iv(u("uLabelled"), new Int32Array(s.drawn.map((d) => (d.vol.level?.labels !== undefined ? 1 : 0))));
     // Each volume's crop (a box in its voxels) and cuts.
     gl.uniform3fv(u("uCropLo"), new Float32Array(s.drawn.flatMap((d) => d.q.cropLo)));
     gl.uniform3fv(u("uCropHi"), new Float32Array(s.drawn.flatMap((d) => d.q.cropHi)));
@@ -1524,9 +1522,9 @@ export class LiveVolume {
     const p = this.program(gl, `trace ${s.n} ${geoW}`, () => TRACE_FS(s.n, geoW), true);
     if (p === undefined) return;
     if (this.traceSize[0] !== w || this.traceSize[1] !== h) {
-      for (const [t, f] of [[this.sumRead, gl.RGBA32F], [this.sumFill, gl.RGBA32F], [this.auxRead, gl.RG32F], [this.auxFill, gl.RG32F]] as const) {
+      for (const [t, f] of [[this.sumRead, gl.RGBA32F], [this.sumFill, gl.RGBA32F], [this.auxRead, gl.RGBA32F], [this.auxFill, gl.RGBA32F]] as const) {
         gl.bindTexture(gl.TEXTURE_2D, t!);
-        gl.texImage2D(gl.TEXTURE_2D, 0, f, w, h, 0, f === gl.RGBA32F ? gl.RGBA : gl.RG, gl.FLOAT, null);
+        gl.texImage2D(gl.TEXTURE_2D, 0, f, w, h, 0, gl.RGBA, gl.FLOAT, null);
       }
       this.traceSize = [w, h];
       this.traced = undefined;
@@ -1666,11 +1664,6 @@ interface Scene {
 /** A row-major 4 × 4 as column-major (lightBox's matrices are the shader's). */
 function colMajor(m: readonly number[]): number[] {
   return [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => m[4 * r + c]));
-}
-
-/** A look's image that is put (`putLevel`), not read: a Zarr Vectors layer's points ("objects:" and its store). */
-function isPut(url: string): boolean {
-  return url.startsWith("objects:");
 }
 
 /** An image's name from its store's address, for the readout. */

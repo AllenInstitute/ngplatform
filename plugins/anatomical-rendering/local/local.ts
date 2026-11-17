@@ -500,8 +500,6 @@ export interface Level8 {
   medium?: "above" | "below";
   /** The level's name in the store. */
   path: string;
-  /** Per voxel, a label (1..255; 0 none) whose colour is the table's at label / 255 (a point cloud's groups), else none. */
-  labels?: Uint8Array;
 }
 
 /**

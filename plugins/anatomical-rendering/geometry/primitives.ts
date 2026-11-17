@@ -4,16 +4,37 @@
  * object and its corners' normals, packed for the GPU.
  */
 import type { BuiltChunk } from "../../luxar/chunk_build.js";
-import { CONE, SPHERE } from "./lbvh.js";
+import { CONE, SPHERE, TRIANGLE } from "./lbvh.js";
 
-/** Primitives before the BVH: 9 floats each (lbvh.ts's layout), their objects, and their corners' normals (4 uint each). */
+/**
+ * Primitives before the BVH, indexed: their vertices (4 floats each: xyz in millimetres, then a triangle corner's
+ * packed normal as bits (NO_NORMAL: none), or a sphere's or tube end's radius), each primitive's vertices (3 each:
+ * a triangle's corners; a tube's two ends, the second again; a sphere's centre, thrice), kind (lbvh.ts) and object.
+ */
 export interface Primitives {
-  prims: Float32Array;
+  vertices: Float32Array;
+  index: Uint32Array;
   objects: Int32Array;
-  /** Each primitive's kind (lbvh.ts); none: all triangles. */
-  kinds?: Int32Array;
-  /** Per primitive: each corner's normal, octahedral in two snorm16 (x low), and a 0. */
-  normals: Uint32Array;
+  kinds: Int32Array;
+}
+
+/** A vertex's w when it has no normal (a triangle's corners then take the face's). */
+export const NO_NORMAL = 0xffffffff;
+
+/** The primitives as lbvh.ts takes them (9 floats each: a triangle's corners; a cone's ends and radii; a sphere's centre and radius). */
+export function expandPrims(p: Primitives): Float32Array {
+  const n = p.objects.length, v = p.vertices, out = new Float32Array(9 * n);
+  for (let i = 0; i < n; ++i) {
+    const a = p.index[3 * i], b = p.index[3 * i + 1], c = p.index[3 * i + 2], o = 9 * i;
+    const k = p.kinds[i];
+    if (k === TRIANGLE) {
+      for (const [j, x] of [a, b, c].entries()) out.set(v.subarray(4 * x, 4 * x + 3), o + 3 * j);
+    } else if (k === CONE) {
+      out.set(v.subarray(4 * a, 4 * a + 4), o);
+      out.set(v.subarray(4 * b, 4 * b + 4), o + 4);
+    } else out.set(v.subarray(4 * a, 4 * a + 4), o);
+  }
+  return out;
 }
 
 /** A normal (any length) as two snorm16 in one uint (unpackSnorm2x16's), octahedral. */
@@ -48,9 +69,9 @@ function idOf(c: BuiltChunk, slot: number): bigint {
  */
 export function meshPrimitives(chunks: readonly BuiltChunk[], toMm: readonly number[], ids: bigint[]): Primitives {
   const count = chunks.reduce((s, c) => s + c.triangleCount, 0);
-  const prims = new Float32Array(9 * count);
-  const objects = new Int32Array(count);
-  const normals = new Uint32Array(4 * count);
+  const nv = chunks.reduce((s, c) => s + (c.triangleCount > 0 ? c.vertexCount : 0), 0);
+  const vertices = new Float32Array(4 * nv), bits = new Uint32Array(vertices.buffer);
+  const index = new Uint32Array(3 * count), objects = new Int32Array(count);
   const indexOf = new Map<bigint, number>(ids.map((id, i) => [id, i]));
   const m = toMm;
   // Normals by the inverse transpose of the linear part.
@@ -61,21 +82,19 @@ export function meshPrimitives(chunks: readonly BuiltChunk[], toMm: readonly num
     -(a[1] * a[8] - a[2] * a[7]) / det, (a[0] * a[8] - a[2] * a[6]) / det, -(a[0] * a[7] - a[1] * a[6]) / det,
     (a[1] * a[5] - a[2] * a[4]) / det, -(a[0] * a[5] - a[2] * a[3]) / det, (a[0] * a[4] - a[1] * a[3]) / det,
   ];
-  let f = 0;
+  let f = 0, base = 0;
   for (const c of chunks) {
     if (c.triangleCount === 0) continue;
-    const v = c.vertices, nv = c.normals, n = c.vertexCount;
-    const pos = new Float32Array(3 * n);
-    const nrm = new Uint32Array(n);
+    const v = c.vertices, nr = c.normals, n = c.vertexCount, normals = nr.length >= 4 * n;
     for (let i = 0; i < n; ++i) {
-      const x = v[4 * i], y = v[4 * i + 1], z = v[4 * i + 2];
-      pos[3 * i] = m[0] * x + m[1] * y + m[2] * z + m[3];
-      pos[3 * i + 1] = m[4] * x + m[5] * y + m[6] * z + m[7];
-      pos[3 * i + 2] = m[8] * x + m[9] * y + m[10] * z + m[11];
-      if (nv.length >= 4 * n) {
-        const p = nv[4 * i], q = nv[4 * i + 1], r = nv[4 * i + 2];
-        nrm[i] = packNormal(it[0] * p + it[1] * q + it[2] * r, it[3] * p + it[4] * q + it[5] * r, it[6] * p + it[7] * q + it[8] * r);
-      }
+      const x = v[4 * i], y = v[4 * i + 1], z = v[4 * i + 2], o = 4 * (base + i);
+      vertices[o] = m[0] * x + m[1] * y + m[2] * z + m[3];
+      vertices[o + 1] = m[4] * x + m[5] * y + m[6] * z + m[7];
+      vertices[o + 2] = m[8] * x + m[9] * y + m[10] * z + m[11];
+      if (normals) {
+        const p = nr[4 * i], q = nr[4 * i + 1], r = nr[4 * i + 2];
+        bits[o + 3] = packNormal(it[0] * p + it[1] * q + it[2] * r, it[3] * p + it[4] * q + it[5] * r, it[6] * p + it[7] * q + it[8] * r);
+      } else bits[o + 3] = NO_NORMAL;
     }
     const slotIndex = Array.from({ length: c.objectIds.length / 2 }, (_, s) => {
       const id = idOf(c, s);
@@ -89,20 +108,14 @@ export function meshPrimitives(chunks: readonly BuiltChunk[], toMm: readonly num
     });
     const t = c.triangles;
     for (let k = 0; k < c.triangleCount; ++k, ++f) {
-      const corners = [t[3 * k], t[3 * k + 1], t[3 * k + 2]];
-      corners.forEach((vi, j) => prims.set(pos.subarray(3 * vi, 3 * vi + 3), 9 * f + 3 * j));
-      objects[f] = slotIndex[c.slots[corners[0]]] ?? 0;
-      if (nv.length >= 4 * n) normals.set([nrm[corners[0]], nrm[corners[1]], nrm[corners[2]], 0], 4 * f);
-      else {
-        // No normals: the face's, at every corner.
-        const p0 = corners.map((vi) => [pos[3 * vi], pos[3 * vi + 1], pos[3 * vi + 2]]);
-        const e1 = [0, 1, 2].map((q) => p0[1][q] - p0[0][q]), e2 = [0, 1, 2].map((q) => p0[2][q] - p0[0][q]);
-        const pn = packNormal(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]);
-        normals.set([pn, pn, pn, 0], 4 * f);
-      }
+      index[3 * f] = base + t[3 * k];
+      index[3 * f + 1] = base + t[3 * k + 1];
+      index[3 * f + 2] = base + t[3 * k + 2];
+      objects[f] = slotIndex[c.slots[t[3 * k]]] ?? 0;
     }
+    base += n;
   }
-  return { prims: prims.subarray(0, 9 * f), objects: objects.subarray(0, f), normals: normals.subarray(0, 4 * f) };
+  return { vertices, index, objects, kinds: new Int32Array(f).fill(TRIANGLE) };
 }
 
 /** A point at store coordinates, and its object's index (its colour's); -1 leaves it out. */
@@ -116,24 +129,26 @@ export interface IndexedPoint {
 /** Points as spheres of `radius` mm about where `toMm` (row-major 4 × 4) puts them. */
 export function pointPrimitives(points: Iterable<IndexedPoint>, toMm: readonly number[], radius: number): Primitives {
   const m = toMm;
-  let prims = new Float32Array(9 * 1024), objects = new Int32Array(1024);
+  let vertices = new Float32Array(4 * 1024), objects = new Int32Array(1024);
   let n = 0;
   for (const p of points) {
     if (p.index < 0) continue;
     if (n === objects.length) {
       // Twice the room.
-      const p2 = new Float32Array(prims.length * 2), o2 = new Int32Array(objects.length * 2);
-      p2.set(prims);
+      const v2 = new Float32Array(vertices.length * 2), o2 = new Int32Array(objects.length * 2);
+      v2.set(vertices);
       o2.set(objects);
-      [prims, objects] = [p2, o2];
+      [vertices, objects] = [v2, o2];
     }
-    prims[9 * n] = m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3];
-    prims[9 * n + 1] = m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7];
-    prims[9 * n + 2] = m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11];
-    prims[9 * n + 3] = radius;
+    vertices[4 * n] = m[0] * p.x + m[1] * p.y + m[2] * p.z + m[3];
+    vertices[4 * n + 1] = m[4] * p.x + m[5] * p.y + m[6] * p.z + m[7];
+    vertices[4 * n + 2] = m[8] * p.x + m[9] * p.y + m[10] * p.z + m[11];
+    vertices[4 * n + 3] = radius;
     objects[n++] = p.index;
   }
-  return { prims: prims.slice(0, 9 * n), objects: objects.slice(0, n), kinds: new Int32Array(n).fill(SPHERE), normals: new Uint32Array(4 * n) };
+  const index = new Uint32Array(3 * n);
+  for (let i = 0; i < n; ++i) index[3 * i] = index[3 * i + 1] = index[3 * i + 2] = i;
+  return { vertices: vertices.slice(0, 4 * n), index, objects: objects.slice(0, n), kinds: new Int32Array(n).fill(SPHERE) };
 }
 
 /**
@@ -143,29 +158,31 @@ export function pointPrimitives(points: Iterable<IndexedPoint>, toMm: readonly n
  */
 export function linePrimitives(chunks: readonly BuiltChunk[], toMm: readonly number[], radius: number, objectOf: (c: BuiltChunk, vertex: number) => number, radiusAt?: (c: BuiltChunk, vertex: number) => number | undefined): Primitives {
   const count = chunks.reduce((s, c) => s + c.segmentCount, 0);
-  const prims = new Float32Array(9 * count), objects = new Int32Array(count);
+  const nv = chunks.reduce((s, c) => s + (c.segmentCount > 0 ? c.vertexCount : 0), 0);
+  const vertices = new Float32Array(4 * nv), index = new Uint32Array(3 * count), objects = new Int32Array(count);
   const m = toMm;
-  let n = 0;
+  let n = 0, base = 0;
   for (const c of chunks) {
+    if (c.segmentCount === 0) continue;
     const v = c.vertices;
-    const put = (i: number, o: number) => {
-      const x = v[4 * i], y = v[4 * i + 1], z = v[4 * i + 2];
-      prims[o] = m[0] * x + m[1] * y + m[2] * z + m[3];
-      prims[o + 1] = m[4] * x + m[5] * y + m[6] * z + m[7];
-      prims[o + 2] = m[8] * x + m[9] * y + m[10] * z + m[11];
-    };
+    for (let i = 0; i < c.vertexCount; ++i) {
+      const x = v[4 * i], y = v[4 * i + 1], z = v[4 * i + 2], o = 4 * (base + i);
+      vertices[o] = m[0] * x + m[1] * y + m[2] * z + m[3];
+      vertices[o + 1] = m[4] * x + m[5] * y + m[6] * z + m[7];
+      vertices[o + 2] = m[8] * x + m[9] * y + m[10] * z + m[11];
+      vertices[o + 3] = radiusAt?.(c, i) ?? radius;
+    }
     for (let k = 0; k < c.segmentCount; ++k) {
       const a = c.segments[4 * k + 1], b = c.segments[4 * k + 2];
-      const index = objectOf(c, a);
-      if (index < 0) continue;
-      put(a, 9 * n);
-      prims[9 * n + 3] = radiusAt?.(c, a) ?? radius;
-      put(b, 9 * n + 4);
-      prims[9 * n + 7] = radiusAt?.(c, b) ?? radius;
-      objects[n++] = index;
+      const object = objectOf(c, a);
+      if (object < 0) continue;
+      index[3 * n] = base + a;
+      index[3 * n + 1] = index[3 * n + 2] = base + b;
+      objects[n++] = object;
     }
+    base += c.vertexCount;
   }
-  return { prims: prims.slice(0, 9 * n), objects: objects.slice(0, n), kinds: new Int32Array(n).fill(CONE), normals: new Uint32Array(4 * n) };
+  return { vertices, index: index.slice(0, 3 * n), objects: objects.slice(0, n), kinds: new Int32Array(n).fill(CONE) };
 }
 
 /** A sphere's radius for `count` points over the box `lower`..`upper` (mm): a quarter of their mean spacing. */
@@ -179,22 +196,4 @@ export function lineRadius(lengths: readonly number[], extent: number): number {
   if (lengths.length === 0) return extent / 500;
   const sorted = [...lengths].sort((a, b) => a - b);
   return Math.min(sorted[sorted.length >> 1] / 6, extent / 200);
-}
-
-/** Several layers' primitives as one set: each one's objects after the ones before (`offsets`: where each starts). */
-export function joinPrimitives(parts: readonly (Primitives & { objectCount: number })[]): Primitives & { offsets: number[]; kinds: Int32Array } {
-  const n = parts.reduce((s, p) => s + p.objects.length, 0);
-  const prims = new Float32Array(9 * n), objects = new Int32Array(n), normals = new Uint32Array(4 * n), kinds = new Int32Array(n);
-  const offsets: number[] = [];
-  let at = 0, base = 0;
-  for (const p of parts) {
-    offsets.push(base);
-    prims.set(p.prims, 9 * at);
-    normals.set(p.normals, 4 * at);
-    if (p.kinds) kinds.set(p.kinds, at);
-    for (let i = 0; i < p.objects.length; ++i) objects[at + i] = p.objects[i] + base;
-    at += p.objects.length;
-    base += p.objectCount;
-  }
-  return { prims, objects, normals, offsets, kinds };
 }

@@ -359,50 +359,68 @@ cell atlas, a tractogram, a surface), is rendered by itself: it is the
 scene, in an empty volume about it, with the panel's lighting, quality,
 crops, stills and movies. The image's own settings (its choice, density,
 window, the colourmap editor, the jar, regions) are hidden. A render
-computer draws any kind as exact geometry. This browser draws a point
-cloud: the finest level within 1.5 million points, each point a small
-sphere in a grid of at most 32 million voxels, coloured as the layer
-colours it (its Vertex colour's groups, in the store's colours or the
-palette's, the groups not shown left out), lit and path-traced as an
-image is. Neuroglancer's own drawing of the layer is hidden meanwhile.
-Lines still need a render computer.
+computer draws any kind as exact geometry; so does this browser.
 
-**Points and meshes in this browser, each by its own switch.** A Zarr
+**Geometry in this browser, each layer by its own switch.** A Zarr
 Vectors layer and a precomputed segmentation with meshes (its chosen
 segments, the first 64: cells of the MICrONS segmentation, say) have a
 **Render on / Render off** switch, as an image has: select the layer in
 Layers. A Zarr Vectors layer alone in a scene starts on; beside an image,
-off. Switched on, its points (spheres a voxel in radius) or its meshes' surfaces
-(thin shells, in each segment's colour, from the finest mesh level
-within 1.5 million vertices) are drawn together with the images switched
-on, as one volume: lit, path-traced and cut by their own crops.
-**Meshes as surfaces.** A segmentation's meshes are traced as triangles, not put in a grid:
-- **Read:** the chosen segments' mesh level, within 1.5 million vertices.
-- **Built:** into a BVH in the background, in about a second for 2 million triangles.
-- **Drawn:** with the images. Each surface is shadowed by the others and cut by its layer's planes, in its segment's colour, so a dendrite is as thin as its mesh.
+off. Switched on, it is traced as exact geometry with the images switched
+on, and Neuroglancer's own drawing of it is hidden meanwhile:
 
-Once the view is still, the surfaces are path-traced with the volumes:
-- they shadow each other and the tissue;
-- light bounces off them;
+- **Meshes** are triangles, each segment in its colour as the layer
+  colours it now.
+- **Points** are spheres, a quarter of their mean spacing in radius.
+- **Lines** (streamlines, skeletons, SWC) are tubes between their
+  vertices: the store's radii where it has a `radius` attribute, else a
+  sixth of a segment's length.
+
+Points and lines are coloured as the layer colours them: by group (the
+groups not shown left out), else by object. Those colours are fixed when
+the geometry is made: a change of groups reads the layer again.
+
+**How it is drawn.** The geometry is read at the finest level within its
+share of the budget (below), built into a BVH in the background (about a
+second for 2 million triangles) and traced with the images:
+
+- each surface is shadowed by the others and cut by its layer's planes,
+  so a dendrite is as thin as its mesh;
+- once the view is still, it is path-traced with the volumes: surfaces
+  shadow each other and the tissue, and light bounces off them;
 - a branch thinner than a pixel shows by how much of the pixel it covers.
 
-**Points and lines are traced the same way:**
-- **Points** are spheres, a quarter of their mean spacing in radius.
-- **Lines** (streamlines, skeletons, SWC) are tubes between their vertices: the store's radii where it has a `radius` attribute, else a sixth of a segment's length.
+**A geometry layer's settings** (Rendering card, the layer selected in
+Layers):
 
-The layer's **Size** in the Rendering card scales both. They are coloured as the layer colours them: by group (the groups not shown left out), else by object. Those colours are fixed when the geometry is made: a change of groups reads the layer again.
+| Setting | What it does |
+|---|---|
+| Size | Points' and lines' radius, times their natural one (0.1–5 ×) |
+| Opacity | How much light the surfaces stop. Below 1 they are see-through: a fine dither while the view moves, smoothed in the path-traced picture |
+| Roughness | How broad the highlights are: low is polished, high is matte |
+| Specular | The share of light reflected as a highlight rather than in the surface's colour |
+| Emission | Light given off in the surface's own colour (the key light is 1) |
 
-The grid below remains only for older looks; it is removed in a later version.
+A material change redraws at once; only Size builds the geometry again.
 
-The grid holds each voxel's distance to the nearest point (or surface),
-fitted to the points and up to 128 M voxels (the Object voxels setting):
-a point is drawn a voxel in radius and a surface as a shell about a voxel
-thick, so a thin dendrite stays thin down to the grid's voxel (about a
-micrometre for a few MICrONS cells). A layer's density, when set, makes
-them translucent; otherwise they are opaque.
+**Quality › Geometry** is the budget: the triangles, spheres and tubes
+read and traced, 2 million unless set (0.25–8 million), shared equally by
+the geometry layers switched on. A segmentation's chosen segments are
+read one by one, each at the finest level the layer's share leaves room
+for (small cells finer, large ones as fine as fits). More is finer but
+takes longer to read and build, and needs about 55 MB of GPU memory a
+million.
 
-Cuts and crops apply to objects as to the volume. Stills and movies
-draw them too. This browser's renderer does not draw objects yet.
+**Choosing segments.** Each segment's mesh is built on its own, so
+choosing another reads and builds only that one, and switching one off
+takes it out at once; the others stay as they are. A traced surface is
+picked as Neuroglancer's meshes are: under the mouse, the layer shows its
+segment, and a double-click selects it. At most four geometry layers
+are traced together, and a GPU whose textures are too small for the
+geometry says so in the status line.
+
+Cuts and crops apply to geometry as to the volume. Stills and movies
+draw it too.
 
 ## The HiP-CT organ presets
 

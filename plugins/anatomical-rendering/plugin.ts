@@ -21,14 +21,13 @@ import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX
 import { placementMm } from "../luxar/view_math.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { type GeometryRead, type PointsLevel, pointsTable, readPoints } from "./points.js";
-import { joinPrimitives } from "./geometry/primitives.js";
-import { type LayerGeometry, layerGeometry } from "./geometry/from_read.js";
-import { buildSurfacesAsync, type Surfaces } from "./geometry/surfaces.js";
-import { GEO_LAYERS, GEO_MAX } from "./geometry/live_geometry.js";
+import { allocateLevels, GEOMETRY_BUDGET, type GeometryRead, readGeometry } from "./points.js";
+import { layerGeometry } from "./geometry/from_read.js";
+import { type Block, buildBlockAsync, packSurfaces } from "./geometry/surfaces.js";
+import { DEFAULT_SURFACE, GEO_LAYERS, GEO_MAX, geoBytes, type SurfaceMaterial } from "./geometry/live_geometry.js";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { meshSourceOf } from "@ngplatform/sdk/sources";
-import { meshStoreUrl } from "../luxar/mesh_layers.js";
+import { meshStoreUrl, parseMeshStoreUrl } from "../luxar/mesh_layers.js";
 import { axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, sceneDirection, sceneAngles, renderSource, planeClip, planeFromView, safeHref, unitMm, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
@@ -82,6 +81,8 @@ export interface LayerLook {
   density?: number;
   /** Points' and lines' size in this browser: times their natural radius. */
   size?: number;
+  /** A geometry layer's surfaces' material in this browser (else DEFAULT_SURFACE's). */
+  surface?: Partial<SurfaceMaterial>;
   cuts?: Cut[];
   planes?: CameraPlane[];
   boxes?: Crop[];
@@ -188,6 +189,8 @@ export interface Saved {
   denoise: boolean;
   /** The voxels of the image this browser holds and draws as the object (the finest level within them). */
   objectVoxels: number;
+  /** The primitives (triangles, spheres, tubes) this browser reads across the geometry layers it traces. */
+  geometryBudget: number;
   /** Show the path-traced picture of the view when the camera rests, over the object (else the object alone; the host renders stills, movies and splats). */
   restPicture: boolean;
   keyframes: Keyframe[];
@@ -284,6 +287,7 @@ export function readSaved(raw: unknown): Saved {
           ...(typeof v.preset === "string" && v.preset ? { preset: v.preset } : {}),
           ...(typeof v.density === "number" && Number.isFinite(v.density) ? { density: v.density } : {}),
           ...(typeof v.size === "number" && Number.isFinite(v.size) && v.size > 0 ? { size: v.size } : {}),
+          ...(v.surface && typeof v.surface === "object" ? { surface: readSurface(v.surface) } : {}),
           ...(Array.isArray(v.cuts) ? { cuts: readCuts(v.cuts) } : {}),
           ...(Array.isArray(v.planes) ? { planes: readPlanes({ planes: v.planes }) } : {}),
           ...(Array.isArray(v.boxes) ? { boxes: readBoxes(v.boxes) } : {}),
@@ -332,6 +336,7 @@ export function readSaved(raw: unknown): Saved {
     denoise: s.denoise !== false,
     restPicture: s.restPicture === true,
     objectVoxels: num(s.objectVoxels, LIVE_VOXELS),
+    geometryBudget: Math.min(Math.max(num(s.geometryBudget, GEOMETRY_BUDGET), 0.25e6), GEO_MAX),
     keyframes: Array.isArray(s.keyframes) ? s.keyframes.filter((k) => k && typeof k.time === "number" && k.view && typeof k.view === "object") : [],
     boxes: Array.isArray(s.boxes)
       ? readBoxes(s.boxes)
@@ -1002,13 +1007,9 @@ class AnatomicalRendering {
     this.watchObjects();
     const found = this.target();
     const browser = this.saved.where === "browser";
-    // Point clouds drawn here: Neuroglancer's own drawing of each hidden once the object shows it (it then reads nothing).
+    // Geometry traced here: Neuroglancer's own drawing of each layer hidden once the object shows it (it then reads nothing).
     const drawnPoints = this.saved.on && browser
-      ? this.renderedLayers().filter((l) => {
-        const p = this.isVectors(l) ? this.points.get(l.name) : undefined;
-        if (p?.geom !== undefined) return this.surfaceLayout?.layers.some((x) => x.name === l.name) === true && this.live.heldSurfaces !== undefined;
-        return p?.level !== undefined && this.live.levelOf(this.sourceOf(l)!) === p.level;
-      })
+      ? this.renderedLayers().filter((l) => this.isVectors(l) && this.surfaceLayout?.layers.some((x) => x.name === l.name) === true && this.live.heldSurfaces !== undefined)
       : [];
     this.hidePointsDrawing(new Set(drawnPoints.map((l) => l.name)));
     // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
@@ -1051,8 +1052,9 @@ class AnatomicalRendering {
       this.rebuildSurfaces(clouds);
       if (layers.length > 1 || clouds.length > 0) {
         this.closeLocal();
-        void this.live.open(layers.map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
-        for (const l of clouds) this.ensurePoints(l);
+        // The images read as volumes; the geometry layers traced as surfaces.
+        void this.live.open(layers.filter((l) => !this.isVectors(l)).map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
+        for (const l of clouds) this.ensurePoints(l, clouds.length);
       } else void this.ensureLocal(target);
     } else {
       this.closeLocal();
@@ -1076,138 +1078,220 @@ class AnatomicalRendering {
     this.pointsHidden = new Set(names);
   }
 
-  /** Point clouds read in this browser, by layer: what each was read for (store, colours, voxels), and its grid once made. */
+  /** Geometry layers read in this browser, by layer: their parts (a segment's mesh each, or the layer whole). */
   private readonly points = new Map<string, PointsEntry>();
-  /** The surfaces traced now: which layers' meshes, in order, each one's objects (ids) from where in the numbering. */
-  private surfaceLayout: { key: string; layers: { name: string; geometry: Built; offset: number }[] } | undefined;
+  /** The surfaces traced now: each layer's objects (from `offset`), their segments or colours. */
+  private surfaceLayout: { key: string; layers: { name: string; offset: number; objectCount: number; ids?: bigint[]; colours?: Float32Array; serials: number[] }[] } | undefined;
   private surfacesWanted = "";
+  /** Parts are read one at a time (a reader each, one after another). */
+  private reading: Promise<void> = Promise.resolve();
 
   /**
-   * Reads a Zarr Vectors layer's points (once for its store, its Vertex colour and the voxels) and makes them a
-   * volume the object draws: the live object's level for the layer's source.
+   * Reads a geometry layer for the path tracer, in parts: a segmentation's chosen segments' meshes each its own (so
+   * choosing another reads only it), a Zarr Vectors layer whole. Each part at the finest level within its share of
+   * the budget (`layers`: how many layers share it; a layer's share split between its segments).
    */
-  private ensurePoints(layer: LayerInfo): void {
-    const src = this.sourceOf(layer)!;
-    // The store as the reader opens it (gs:// and s3:// as https), as Luxar reads it; a segmentation's meshes' store.
-    const store = this.meshStoreOf(layer) ?? storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
+  private ensurePoints(layer: LayerInfo, layers: number): void {
     const look = this.lookOf(layer);
-    // Two bytes a voxel (its nearness and its label): at most 128 M.
-    const voxels = Math.min(this.saved.objectVoxels, 128e6);
-    // (A mesh is placed as its layer is when its surfaces are made: placed again, made again.)
-    const placement = this.placementOf(layer);
-    const key = JSON.stringify([store, look?.by === "group" ? look.group : null, voxels, placement ? Array.from(placement) : null]);
-    const had = this.points.get(layer.name);
-    if (had?.key === key) {
-      if (had.level && this.live.levelOf(src) !== had.level) this.live.putLevel(had.level, src);
-      return;
+    const budget = this.saved.geometryBudget / Math.max(1, Math.min(layers, GEO_LAYERS));
+    let entry = this.points.get(layer.name);
+    if (entry === undefined) {
+      entry = { parts: new Map(), wanted: [], text: "Object: reading the geometry" };
+      this.points.set(layer.name, entry);
     }
-    const mine: PointsEntry = { key, text: "Object: reading the points" };
-    this.points.set(layer.name, mine);
-    this.problem = "";
-    const current = () => this.points.get(layer.name) === mine;
-    const say = (text: string) => {
-      if (!current()) return;
-      mine.text = `Object: ${text}`;
-      this.statusUpdate?.();
-    };
-    void readPoints(store, look, voxels, say, () => !current(), (id) => this.ctx.viewer.segmentColour(layer.name, id), true).then(
-      (level) => {
-        if (!current()) return;
-        if ("kind" in level) {
-          // Geometry: a mesh's triangles, points as spheres, lines as tubes, traced with the other layers' (rebuildSurfaces).
-          mine.geom = { read: level, placement, look };
-          mine.text = `Object: level ${level.level}, ${level.count.toLocaleString()} ${level.kind === "meshes" ? "triangles" : level.kind === "lines" ? "segments" : "points"}`;
-          this.update();
-          return;
-        }
-        mine.level = level;
-        mine.text = `Object: ${level.path} as ${level.size.join(" × ")} voxels`;
-        this.live.putLevel(level, src);
-        this.update();
-      },
-      (e: Error) => {
-        if (!current() || e.message === "stale") return;
-        mine.failed = true;
-        mine.text = "";
-        this.problem = `The points of ${layer.name} could not be read: ${e.message}`;
-        this.statusUpdate?.();
-      },
-    );
+    entry.placement = this.placementOf(layer);
+    entry.look = look;
+    const meshes = parseMeshStoreUrl(this.meshStoreOf(layer) ?? "");
+    // Each part: its store, and what it is read for (a mesh's level within its share; a store's colours and budget).
+    const wanted: { key: string; store: string; readFor: (part: Part) => string; budget: number; look: ColourByLook | undefined; level?: number }[] = [];
+    if (meshes !== undefined) {
+      // At first an equal share each; once every segment's levels are known, levels shared out between them
+      // (allocateLevels, two triangles a vertex), the segments that can come finer read again.
+      const share = budget / Math.max(1, meshes.ids.length);
+      const known = meshes.ids.map((id) => entry!.parts.get(String(id))?.read);
+      const levels = known.every((r) => r !== undefined) ? allocateLevels(known as GeometryRead[], budget / 2) : undefined;
+      meshes.ids.forEach((id, i) => {
+        // A mesh's key: the level it reads (its key once read: the level it read).
+        const level = levels?.[i];
+        const readFor = () => (level !== undefined ? String(level) : (known[i] ? String(known[i]!.level) : `share ${share}`));
+        wanted.push({ key: String(id), store: meshStoreUrl(meshes.volume, [id]), readFor, budget: share, look: undefined, level });
+      });
+    } else {
+      const store = storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
+      const readFor = () => JSON.stringify([store, look?.by === "group" ? look.group : null, budget]);
+      wanted.push({ key: "", store, readFor, budget, look });
+    }
+    entry.wanted = wanted.map((w) => w.key);
+    for (const k of [...entry.parts.keys()]) if (!entry.wanted.includes(k)) entry.parts.delete(k);
+    for (const w of wanted) {
+      let part = entry.parts.get(w.key);
+      if (part === undefined) {
+        part = { readKey: "", wantKey: "" };
+        entry.parts.set(w.key, part);
+      }
+      const want = w.readFor(part);
+      if (part.readKey === want || part.wantKey === want) continue;
+      part.wantKey = want;
+      this.readPart(layer.name, entry, part, w.store, w.look, w.budget, meshes !== undefined, w.level);
+    }
     this.statusUpdate?.();
   }
 
+  /** Reads one part (after the parts before it), unless it is no longer wanted by then. */
+  private readPart(name: string, entry: PointsEntry, part: Part, store: string, look: ColourByLook | undefined, budget: number, mesh: boolean, level?: number): void {
+    const key = part.wantKey;
+    const stale = () => this.points.get(name) !== entry || ![...entry.parts.values()].includes(part) || part.wantKey !== key;
+    this.problem = "";
+    this.reading = this.reading.then(async () => {
+      if (stale()) return;
+      const say = (text: string) => {
+        if (stale()) return;
+        entry.text = `Object: ${text}`;
+        this.statusUpdate?.();
+      };
+      try {
+        const read = await readGeometry(store, look, budget, say, stale, level);
+        if (stale()) return;
+        part.read = read;
+        // A mesh's key is the level it read; a store's, what it was read for.
+        part.readKey = mesh ? String(read.level) : key;
+        part.wantKey = part.readKey;
+        part.failed = false;
+        const done = [...entry.parts.values()].filter((p) => p.read).length;
+        entry.text = `Object: level ${read.level}${entry.wanted.length > 1 ? `, ${done} of ${entry.wanted.length} segments read` : `, ${read.count.toLocaleString()} ${read.kind === "meshes" ? "triangles" : read.kind === "lines" ? "segments" : "points"}`}`;
+        this.update();
+      } catch (e) {
+        if (stale() || (e as Error).message === "stale") return;
+        part.failed = true;
+        part.wantKey = "";
+        this.problem = `The geometry of ${name} could not be read: ${(e as Error).message}`;
+        this.statusUpdate?.();
+      }
+    });
+  }
+
+  /** A geometry layer's kind, as read. */
+  private geometryKind(name: string): GeometryRead["kind"] | undefined {
+    return [...(this.points.get(name)?.parts.values() ?? [])].find((p) => p.read)?.read?.kind;
+  }
+
   /**
-   * The surfaces traced: the meshes of the layers drawn (`layers`, in order, at most GEO_LAYERS) built into one BVH
-   * (in a worker) when they change; none when no mesh is drawn.
+   * The surfaces traced: the parts of the layers drawn (`layers`, in order, at most GEO_LAYERS), each built into its
+   * own block (in a worker) when it is read, sized or placed anew; the blocks packed under one tree once every part
+   * wanted has one, the surfaces drawn before kept until then. None when no geometry is drawn.
    */
   private rebuildSurfaces(layers: LayerInfo[]): void {
-    // Each layer's primitives, made again when its size changes.
-    const parts: { l: LayerInfo; g: Built }[] = [];
+    const drawn: { l: LayerInfo; parts: Part[] }[] = [];
+    let ready = true;
     for (const l of layers) {
       const e = this.points.get(l.name);
-      if (e?.geom === undefined || parts.length >= GEO_LAYERS) continue;
+      if (e === undefined || drawn.length >= GEO_LAYERS) continue;
       const size = this.saved.looks[l.name]?.size ?? 1;
-      const geom = e.geom;
-      if (geom.built?.size !== size) {
-        const g = layerGeometry(geom.read, toMmOf(geom.read, geom.placement), geom.look, size, (id) => this.ctx.viewer.segmentColour(l.name, id));
-        geom.built = { ...g, size, serial: ++geometrySerial };
-        e.text = `Object: level ${geom.read.level}, ${g.text}`;
+      const parts: Part[] = [];
+      for (const k of e.wanted) {
+        const part = e.parts.get(k);
+        if (part === undefined || part.failed) continue;
+        if (part.read) this.buildPart(l.name, e, part, size);
+        if (part.done === undefined) ready = false;
+        parts.push(part);
       }
-      parts.push({ l, g: geom.built });
+      drawn.push({ l, parts });
     }
-    const key = JSON.stringify(parts.map((x) => [x.l.name, x.g.serial]));
+    if (!ready) return;
+    const key = JSON.stringify(drawn.map((x) => [x.l.name, x.parts.map((p) => p.done!.serial)]));
     if (key === this.surfacesWanted) return;
     this.surfacesWanted = key;
-    if (parts.length === 0) {
+    const blocks = drawn.flatMap((x) => x.parts.map((p) => p.done!));
+    if (blocks.length === 0) {
       this.surfaceLayout = undefined;
       this.live.putSurfaces(undefined);
       return;
     }
-    const total = parts.reduce((n, x) => n + x.g.prims.objects.length, 0);
+    const total = blocks.reduce((n, b) => n + b.block.n, 0);
     if (total > GEO_MAX) {
       this.problem = `Too much geometry to trace here: ${total.toLocaleString()} primitives (at most ${GEO_MAX.toLocaleString()}).`;
       this.statusUpdate?.();
       return;
     }
-    const joined = joinPrimitives(parts.map((x) => ({ ...x.g.prims, objectCount: x.g.objectCount })));
-    const objectCount = parts.reduce((n, x) => n + x.g.objectCount, 0);
+    // Each layer's objects after the layers' before; each part's after its layer's parts' before.
+    const placed: { block: Block; objectBase: number }[] = [];
+    let base = 0;
+    const layout = drawn.map(({ l, parts }) => {
+      const offset = base;
+      const ids: bigint[] = [];
+      const colours: number[] = [];
+      let byId = true;
+      for (const p of parts) {
+        const d = p.done!;
+        placed.push({ block: d.block, objectBase: base });
+        base += d.block.objectCount;
+        if (d.ids) ids.push(...d.ids);
+        else byId = false;
+        if (d.colours) colours.push(...d.colours);
+      }
+      return { name: l.name, offset, objectCount: base - offset, ...(byId ? { ids } : { colours: new Float32Array(colours) }), serials: parts.map((p) => p.done!.serial) };
+    });
     const started = performance.now();
-    void buildSurfacesAsync({ ...joined, objectCount }).then(
-      (s: Surfaces) => {
-        if (this.surfacesWanted !== key) return;
-        this.surfaceLayout = { key, layers: parts.map((x, i) => ({ name: x.l.name, geometry: x.g, offset: joined.offsets[i] })) };
-        const ms = Math.round(performance.now() - started);
-        this.live.putSurfaces(s, `Surfaces: ${total.toLocaleString()} primitives, ${objectCount.toLocaleString()} object${objectCount === 1 ? "" : "s"} (built in ${ms} ms)`);
+    const s = packSurfaces(placed, base);
+    const ms = Math.round(performance.now() - started);
+    this.surfaceLayout = { key, layers: layout };
+    const mb = Math.round(geoBytes(s) / 1e6);
+    this.live.putSurfaces(s, `Surfaces: ${total.toLocaleString()} primitives, ${base.toLocaleString()} object${base === 1 ? "" : "s"} in ${blocks.length} block${blocks.length === 1 ? "" : "s"} (${mb} MB; joined in ${ms} ms)`);
+    this.update();
+  }
+
+  /** A part's primitives (at `size`, placed as its layer is) and their block, built in the background when they change. */
+  private buildPart(name: string, entry: PointsEntry, part: Part, size: number): void {
+    const read = part.read!;
+    const key = JSON.stringify([part.readKey, read.level, size, entry.placement ? Array.from(entry.placement) : null]);
+    if (part.building === key || part.done?.key === key) return;
+    part.building = key;
+    const g = layerGeometry(read, toMmOf(read, entry.placement), entry.look, size, (id) => this.ctx.viewer.segmentColour(name, id));
+    if (entry.wanted.length <= 1) entry.text = `Object: level ${read.level}, ${g.text}`;
+    void buildBlockAsync({ primitives: g.prims, objectCount: g.objectCount }).then(
+      (block) => {
+        if (part.building !== key) return;
+        part.building = undefined;
+        part.done = { key, block, serial: ++geometrySerial, ...(g.ids ? { ids: g.ids } : {}), ...(g.colours ? { colours: g.colours } : {}) };
         this.update();
       },
       (e: Error) => {
-        if (this.surfacesWanted !== key) return;
+        if (part.building !== key) return;
+        part.building = undefined;
+        part.failed = true;
         this.problem = `The surfaces could not be built: ${e.message}`;
         this.statusUpdate?.();
       },
     );
   }
 
-  /** The surfaces' look for a frame: each object's colour (its segment's) and layer, each layer's cuts. */
+  /** The surfaces' look for a frame: each object's colour (its segment's) and layer, each layer's cuts, its segments' picks. */
   private surfacesLook(frame: Frame3d): LiveLook["geometry"] {
     const layout = this.surfaceLayout;
     const s = this.live.heldSurfaces;
     if (layout === undefined || s === undefined) return undefined;
     const colours = new Float32Array(4 * s.objectCount);
     const keyParts: unknown[] = [];
+    const picks: { base: number; first: number; count: number }[] = [];
     const layers = layout.layers.map((x, li) => {
       const layer = this.ctx.viewer.layers().find((l) => l.name === x.name);
-      const g = x.geometry;
-      for (let i = 0; i < g.objectCount; ++i) {
+      for (let i = 0; i < x.objectCount; ++i) {
         // A mesh's segments as the layer colours them now; points' and lines' as they were coloured.
-        const c = g.ids ? (this.ctx.viewer.segmentColour(x.name, g.ids[i]) ?? [0.8, 0.8, 0.8]) : g.colours!.subarray(3 * i, 3 * i + 3);
+        const c = x.ids ? (this.ctx.viewer.segmentColour(x.name, x.ids[i]) ?? [0.8, 0.8, 0.8]) : x.colours!.subarray(3 * i, 3 * i + 3);
         colours.set([c[0], c[1], c[2], layer ? li + 1 : 0], 4 * (x.offset + i));
       }
-      keyParts.push(g.ids ? Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + g.objectCount))) : [g.serial, layer !== undefined]);
+      keyParts.push(x.ids ? Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + x.objectCount))) : [x.serials, layer !== undefined]);
+      // Segments picked as Neuroglancer's meshes are: under the mouse, and selected by a double-click.
+      picks.push({ base: x.ids && layer ? (frame.registerPicks?.(x.name, x.ids) ?? 0) : 0, first: x.offset, count: x.objectCount });
       const { clips } = layer ? this.cropsFor(layer, frame) : { clips: [] };
-      return { clips, crop: null };
+      return { clips, crop: null, material: this.surfaceOf(x.name) };
     });
-    return { colours, key: JSON.stringify([layout.key, keyParts]), layers, roughness: 0.45, specular: 0.15, exposure: this.saved.exposure };
+    return { colours, key: JSON.stringify([layout.key, keyParts]), layers, exposure: this.saved.exposure, picks };
+  }
+
+  /** A geometry layer's surfaces' material: its own, else the default's. */
+  private surfaceOf(name: string): SurfaceMaterial {
+    return { ...DEFAULT_SURFACE, ...(this.saved.looks[name]?.surface ?? {}) };
   }
 
   /** The layers that can be objects: precomputed segmentations (their chosen segments) and Zarr Vectors stores (their geometry). */
@@ -2255,20 +2339,11 @@ class AnatomicalRendering {
       return Array.isArray(preset.stops) && url !== undefined ? { view, volumes: [{ url, preset, placement: this.placementOf(first!) }], ...this.liveLight() } : undefined;
     }
     const volumes: LiveLook["volumes"] = [];
-    // The images and Zarr Vectors point clouds switched on.
+    // The images switched on (geometry layers are traced as surfaces).
     for (const layer of this.renderedLayers()) {
+      // (Geometry layers are traced as surfaces: surfacesLook.)
+      if (this.isVectors(layer)) continue;
       const url = this.sourceOf(layer);
-      const level = url !== undefined ? this.live.levelOf(url) : undefined;
-      if (url !== undefined && level?.labels !== undefined) {
-        // A point cloud: its spheres opaque within, each in its group's colour, at its density.
-        const colours = (level as PointsLevel).colours;
-        // Its own density, else opaque within a voxel (the points' grid is in millimetres).
-        const density = this.saved.looks[layer.name]?.density ?? 6 / Math.abs(level.voxelToRas[0]);
-        const preset = { name: "Points", domain: "data", stops: [], density, exposure: this.saved.exposure, shade_mix: 0.9, gradient_scale: 12, roughness: 0.4, specular: 0.2, albedo: 0.9, phase_g: 0, surface_inset: 0 } as unknown as LivePreset;
-        const { crop, clips } = this.cropsFor(layer, frame);
-        volumes.push({ url, preset, table: { rgba: pointsTable(colours, (level as PointsLevel).radius), key: JSON.stringify([colours, (level as PointsLevel).radius]) }, placement: this.placementOf(layer), crop, clips });
-        continue;
-      }
       const preset = url !== undefined ? this.layerPreset(layer, url) : undefined;
       if (url === undefined || preset === undefined) continue;
       // Each its own crops and cuts (and all layers'): where one is cut away, the others are still there.
@@ -2781,7 +2856,7 @@ class AnatomicalRendering {
     if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
     if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
     if (!host && this.local && !this.local.ready && this.localText) return { progress: this.localText };
-    const reading = host ? undefined : [...this.points.values()].find((p) => p.level === undefined && p.geom === undefined && !p.failed);
+    const reading = host ? undefined : [...this.points.values()].find((e) => e.wanted.some((k) => { const p = e.parts.get(k); return p !== undefined && !p.failed && p.done === undefined; }));
     if (reading !== undefined) return { progress: reading.text.replace(/^Object: /, "") };
     return {};
   }
@@ -2953,6 +3028,25 @@ class AnatomicalRendering {
     };
     const geometrySize = slider(1, { min: 0.1, max: 5, step: 0.05, label: "Size", unit: "×", onchange: setSize });
     const geometrySizeField = field("Size", geometrySize, { info: "Spheres' and tubes' radius, times their natural one: a quarter of the points' mean spacing, a sixth of a segment's length, or the store's own radii." });
+    // A geometry layer's surfaces' material here: redrawn, not built again.
+    const setSurface = (k: keyof SurfaceMaterial, v: number, preview: boolean) => {
+      const l = this.edited();
+      if (l !== undefined) this.setLook(l, { surface: { ...this.saved.looks[l.name]?.surface, [k]: v } }, preview);
+    };
+    const surfaceSlider = (k: keyof SurfaceMaterial, label: string, max: number, min = 0) =>
+      slider(DEFAULT_SURFACE[k], { min, max, step: 0.01, label, oninput: (v) => setSurface(k, v, true), onchange: (v) => setSurface(k, v, false) });
+    const surfaceSliders = {
+      opacity: surfaceSlider("opacity", "Opacity", 1),
+      roughness: surfaceSlider("roughness", "Roughness", 1, 0.02),
+      specular: surfaceSlider("specular", "Specular", 1),
+      emission: surfaceSlider("emission", "Emission", 5),
+    };
+    const surfacePart = el("div", { class: "stack" },
+      field("Opacity", surfaceSliders.opacity, { info: "How much of the light the surfaces stop: below 1 they are see-through (in the moving view, a fine dither that the path-traced picture smooths)." }),
+      field("Roughness", surfaceSliders.roughness, { info: "How broad their highlights are: low is polished, high is matte." }),
+      field("Specular", surfaceSliders.specular, { info: "The share of the light reflected as a highlight rather than in their colour." }),
+      field("Emission", surfaceSliders.emission, { info: "Light they give off in their own colour, as if lit from within (the key light is 1)." }),
+    );
     const presetRow = el("div", { class: "row" },
       field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
       button("Load…", () => this.loadPresetFile()));
@@ -2965,6 +3059,7 @@ class AnatomicalRendering {
       editorPart,
       densityField,
       geometrySizeField,
+      surfacePart,
       field("Exposure", exposure),
       jar,
     );
@@ -3041,6 +3136,11 @@ class AnatomicalRendering {
       this.save((x) => (x.objectVoxels = Math.max(1, v) * 1e6));
       this.update();
     } });
+    const geometryBudget = slider(GEOMETRY_BUDGET / 1e6, { min: 0.25, max: GEO_MAX / 1e6, step: 0.25, unit: "M", label: "Geometry", onchange: (v) => {
+      this.save((x) => (x.geometryBudget = Math.min(Math.max(v, 0.25), GEO_MAX / 1e6) * 1e6));
+      this.update();
+    } });
+    const geometryField = field("Geometry", geometryBudget, { info: "The triangles, spheres and tubes this browser reads and traces, shared by the geometry layers drawn: each layer at its finest level within its share. More is finer, and takes longer to read and build and more GPU memory (about 55 MB a million)." });
     const restPicture = checkbox("Path-traced picture when still", false, (v) => {
       this.lastKey = "";
       this.save((x) => (x.restPicture = v));
@@ -3053,6 +3153,7 @@ class AnatomicalRendering {
       detailField,
       denoise,
       field("Object", objectVoxels, { info: "The voxels of the image this browser holds and draws as the object in the 3-D view: the finest level within this. More is sharper, and takes longer to read and more of this computer's GPU memory." }),
+      geometryField,
       restPicture,
       field("Samples per pixel", samples, { info: "Where a still view stops refining." }),
       frameReadout,
@@ -3447,10 +3548,16 @@ class AnatomicalRendering {
       jar.hidden = !onHost_ || alone;
       densityField.hidden = alone;
       // Points and lines drawn here: their size.
-      const kind = edited ? this.points.get(edited.name)?.geom?.read.kind : undefined;
+      const kind = edited ? this.geometryKind(edited.name) : undefined;
       geometrySizeField.hidden = !(alone && !onHost_ && (kind === "points" || kind === "lines"));
       if (edited) geometrySize.set(this.saved.looks[edited.name]?.size ?? 1);
-      // A point cloud drawn here has no preset: its spheres are coloured as the layer colours its points.
+      // Any geometry traced here (meshes too): its surfaces' material.
+      surfacePart.hidden = !(alone && !onHost_ && kind !== undefined);
+      if (edited) {
+        const m = this.surfaceOf(edited.name);
+        for (const k of Object.keys(surfaceSliders) as (keyof SurfaceMaterial)[]) surfaceSliders[k].set(m[k]);
+      }
+      // Geometry drawn here has no preset: it is coloured as the layer colours it.
       presetRow.hidden = alone && this.saved.where === "browser";
       regionsEmpty.hidden = segs.length > 0;
       regionsBody.hidden = segs.length === 0;
@@ -3496,6 +3603,8 @@ class AnatomicalRendering {
       denoise.set(s.denoise);
       restPicture.set(s.restPicture);
       objectVoxels.set(s.objectVoxels / 1e6);
+      geometryBudget.set(s.geometryBudget / 1e6);
+      geometryField.hidden = onHost_ || !this.renderedLayers().some((l) => this.isVectors(l));
       samples.set(s.maxSamples);
 
       // Lighting.
@@ -3631,20 +3740,39 @@ export const plugin: PluginModule = {
   },
 };
 
-/** A Zarr Vectors or mesh layer read for this browser's renderer: its points as a grid, or its geometry to trace. */
+/** A geometry layer read for this browser's renderer: its parts (by segment, or "" for the layer whole), those wanted in order. */
 interface PointsEntry {
-  key: string;
-  level?: PointsLevel;
-  /** The geometry read, where its layer places it and as it colours it; its primitives at a size once made. */
-  geom?: { read: GeometryRead; placement?: ArrayLike<number>; look: ColourByLook | undefined; built?: Built };
+  parts: Map<string, Part>;
+  wanted: string[];
+  /** Where the layer is placed and how it is coloured now (its parts are built so). */
+  placement?: ArrayLike<number>;
+  look?: ColourByLook;
   text: string;
-  failed?: boolean;
 }
 
-/** A layer's primitives, made at `size`; `serial` tells makings apart. */
-type Built = LayerGeometry & { size: number; serial: number };
+/** A part of a geometry layer: what it was read for and is wanted for, what it read, and its block once built. */
+interface Part {
+  readKey: string;
+  wantKey: string;
+  read?: GeometryRead;
+  failed?: boolean;
+  /** The block being built (its key), and the last built: its primitives' objects' segments or colours. */
+  building?: string;
+  done?: { key: string; block: Block; serial: number; ids?: bigint[]; colours?: Float32Array };
+}
 
 let geometrySerial = 0;
+
+/** A saved surface material's fields that are numbers in range. */
+function readSurface(v: Record<string, unknown>): Partial<SurfaceMaterial> {
+  const out: Partial<SurfaceMaterial> = {};
+  const ranges: Record<keyof SurfaceMaterial, [number, number]> = { opacity: [0, 1], roughness: [0.02, 1], specular: [0, 1], emission: [0, 10] };
+  for (const [k, [lo, hi]] of Object.entries(ranges) as [keyof SurfaceMaterial, [number, number]][]) {
+    const x = v[k];
+    if (typeof x === "number" && Number.isFinite(x)) out[k] = Math.min(Math.max(x, lo), hi);
+  }
+  return out;
+}
 
 /** Store coordinates to physical millimetres, placed by `placement` (column-major; undefined: where they are). */
 function toMmOf(read: GeometryRead, placement: ArrayLike<number> | undefined): number[] {

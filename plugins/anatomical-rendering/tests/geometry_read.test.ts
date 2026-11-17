@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { BuiltChunk } from "../../luxar/chunk_build.js";
 import { layerGeometry } from "../geometry/from_read.js";
 import { CONE, SPHERE } from "../geometry/lbvh.js";
-import { lineRadius, pointRadius } from "../geometry/primitives.js";
+import { expandPrims, lineRadius, pointRadius } from "../geometry/primitives.js";
 import type { GeometryRead } from "../points.js";
+import { readSaved } from "../plugin.js";
 
 const ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -17,7 +18,7 @@ function chunk(vertices: number[][], slots: number[], ids: number[], segments: [
 }
 
 const read = (kind: GeometryRead["kind"], chunks: BuiltChunk[], extra: Partial<GeometryRead> = {}): GeometryRead => ({
-  kind, chunks, mm: [1, 1, 1], level: 0, count: chunks.reduce((n, c) => n + (kind === "lines" ? c.segmentCount : c.vertexCount), 0), lower: [0, 0, 0], upper: [8, 8, 8], perVertex: false, radii: false, ...extra,
+  kind, chunks, mm: [1, 1, 1], level: 0, count: chunks.reduce((n, c) => n + (kind === "lines" ? c.segmentCount : c.vertexCount), 0), lower: [0, 0, 0], upper: [8, 8, 8], perVertex: false, radii: false, levels: [{ vertexCount: 4 }], ...extra,
 });
 
 describe("points and lines to trace", () => {
@@ -28,7 +29,7 @@ describe("points and lines to trace", () => {
     expect(g.prims.objects.length).toBe(4);
     expect(Array.from(g.prims.kinds!)).toEqual([SPHERE, SPHERE, SPHERE, SPHERE]);
     expect(g.radius).toBeCloseTo(2 * pointRadius(4, [0, 0, 0], [8, 8, 8]), 9);
-    expect(g.prims.prims[3]).toBeCloseTo(g.radius!, 6);
+    expect(expandPrims(g.prims)[3]).toBeCloseTo(g.radius!, 6);
     expect(Array.from(g.prims.objects)).toEqual([0, 0, 1, 1]);
     expect(Array.from(g.colours!)).toEqual([1, 0, 0, 0, 0, 1]);
   });
@@ -46,9 +47,22 @@ describe("points and lines to trace", () => {
     const g = layerGeometry(read("lines", [c]), ID, undefined, 1, () => [0, 1, 0]);
     expect(Array.from(g.prims.kinds!)).toEqual([CONE, CONE]);
     expect(g.radius).toBeCloseTo(lineRadius([6, 6], Math.hypot(8, 8, 8)), 9);
-    expect(Array.from(g.prims.prims.subarray(0, 8))).toEqual([0, 0, 0, g.prims.prims[3], 6, 0, 0, g.prims.prims[7]]);
+    const e = expandPrims(g.prims);
+    expect(Array.from(e.subarray(0, 8))).toEqual([0, 0, 0, e[3], 6, 0, 0, e[7]]);
+    // Indexed: the two tubes share the corner vertex.
+    expect(Array.from(g.prims.index)).toEqual([0, 1, 1, 1, 2, 2]);
     const r = layerGeometry(read("lines", [c], { radii: true }), ID, undefined, 2, () => [0, 1, 0]);
-    expect([r.prims.prims[3], r.prims.prims[7]]).toEqual([1, 0.5]);
+    const er = expandPrims(r.prims);
+    expect([er[3], er[7]]).toEqual([1, 0.5]);
     expect(r.text).toContain("the store's radii");
+  });
+});
+
+describe("a geometry layer's settings, as saved", () => {
+  it("keeps a surface material's fields in range and the geometry budget within what can be traced", () => {
+    const s = readSaved({ looks: { cells: { surface: { opacity: 1.5, roughness: 0, specular: 0.3, emission: "bright" } } }, geometryBudget: 50e6 });
+    expect(s.looks.cells.surface).toEqual({ opacity: 1, roughness: 0.02, specular: 0.3 });
+    expect(s.geometryBudget).toBe(8e6);
+    expect(readSaved({}).geometryBudget).toBe(2e6);
   });
 });

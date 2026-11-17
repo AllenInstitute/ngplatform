@@ -10,9 +10,9 @@
  */
 import { createRequire } from "node:module";
 import { geoData, geoLayout, geometryGlsl } from "../geometry/live_geometry.ts";
-import { CONE, primHit, SPHERE, TRIANGLE } from "../geometry/lbvh.ts";
-import { packNormal } from "../geometry/primitives.ts";
-import { buildSurfaces } from "../geometry/surfaces.ts";
+import { CONE, SPHERE, TRIANGLE } from "../geometry/lbvh.ts";
+import { NO_NORMAL, type Primitives } from "../geometry/primitives.ts";
+import { buildBlock, packSurfaces, surfaceHit } from "../geometry/surfaces.ts";
 
 const require = createRequire(import.meta.url);
 // Playwright is not a dependency of the app (no types here): what this script uses of it.
@@ -59,7 +59,28 @@ for (let k = 0; k < 20; ++k) {
   objects.push(2);
 }
 const n = kinds.length;
-const s = buildSurfaces({ prims: new Float32Array(prims), objects: new Int32Array(objects), normals: new Uint32Array(4 * n).fill(packNormal(0, 0, 1)) }, 4, new Int32Array(kinds));
+// Indexed (each primitive its own vertices), in two blocks under a top tree.
+function indexed(from: number, to: number): Primitives {
+  const v: number[] = [], index: number[] = [];
+  const bits = new Float32Array(new Uint32Array([NO_NORMAL]).buffer)[0];
+  for (let i = from; i < to; ++i) {
+    const q = prims.slice(9 * i, 9 * i + 9), at = v.length / 4;
+    if (kinds[i] === TRIANGLE) {
+      v.push(...q.slice(0, 3), bits, ...q.slice(3, 6), bits, ...q.slice(6, 9), bits);
+      index.push(at, at + 1, at + 2);
+    } else if (kinds[i] === CONE) {
+      v.push(...q.slice(0, 8));
+      index.push(at, at + 1, at + 1);
+    } else {
+      v.push(...q.slice(0, 4));
+      index.push(at, at, at);
+    }
+  }
+  return { vertices: new Float32Array(v), index: new Uint32Array(index), objects: new Int32Array(objects.slice(from, to)), kinds: new Int32Array(kinds.slice(from, to)) };
+}
+const half = n >> 1;
+const s = packSurfaces([{ block: buildBlock(indexed(0, half), 4), objectBase: 0 }, { block: buildBlock(indexed(half, n), 4), objectBase: 0 }], 4);
+const objectOf = (i: number) => s.prims[4 * i + 3] & 0x3fffffff;
 // Objects: colour, and layer + 1 (0: hidden).
 const colours = new Float32Array([1, 0, 0, 1, 0, 1, 0, 2, 0, 0, 1, 1, 1, 1, 1, 0]);
 // Layer 1 cut: keep x <= 0.55 (the plane -x + 0.55 >= 0), in world coordinates.
@@ -76,16 +97,16 @@ function ray(px: number, py: number): { o: number[]; d: number[] } {
   const l = Math.hypot(...d);
   return { o: [x, y, -6], d: d.map((v) => v / l) };
 }
-function expected(px: number, py: number): { t: number; prim: number } {
+function expected(px: number, py: number, layers = [1, 2]): { t: number; prim: number } {
   const { o, d } = ray(px, py);
   // Geometry space: halve.
   const og = o.map((v) => v / 2) as [number, number, number], dg = d.map((v) => v / 2) as [number, number, number];
   let best = 1e30, hit = -1;
-  for (let i = 0; i < s.bvh.n; ++i) {
-    const t = primHit(s.bvh, i, og, dg);
+  for (let i = 0; i < s.n; ++i) {
+    const t = surfaceHit(s, i, og, dg);
     if (!(t > 0 && t < best)) continue;
-    const obj = s.bvh.objects[i], layer = colours[4 * obj + 3];
-    if (layer < 0.5) continue;
+    const obj = objectOf(i), layer = colours[4 * obj + 3];
+    if (layer < 0.5 || !layers.includes(layer)) continue;
     const w = o.map((v, a) => v + d[a] * t);
     if (layer === 2 && clip[0] * w[0] + clip[1] * w[1] + clip[2] * w[2] + clip[3] < 0) continue;
     best = t;
@@ -112,16 +133,17 @@ void main() {
 }`;
 const layout = geoLayout(s, W);
 const data = Array.from(geoData(s, W));
-data.splice(4 * layout.objAt, colours.length, ...colours);
+// The objects' colours and layers, as float bits.
+data.splice(4 * layout.objAt, colours.length, ...new Uint32Array(colours.buffer));
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROME ?? (require("node:fs").existsSync("/usr/bin/google-chrome") ? "/usr/bin/google-chrome" : undefined),
   args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--no-sandbox"],
 });
 const page = await browser.newPage();
-interface Args { fs: string; data: number[]; rows: number; normals: number[]; nodeAt: number; objAt: number; n: number; W: number; SIZE: number; clip: number[] }
-const result: { error?: string | null; out?: number[] } = await page.evaluate(
-  ({ fs, data, rows, normals, nodeAt, objAt, n, W, SIZE, clip }: Args) => {
+interface Args { fs: string; data: number[]; rows: number; primAt: number; nodeAt: number; objAt: number; root: number; n: number; W: number; SIZE: number; clip: number[] }
+const result: { error?: string | null; out?: number[]; seen?: number[] } = await page.evaluate(
+  ({ fs, data, rows, primAt, nodeAt, objAt, root, n, W, SIZE, clip }: Args) => {
     const gl = document.createElement("canvas").getContext("webgl2")!;
     if (!gl.getExtension("EXT_color_buffer_float")) return { error: "no float targets" };
     const sh = (type: number, src: string) => {
@@ -145,15 +167,12 @@ const result: { error?: string | null; out?: number[] } = await page.evaluate(
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texImage2D(gl.TEXTURE_2D, 0, internal, W, h, 0, format, type, values);
     };
-    tex(0, gl.RGBA32F, gl.RGBA, gl.FLOAT, rows, new Float32Array(data));
-    const nrows = Math.ceil(n / W);
-    const norm = new Uint32Array(nrows * W * 4);
-    norm.set(normals);
-    tex(1, gl.RGBA32UI, gl.RGBA_INTEGER, gl.UNSIGNED_INT, nrows, norm);
+    tex(0, gl.RGBA32UI, gl.RGBA_INTEGER, gl.UNSIGNED_INT, rows, new Uint32Array(data));
     const u = (k: string) => gl.getUniformLocation(p, k);
-    gl.uniform1i(u("uGeoData"), 0);
-    gl.uniform1i(u("uGeoNorm"), 1);
+    gl.uniform1i(u("uGeo"), 0);
     gl.uniform1i(u("uGeoN"), n);
+    gl.uniform1i(u("uGeoRoot"), root);
+    gl.uniform1i(u("uGeoPrimAt"), primAt);
     gl.uniform1i(u("uGeoNodeAt"), nodeAt);
     gl.uniform1i(u("uGeoObjAt"), objAt);
     // World to geometry: halve (column-major).
@@ -164,6 +183,8 @@ const result: { error?: string | null; out?: number[] } = await page.evaluate(
     gl.uniform1iv(u("uGeoNClip"), [0, 1, 0, 0]);
     gl.uniform3fv(u("uGeoCropLo"), new Float32Array(12).fill(-1e30));
     gl.uniform3fv(u("uGeoCropHi"), new Float32Array(12).fill(1e30));
+    // The target on a unit of its own (not the data's).
+    gl.activeTexture(gl.TEXTURE0 + 7);
     const target = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, target);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, SIZE, SIZE, 0, gl.RGBA, gl.FLOAT, null);
@@ -171,12 +192,18 @@ const result: { error?: string | null; out?: number[] } = await page.evaluate(
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
     gl.viewport(0, 0, SIZE, SIZE);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    const out = new Float32Array(SIZE * SIZE * 4);
-    gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.FLOAT, out);
-    return { out: Array.from(out) };
+    // Per layer: roughness, specular, emission, opacity.
+    const render = (opacity: number[]) => {
+      gl.uniform4fv(u("uGeoMat"), new Float32Array(opacity.flatMap((a) => [0.5, 0.1, 0, a])));
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      const out = new Float32Array(SIZE * SIZE * 4);
+      gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.FLOAT, out);
+      return Array.from(out);
+    };
+    // All opaque; then layer 0 clear and layer 1 half opaque.
+    return { out: render([1, 1, 1, 1]), seen: render([0, 0.5, 1, 1]) };
   },
-  { fs, data, rows: layout.rows, normals: Array.from(s.normals), nodeAt: layout.nodeAt, objAt: layout.objAt, n: s.bvh.n, W, SIZE, clip },
+  { fs, data, rows: layout.rows, primAt: layout.primAt, nodeAt: layout.nodeAt, objAt: layout.objAt, root: s.root, n: s.n, W, SIZE, clip },
 );
 await browser.close();
 if (result.error !== undefined || result.out === undefined) {
@@ -198,10 +225,28 @@ for (let py = 0; py < SIZE; ++py)
       if (gotHit && Math.abs(g[0] - want.t) < 1e-3 * Math.max(1, want.t)) sameT++;
     }
     if (gotHit) {
-      const obj = s.bvh.objects[g[1]];
+      const obj = objectOf(g[1]);
       if (obj === 3) hidden++;
       const { o, d } = ray(px, py);
       if (obj === 1 && -(o[0] + d[0] * g[0]) + 1.1 < -1e-4) clipped++;
+    }
+  }
+// Layer 0 clear and layer 1 (the spheres) half opaque: nothing of layer 0, nothing nearer than the CPU's nearest
+// sphere, and the spheres met by about half the rays that reach one (more where a ray passes several).
+const seen = result.seen!;
+let ofClear = 0, nearer = 0, reach = 0, stopped = 0;
+for (let py = 0; py < SIZE; ++py)
+  for (let px = 0; px < SIZE; ++px) {
+    const g = seen.slice(4 * (py * SIZE + px), 4 * (py * SIZE + px) + 4);
+    const want = expected(px, py, [2]);
+    if (g[0] > 0) {
+      const obj = objectOf(g[1]);
+      if (obj === 0 || obj === 2) ofClear++;
+      if (want.t < 0 || g[0] < want.t * (1 - 1e-3)) nearer++;
+    }
+    if (want.t > 0) {
+      reach++;
+      if (g[0] > 0) stopped++;
     }
   }
 const total = SIZE * SIZE;
@@ -212,6 +257,8 @@ const checks: [boolean, string][] = [
   [anyAgree / total > 0.998, `a shadow ray (any hit) as the CPU: ${anyAgree} of ${total}`],
   [hidden === 0, `nothing hit of the hidden object (${hidden})`],
   [clipped === 0, `nothing hit beyond the cut (${clipped})`],
+  [ofClear === 0 && nearer === 0, `a clear layer is passed, and nothing met before the half-opaque one (${ofClear}, ${nearer})`],
+  [reach > 100 && stopped / reach > 0.4 && stopped / reach < 0.85, `a half-opaque layer stops ${stopped} of the ${reach} rays reaching it`],
 ];
 let failed = 0;
 for (const [ok, what] of checks) {

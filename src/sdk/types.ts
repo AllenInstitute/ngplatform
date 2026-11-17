@@ -726,6 +726,14 @@ export interface Frame3d {
   /** The camera is moving: draw something cheaper if there is a choice. */
   moving: boolean;
   /**
+   * Pick IDs for these segments of a segmentation layer, valid this frame:
+   * the first, then one a segment in order (0: none, e.g. a layer not
+   * found, or not yet ready to be picked). A pixel written with a
+   * segment's ID is that segment under the mouse, as Neuroglancer's own
+   * meshes are: the layer shows it, and a double-click selects it.
+   */
+  registerPicks?(layer: string, segments: readonly bigint[]): number;
+  /**
    * The cross-sections are already drawn (in colour and depth): the drawer
    * asked for `afterSections` and this Neuroglancer honours it.
    */

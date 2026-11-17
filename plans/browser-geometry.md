@@ -352,27 +352,27 @@ picture of the same view within the tolerance.
 
 ### 5. UI, materials and clean-up (2 days)
 
-- [ ] A Surface field set per geometry layer: opacity, roughness, specular
+- [x] A Surface field set per geometry layer: opacity, roughness, specular
       and emission.
-- [ ] Quality › Geometry, the primitive budget.
-- [ ] Remove the voxel stand-in (`splatPoints`, `trianglePoints`,
+- [x] Quality › Geometry, the primitive budget.
+- [x] Remove the voxel stand-in (`splatPoints`, `trianglePoints`,
       `pointsTable`, the RG8 label path) and its tests.
-- [ ] Docs: `docs/plugins/anatomical-rendering.md` (geometry in the
+- [x] Docs: `docs/plugins/anatomical-rendering.md` (geometry in the
       browser, budgets, limits) and the CHANGELOG.
 
 ### 6. Scale (3–4 days, after use shows the need)
 
-- [ ] Memory:
+- [x] Memory:
   - indexed triangles (vertex texture plus index triples, about 18 B per
     triangle instead of 48);
   - collapse the binary LBVH into a 4-wide BVH with 8-bit quantised child
     boxes (Ylitie et al. 2017), so nodes take about a third of the memory
     and traversal makes fewer fetches.
-- [ ] Blocks: one BVH per chunk or per object, plus a top-level BVH rebuilt
+- [x] Blocks: one BVH per chunk or per object, plus a top-level BVH rebuilt
       as blocks come and go, as in the parent plan's design. Selections
       can then change without a full rebuild, and LOD per block by
       projected size (`mesh_lod.ts`) becomes possible.
-- [ ] A surface's object id out of the first hit, so a click selects the
+- [x] A surface's object id out of the first hit, so a click selects the
       segment.
 
 ### 7. The local (WebGPU) path tracer (2 days, if kept)
@@ -459,6 +459,36 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 | HCP-1065 tractogram, level 2 (5,031 streamlines) | 995,524 tubes | 445 ms |
 
 **Not yet:** the ABC atlas's finer level is over the 1.5 M-point read budget. The Quality › Geometry budget (step 5) is where to raise it.
+
+2026-11-17: step 5.
+
+**Materials:** each geometry layer has its own opacity, roughness, specular and emission (`uGeoMat`, per layer), set in the Rendering card. A change redraws without a rebuild.
+- Opacity is stochastic: a ray passes a primitive with the chance it is clear (a hash of the ray and the primitive). The path tracer's samples average to the opacity; the moving view shows a fixed dither.
+- `npm run e2e:geometry` checks that a clear layer is passed and a half-opaque one stops about half the rays reaching it (134 of 236).
+
+**Budget:** Quality › Geometry, 2 M primitives unless set (0.25–8 M), shared equally by the geometry layers on; a mesh's level is chosen at two triangles a vertex.
+
+**Removed:** `splatPoints`, `trianglePoints`, `pointsTable`, `gridVoxel`, the RG8 label path (`uLabelled`, `labelAt`, `Level8.labels`) and `putLevel`. Geometry layers are no longer opened as volumes, so they no longer take a share of the images' voxels.
+
+**Measured:** the ABC atlas at a 4 M budget reads its finer level: 85,570 spheres of the 3 classes shown (against 10,672), BVH in 290 ms.
+
+**Not done:** a larger budget for stills and movies; the budget is shared equally rather than by each layer's need.
+
+2026-11-17: step 6.
+
+**Memory:**
+- Primitives are indexed: one RGBA32UI texture holds the vertices (xyz, and a normal or radius), the primitives (three vertices, kind and object), the wide nodes and the objects. One texture unit, not two.
+- The binary LBVH (still the render computer's, bit for bit) is collapsed into a 4-wide BVH with 8-bit child boxes (`geometry/wide.ts`): a node is 64 B and its four children's boxes come from one fetch; each stored box is checked to contain the true one in float32.
+- Measured: 79 MB for 1,447,668 MICrONS triangles (55 B each) and 63 MB for 995,524 HCP tubes (63 B), against 128 B before.
+
+**Blocks:** each segment's mesh, and each Zarr Vectors layer, is a block with its own BVH, built in the worker and kept. The blocks are packed under a top tree over their boxes (a median split, collapsed the same way) whenever one comes or goes: 40–80 ms on the main thread for 1.4 M triangles.
+- A segment switched off is taken out without reading; one switched on is read alone (8 s for a MICrONS cell).
+- A mesh layer's levels are shared out between its segments once their sizes are known (`allocateLevels`: the cheapest finer level that fits, in turn). The four MICrONS cells come in at 1.45 M triangles, against 0.84 M with equal shares.
+- LOD per block by projected size is not done: blocks are per segment, not per chunk.
+
+**Picking:** `Frame3d.registerPicks` (engine): a segmentation layer gets a render layer that draws nothing, against which the drawer registers a pick ID a segment each frame. The preview writes the surface's ID where it is the first thing met; the path-traced picture keeps the first hit's object in its aux texture (now RGBA32F) and writes it in the composite. Hovering a MICrONS cell picks its segment.
+
+**Checked:** `npm run e2e:geometry` (two blocks under a top tree, 8 of 8); unit tests of the collapse (boxes contain the truth; every primitive once) and of tracing one and three packed blocks against testing every primitive.
 
 ## Risks
 

@@ -61,6 +61,11 @@ The production polish: the work of an audit of every panel and plugin
   - streamlines, skeletons and SWC as tubes (the store's radii, else a sixth of a segment).
 
   Each layer has a Size in the Rendering card. Lines no longer need a render computer.
+- Geometry layers have a Surface material in the Rendering card: Opacity (see-through surfaces, path-traced as such), Roughness, Specular and Emission. A change redraws without building again.
+- Quality › Geometry sets how many triangles, spheres and tubes this browser reads and traces (2 million unless set, up to 8 million), shared by the geometry layers on; the ABC atlas's finer level can now be read.
+- The voxel grid that stood in for points and meshes in this browser is gone; geometry layers no longer take a share of the images' voxels.
+- Geometry in this browser takes half the GPU memory (about 55 MB a million triangles, spheres or tubes): vertices shared between triangles and tubes, and a 4-wide BVH with 8-bit boxes.
+- A segmentation's segments are read and built one by one: choosing another reads only it, switching one off takes it out at once, and the levels are shared out so small cells come finer. Hovering a traced cell shows its segment, and a double-click selects it, as with Neuroglancer's own meshes.
 - The anatomical renderer draws a scene whose first layer is hidden in Neuroglancer; the layer shown in the views is rendered when none is switched.
 - A Zarr Vectors layer can be coloured by any of its attributes again, for example a gene: the attribute search box was hidden by a style that hid every empty element in a stack, inputs included.
 - Annotation layers have Point size and Line width sliders (Display), in
