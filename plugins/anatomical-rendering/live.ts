@@ -601,11 +601,18 @@ void main() {
   vec3 dw = normalize(far - ow);
   Ray r = ray(ow, dw);
   float t1 = min(r.t1, length(far - ow));
-  // The nearest surface: the volumes are marched up to it.
+  // The surfaces, nearest first (met as solid: each blended in at its opacity): the volumes are marched up to
+  // each, then on from it.
+  float tEnd = length(far - ow);
+  float tVol = t1;
   float ts = -1.0;
   int sPrim = -1;
   vec2 sUv = vec2(0.0);
-  ${geoW ? "ts = geoHit(ow, dw, 0.0, length(far - ow), sPrim, sUv);\n  if (ts > 0.0) t1 = min(t1, ts);" : ""}
+#ifdef GEO
+  geoSolid = true;
+  ts = geoHit(ow, dw, 0.0, tEnd, sPrim, sUv);
+  if (ts > 0.0) t1 = min(tVol, ts);
+#endif
   if (t1 <= r.t0 && ts < 0.0) discard;
   vec3 around = (uEnvTop + 2.0 * uEnvHorizon + uEnvBottom) * (0.25 * uEnvScale);
   vec3 L = vec3(0.0);
@@ -613,9 +620,12 @@ void main() {
   vec3 hit = vec3(0.0);
   bool met = false;
   float pick = 0.0;
+  // The volumes met (their picture opaque there); else the surfaces' coverage.
+  bool volMet = false;
   float v0;
   FINEST(r, r.t0, v0)
   float t = r.t0 + uStep * (v0 < 1e29 ? v0 : 0.0) * noise();
+  for (int seg = 0; seg < 3; ++seg) {
   for (int i = 0; i < 4096; ++i) {
     if (t >= t1 || T < 0.02) break;
     float vox;
@@ -665,40 +675,57 @@ void main() {
     float al = 1.0 - exp(-s * dt);
     L += T * al * col;
     T *= 1.0 - al;
-    if (!met && T <= 0.5) {
-      met = true;
-      hit = w;
+    if (!volMet && T <= 0.5) {
+      volMet = true;
+      if (!met) {
+        met = true;
+        hit = w;
+      }
     }
   }
-  ${geoW ? `// The surface, lit as the volume is: the key light (its shadow from the surfaces, then through the
-  // volumes as held), and the surroundings' by its normal.
-  if (ts > 0.0 && T >= 0.02) {
+#ifdef GEO
+  if (ts <= 0.0 || T < 0.02) break;
+  {
+    // The surface, lit as the volume is: the key light (the nearest surface's shadow from the surfaces, then through
+    // the volumes as held; those behind it as held), and the surroundings' by its normal.
     vec3 w = ow + dw * ts;
     vec3 nrm;
     vec3 albedo;
     geoSurface(sPrim, sUv, ow, dw, ts, nrm, albedo);
+    float op = geoOpac;
     vec3 p = w + nrm * (1e-5 * ts);
     // (The light held includes the surfaces' shadows, softly: read half a cell out, off the surface's own.)
-    float Tl = geoAny(p, uLightDir, uGeoEps, 1e30) ? 0.0 : (uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).a : clear(p, uLightDir, 25.0));
+    float held = uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).a : clear(p, uLightDir, 25.0);
+    float Tl = seg == 0 && geoAny(p, uLightDir, uGeoEps, 1e30) ? 0.0 : held;
     vec3 sky = env(nrm);
     sky = mix(sky, uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).rgb : sky, uHeldAround * 0.5);
     vec3 col = geoBrdfCos(nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * (sky * (1.0 - geoSpec) + geoEmit);
-    L += T * col;
-    T = 0.0;
+    L += T * op * col;
     if (!met) {
       met = true;
       hit = w;
-      // The surface is what the pixel shows: its segment picked there.
+      // The surface is what the pixel shows first: its segment picked there.
       pick = geoPickOf(geoObjectOf(sPrim));
     }
-  }` : ""}
+    T *= 1.0 - op;
+  }
+  if (T < 0.02) break;
+  // The next surface behind it; the volumes on from it.
+  t = max(t, ts);
+  ts = geoHit(ow, dw, ts + uGeoEps, tEnd, sPrim, sUv);
+  t1 = ts > 0.0 ? min(tVol, ts) : tVol;
+#else
+  break;
+#endif
+  }
   // As the picture: drawn where the ray met tissue, at the depth where it did.
   if (!met) discard;
-  vec3 c = tone(L / (1.0 - T) * uExposure);
+  vec3 c = tone(L / max(1.0 - T, 1e-6) * uExposure);
   vec4 p = uVP * vec4(hit, 1.0);
   float d = clamp((p.z / p.w) * 0.5 + 0.5, 0.0, 0.99999);
   gl_FragDepth = d;
-  out_color = vec4(c, 1.0);
+  // Opaque where the volumes are met; else as much as the surfaces cover (blended where the GPU can).
+  out_color = vec4(c, volMet ? 1.0 : 1.0 - T);
   out_z = vec4(1.0 - d);
   out_pickId = vec4(pick);
 }`);
@@ -730,7 +757,7 @@ vec3 incoming(vec3 w, vec3 dir) {
     int ev = scatterEvent(w, k, sn, sc, dir, 1.5);
     if (ev == 0) return L + thr * env(dir);
     if (ev == 2) {
-      // A surface: the key light on it, then on off it.
+      // A surface (those less than opaque met by chance): the key light on it and its own, then on off it.
       L += thr * (geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * transmit(w, uLightDir) + sc * geoEmit);
       vec3 nd;
       if (!geoBounce(sn, -dir, sc, thr, nd)) return L;
@@ -861,22 +888,39 @@ void main() {
   vec3 L = vec3(0.0);
   vec3 thr = vec3(1.0);
   float alpha = 0.0;
-  for (int bounce = 0; bounce <= 16; ++bounce) {
-    if (bounce > uMaxBounces) break;
+  // Surfaces less than opaque passed through (not bounces).
+  int passes = 0;
+  for (int step_ = 0; step_ <= 48; ++step_) {
+    int bounce = step_ - passes;
+    if (bounce > uMaxBounces || bounce > 16) break;
     int k;
 #ifdef GEO
+    // The camera's ray meets each surface (its light at its opacity, then through it as often as it is clear);
+    // a bounce's passes those less than opaque by chance, as a shadow ray does (cheaper: no ray begun again).
+    geoSolid = bounce == 0;
     vec3 sn, sc;
     int ev = scatterEvent(w, k, sn, sc, dir, 0.5);
     if (ev == 0) {
       if (bounce > 0) L += thr * env(dir);
       break;
     }
-    if (bounce == 0) alpha = 1.0;
     if (ev == 2) {
-      // A surface: the key light on it (shadowed by surfaces and the volumes), then a bounce off it.
-      float Ts = transmit(w, uLightDir);
-      if (Ts > 0.0) L += thr * geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * Ts;
-      L += thr * sc * geoEmit;
+      // A surface: the key light on it (shadowed by surfaces and the volumes) and its own, at its opacity; then on
+      // through it as often as it is clear, else a bounce off it. (Met by chance: opaque, as it was met.)
+      float op = geoSolid ? geoOpac : 1.0;
+      // (A shadow ray at a surface much less than opaque only now and then, weighted to the same mean.)
+      float pd = max(op, 0.3);
+      if (pd >= 1.0 || rnd() < pd) {
+        float Ts = transmit(w, uLightDir);
+        if (Ts > 0.0) L += thr * (op / pd) * geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * Ts;
+      }
+      L += thr * op * sc * geoEmit;
+      if (op < 1.0 && rnd() >= op) {
+        w -= sn * (2.0 * uGeoEps);
+        ++passes;
+        continue;
+      }
+      if (bounce == 0) alpha = 1.0;
       vec3 nd;
       if (!geoBounce(sn, -dir, sc, thr, nd)) break;
       dir = nd;
@@ -887,6 +931,7 @@ void main() {
       }
       continue;
     }
+    if (bounce == 0) alpha = 1.0;
 #else
     if (!collide(w, k, dir, 0.5)) {
       if (bounce > 0) L += thr * env(dir);
@@ -1330,8 +1375,11 @@ export class LiveVolume {
       const held = this.canBake && baking ? this.held.pass : 0;
       gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
       gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
+      // Surfaces less than opaque over nothing: the colour output blended by how much they cover, where it can be alone.
+      const blend = surf !== undefined ? this.colourBlend(gl, frame.outputs.color) : undefined;
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      blend?.();
     }
     const composite = traced > 0 ? this.program(gl, `composite ${JSON.stringify(frame.outputs)}`, () => COMPOSITE_FS(frame.outputs), true) : undefined;
     if (composite !== undefined) {
@@ -1342,14 +1390,8 @@ export class LiveVolume {
       gl.uniform1f(u("uExposure"), primary.exposure);
       gl.uniform2f(u("uBand"), split * (1 - traced), split);
       // The colour output blended by coverage (the depth and pick outputs not), where the GPU can blend it alone.
-      const ext = gl.getExtension("OES_draw_buffers_indexed") as { enableiOES(t: number, i: number): void; disableiOES(t: number, i: number): void; blendFuncSeparateiOES(i: number, a: number, b: number, c: number, d: number): void; blendEquationiOES(i: number, m: number): void } | null;
-      const blendWas = gl.isEnabled(gl.BLEND);
-      if (ext !== null && !blendWas) {
-        ext.enableiOES(gl.BLEND, frame.outputs.color);
-        ext.blendEquationiOES(frame.outputs.color, gl.FUNC_ADD);
-        ext.blendFuncSeparateiOES(frame.outputs.color, gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
-      }
-      gl.uniform1f(u("uMinCover"), ext !== null && !blendWas ? 0.02 : 0.5);
+      const unblend = this.colourBlend(gl, frame.outputs.color);
+      gl.uniform1f(u("uMinCover"), unblend !== undefined ? 0.02 : 0.5);
       gl.activeTexture(gl.TEXTURE0 + UNIT.sum);
       gl.bindTexture(gl.TEXTURE_2D, this.sumRead!);
       gl.uniform1i(u("uSum"), UNIT.sum);
@@ -1359,13 +1401,26 @@ export class LiveVolume {
       bindPicks(gl, p, look.geometry ?? { colours: new Float32Array(), key: "", layers: [], exposure: 1 });
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      if (ext !== null && !blendWas) ext.disableiOES(gl.BLEND, frame.outputs.color);
+      unblend?.();
     }
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
     const tracing = this.traced !== undefined && this.traced.samples < max;
     if (this.canBake && (this.held.pass < LIGHT_PASSES || tracing)) requestAnimationFrame(() => this.onRedraw?.());
     return true;
+  }
+
+  /**
+   * Blends colour output `color` alone by its alpha (the depth and pick outputs not), where the GPU can
+   * (OES_draw_buffers_indexed) and nothing blends already: what undoes it; undefined where it cannot.
+   */
+  private colourBlend(gl: WebGL2RenderingContext, color: number): (() => void) | undefined {
+    const ext = gl.getExtension("OES_draw_buffers_indexed") as { enableiOES(t: number, i: number): void; disableiOES(t: number, i: number): void; blendFuncSeparateiOES(i: number, a: number, b: number, c: number, d: number): void; blendEquationiOES(i: number, m: number): void } | null;
+    if (ext === null || gl.isEnabled(gl.BLEND)) return undefined;
+    ext.enableiOES(gl.BLEND, color);
+    ext.blendEquationiOES(color, gl.FUNC_ADD);
+    ext.blendFuncSeparateiOES(color, gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
+    return () => ext.disableiOES(gl.BLEND, color);
   }
 
   /** An image's level on the GPU (once), and its clear bricks under its table (again when the table changes). */

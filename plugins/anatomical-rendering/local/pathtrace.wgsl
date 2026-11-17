@@ -1,6 +1,7 @@
 // The path tracer in WGSL, for WebGPU in the page: the same method and parameter block as the
 // render service's CUDA kernels (runner/ngplatform_render/kernels.py; slots from params.json,
-// prepended here as constants P_<NAME>).  Region colours from labels are the service's only.
+// prepended here as constants P_<NAME>).  Region colours from labels are the service's only.  Surfaces (meshes,
+// spheres, tubes) from ./geometry.wgsl, prepended too: met in order with the volume, as the service's are.
 
 @group(0) @binding(0) var<storage, read> P: array<f32>;
 @group(0) @binding(1) var vol: texture_3d<f32>;
@@ -188,6 +189,17 @@ fn brdf_cos(n: vec3f, wo: vec3f, wl: vec3f, albedo: vec3f, spec: f32, rough: f32
   return (albedo * ((1.0 - spec) * 0.31830989) + vec3f(s)) * cl;
 }
 
+// The light reaching world point w from the key light (direction ldir): none past a surface, else through the volume.
+fn lightT(w: vec3f, ldir: vec3f) -> f32 {
+  if (geoAny(w, ldir, 0.0, 1e30)) { return 0.0; }
+  let lvo = aff(P_VOX_FROM_WORLD, w);
+  let lvd = lin(P_VOX_FROM_WORLD, ldir);
+  let li = boxhit(lvo, lvd);
+  var Tl = 1.0;
+  if (li.y > li.x) { Tl = track(w, ldir, lvo, lvd, max(li.x, 0.0), li.y, 1u); }
+  return Tl;
+}
+
 struct Ray { o: vec3f, d: vec3f }
 fn makeray(x: u32, y: u32, jx: f32, jy: f32, lens: bool) -> Ray {
   let W = f32(U.x);
@@ -229,12 +241,66 @@ fn trace(@builtin(global_invocation_id) gid: vec3u) {
   let maxb = u32(P[P_MAX_BOUNCES]);
   let ldir = pv(P_LIGHT_DIR);
   let lrgb = pv(P_LIGHT_RGB);
-  for (var bounce = 0u; bounce <= maxb; bounce++) {
+  // Surfaces less than opaque passed through (not bounces).
+  var passes = 0u;
+  for (var step = 0u; step <= 48u; step++) {
+    let bounce = step - passes;
+    if (bounce > maxb) { break; }
+    // The camera's ray meets each surface (its light at its opacity, then through it as often as it is clear); a
+    // bounce's passes those less than opaque by chance, as a shadow ray does (cheaper: no ray begun again).
+    geoSolid = bounce == 0u;
     let ov = aff(P_VOX_FROM_WORLD, ow);
     let dv = lin(P_VOX_FROM_WORLD, dw);
     let iv = boxhit(ov, dv);
+    // The nearest surface: the volume is tracked up to it.
+    let sh = geoTrace(ow, dw, 0.0, 1e30, false);
+    let tsurf = select(1e30, sh.t, sh.t > 0.0);
     var tc = -1.0;
-    if (iv.y > iv.x) { tc = track(ow, dw, ov, dv, iv.x, iv.y, 0u); }
+    if (iv.y > iv.x && iv.x < tsurf) { tc = track(ow, dw, ov, dv, iv.x, min(iv.y, tsurf), 0u); }
+    if (tc < 0.0 && sh.t > 0.0) {
+      // A surface: the key light on it (shadowed by surfaces and the volume) and its own, at its opacity; then on
+      // through it as often as it is clear, else a bounce off it.
+      var sf = geoSurface(sh, ow, dw);
+      // (Met by chance: opaque, as it was met.)
+      if (!geoSolid) { sf.op = 1.0; }
+      let p = ow + dw * sh.t + sf.n * gf(G_EPS);
+      let wo = -dw;
+      // (A shadow ray at a surface much less than opaque only now and then, weighted to the same mean.)
+      let pd = max(sf.op, 0.3);
+      if (pd >= 1.0 || rnd() < pd) {
+        let Ts = lightT(p, ldir);
+        if (Ts > 0.0) { L += thr * (sf.op / pd) * brdf_cos(sf.n, wo, ldir, sf.colour, sf.spec, sf.rough) * lrgb * Ts; }
+      }
+      L += thr * sf.op * sf.colour * sf.emit;
+      if (sf.op < 1.0 && rnd() >= sf.op) {
+        ow = ow + dw * sh.t - sf.n * gf(G_EPS);
+        passes += 1u;
+        continue;
+      }
+      if (bounce == 0u) { alpha = 1.0; }
+      var nd: vec3f;
+      if (rnd() < sf.spec) {
+        let r = normalize(sf.n * (2.0 * dot(sf.n, wo)) - wo);
+        let e = phong_exp(sf.rough);
+        let ct = pow(rnd(), 1.0 / (e + 1.0));
+        let st = sqrt(max(0.0, 1.0 - ct * ct));
+        let ph = 6.2831853 * rnd();
+        let b = basis(r);
+        nd = normalize(b[0] * (st * cos(ph)) + b[1] * (st * sin(ph)) + r * ct);
+        if (dot(nd, sf.n) <= 0.0) { break; }
+      } else {
+        nd = cosdir(sf.n);
+        thr *= sf.colour;
+      }
+      ow = p;
+      dw = nd;
+      if (bounce >= 2u) {
+        let q = min(0.95, max(thr.x, max(thr.y, thr.z)));
+        if (rnd() > q) { break; }
+        thr *= 1.0 / q;
+      }
+      continue;
+    }
     if (tc < 0.0) {
       if (bounce == 0u) {
         L = pv(P_BG) * P[P_BG + 3u];
@@ -266,11 +332,7 @@ fn trace(@builtin(global_invocation_id) gid: vec3u) {
     }
     let psurf = P[P_SHADE_MIX] * (1.0 - exp(-P[P_GRAD_SCALE] * length(gv)));
     let wo = -dw;
-    let lvo = aff(P_VOX_FROM_WORLD, w);
-    let lvd = lin(P_VOX_FROM_WORLD, ldir);
-    let li = boxhit(lvo, lvd);
-    var Tl = 1.0;
-    if (li.y > li.x) { Tl = track(w, ldir, lvo, lvd, max(li.x, 0.0), li.y, 1u); }
+    let Tl = lightT(w, ldir);
     if (rnd() < psurf) {
       var n = -normalize(lin3(P_WORLD_NORMAL, gv));
       if (dot(n, wo) < 0.0) { n = -n; }
@@ -320,11 +382,18 @@ fn firsthit(@builtin(global_invocation_id) gid: vec3u) {
   let dv = lin(P_VOX_FROM_WORLD, ray.d);
   let iv = boxhit(ov, dv);
   var out = 1.0;
-  if (iv.y > iv.x) {
+  // A surface nearer than where the volume turns opaque: its depth.
+  let sh = geoTrace(ray.o, ray.d, 0.0, 1e30, false);
+  let tsurf = select(1e30, sh.t, sh.t > 0.0);
+  if (sh.t > 0.0) {
+    let c = mul4(P_VP, vec4f(ray.o + ray.d * sh.t, 1.0));
+    out = clamp((c.z / c.w) * 0.5 + 0.5, 0.0, 1.0);
+  }
+  if (iv.y > iv.x && iv.x < tsurf) {
     let dt = P[P_STEP] / max(length(dv), 1e-12);
     var acc = 0.0;
     var t = iv.x;
-    for (var k = 0; k < 8192 && t < iv.y; k++) {
+    for (var k = 0; k < 8192 && t < min(iv.y, tsurf); k++) {
       let w = ray.o + ray.d * t;
       let s = medium(w, ov + dv * t).sigma;
       acc = 1.0 - (1.0 - acc) * exp(-s * dt);

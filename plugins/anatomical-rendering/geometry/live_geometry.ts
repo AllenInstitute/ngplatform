@@ -15,10 +15,12 @@
  * cut opens a cell and the ray goes on to what is behind.
  *
  * Each layer has its own material (SurfaceMaterial). A layer less than
- * opaque is stochastically so: a ray passes each of its primitives with
- * the chance it is clear (a hash of the ray and the primitive), so the
- * path tracer's samples average to the opacity and a shadow ray to the
- * light let through.
+ * opaque: a shadow ray passes each of its primitives with the chance it is
+ * clear (a hash of the ray and the primitive), so the light let through
+ * is what the shadow rays average to; a ray from the camera or a bounce
+ * meets it as solid (geoSolid), its opacity in geoOpac, and the caller
+ * blends it (the preview) or goes on through it as often as it is clear
+ * (the path tracer). A clear layer (opacity 0) is never met.
  */
 import type { Surfaces } from "./surfaces.js";
 import { WIDE } from "./wide.js";
@@ -88,7 +90,9 @@ uniform vec3 uGeoCropHi[GEO_LAYERS];
 // Per layer: roughness, specular share, emission, opacity.
 uniform vec4 uGeoMat[GEO_LAYERS];
 // The material at the last surface met (geoSurface).
-float geoRough = 0.45, geoSpec = 0.15, geoEmit = 0.0;
+float geoRough = 0.45, geoSpec = 0.15, geoEmit = 0.0, geoOpac = 1.0;
+// Rays other than shadow rays meet a layer less than opaque as solid (the caller then takes its opacity).
+bool geoSolid = false;
 // How far (world) a ray leaving a surface starts from it.
 uniform float uGeoEps;
 ${GEO_PICK_GLSL}
@@ -226,7 +230,7 @@ float geoTrace(vec3 ow, vec3 dw, float tmin, float tmax, bool anyHit, out int pr
         if (layer < 0.5) continue;
         int li = int(layer) - 1;
         float op = uGeoMat[li].w;
-        if ((op < 1.0 && geoHash(i, ow, dw) >= op) || !geoKept(li, ow + dw * t, o + d * t)) continue;
+        if ((op < 1.0 && (op <= 0.0 || ((anyHit || !geoSolid) && geoHash(i, ow, dw) >= op))) || !geoKept(li, ow + dw * t, o + d * t)) continue;
         best = t;
         prim = i;
         uv = bc;
@@ -286,6 +290,7 @@ void geoSurface(int prim, vec2 uv, vec3 ow, vec3 dw, float t, out vec3 nw, out v
   geoRough = mat.x;
   geoSpec = mat.y;
   geoEmit = mat.z;
+  geoOpac = mat.w;
   vec3 p = (uGeoFromWorld * vec4(ow + dw * t, 1.0)).xyz;
   vec3 n;
   if (kind == 0u) {

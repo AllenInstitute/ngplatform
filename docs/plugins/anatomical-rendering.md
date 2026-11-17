@@ -396,7 +396,7 @@ Layers):
 | Setting | What it does |
 |---|---|
 | Size | Points' and lines' radius, times their natural one (0.1–5 ×) |
-| Opacity | How much light the surfaces stop. Below 1 they are see-through: a fine dither while the view moves, smoothed in the path-traced picture |
+| Opacity | How much light the surfaces stop. Below 1 they are see-through: up to three blended while the view moves, all of them in the path-traced picture. Lower opacity costs more, as rays go on through |
 | Roughness | How broad the highlights are: low is polished, high is matte |
 | Specular | The share of light reflected as a highlight rather than in the surface's colour |
 | Emission | Light given off in the surface's own colour (the key light is 1) |
@@ -420,7 +420,9 @@ are traced together, and a GPU whose textures are too small for the
 geometry says so in the status line.
 
 Cuts and crops apply to geometry as to the volume. Stills and movies
-draw it too.
+draw it too. With WebGPU, one image with geometry layers gets its
+path-traced picture at rest from the WebGPU tracer, surfaces included;
+geometry alone, or several images, are path-traced by the object.
 
 ## The HiP-CT organ presets
 

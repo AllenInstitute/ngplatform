@@ -377,10 +377,10 @@ picture of the same view within the tolerance.
 
 ### 7. The local (WebGPU) path tracer (2 days, if kept)
 
-- [ ] The same buffers as storage buffers, with the traversal in WGSL
+- [x] The same buffers as storage buffers, with the traversal in WGSL
       (`pathtrace.wgsl`). This is close to a line-for-line copy of the
       CUDA, since both have real buffers.
-- [ ] Its tests against the shared vectors and golden images.
+- [x] Its tests against the shared vectors and golden images.
 
 **Total:** about 2½ weeks for steps 0–5, and 1 week more for steps 6–7.
 
@@ -490,6 +490,21 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 
 **Checked:** `npm run e2e:geometry` (two blocks under a top tree, 8 of 8); unit tests of the collapse (boxes contain the truth; every primitive once) and of tracing one and three packed blocks against testing every primitive.
 
+2026-11-17: step 7, and surfaces less than opaque.
+
+**The WebGPU tracer** (`local/`) traces the scene's surfaces:
+- `local/geometry.wgsl`: the WebGL traversal and intersectors in WGSL, over one storage buffer holding the packed surfaces after a block of numbers (where the regions are, each layer's material, cuts and crop). One buffer, not two, as a stage has at most 8 storage buffers and the tracer has 7.
+- `pathtrace.wgsl`: `trace` meets surfaces and the volume in order (the volume tracked up to the nearest surface); a volume point's shadow ray stops at surfaces; `firsthit` takes a surface's depth.
+- One image with geometry layers now uses it for the picture at rest (the live object still draws the moving view); geometry alone, or several images, the live object as before.
+- Checked: `npm run e2e:geometry` runs the same scene through the WGSL in a compute shader (WebGPU on SwiftShader): 9 of 9 checks, as WebGL's. EM with the four MICrONS cells (1.45 M triangles) and a cut, path-traced on SwiftShader's WebGPU, 64 samples at about 3–5 s a pass.
+- **Not done:** golden images against CUDA, as in step 3: no fixture both read yet.
+
+**Surfaces less than opaque** (reported: slow, and drawn incompletely):
+- Before, every ray passed such a surface by chance: the moving view showed a fixed dither (at opacity 0.15, dendrites as specks) and the picture at rest filled in slowly.
+- The moving view now meets them as solid and blends up to three, front to back, at their opacities, the volumes marched between them; its colour is blended by their coverage where nothing opaque is met. The nearest takes a shadow ray; those behind, the held light.
+- The path tracer's camera ray meets them as solid too: each adds its light at its opacity (its shadow ray now and then, weighted), then the path goes on through as often as it is clear (not a bounce) or bounces off it. Bounces and shadow rays still pass by chance (cheaper: no traversal begun again).
+- Measured (four MICrONS cells, 0.5 M triangles, SwiftShader, 90 s): opaque, 17 samples; opacity 0.15, 10 samples, drawn as faint continuous branches (before: 17 samples of specks).
+
 ## Risks
 
 | Risk | Effect | Answer |
@@ -512,8 +527,6 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 
 ## Open questions
 
-- **The local WebGPU tracer:** should it get geometry (step 7), or should
-  scenes with geometry always use the live object?
 - **Cut faces:** should they be capped, so a cut cell shows a solid face,
   or left open, so it shows a shell? Open is simpler and is the first
   version.

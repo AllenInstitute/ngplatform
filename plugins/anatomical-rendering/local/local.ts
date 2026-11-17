@@ -3,7 +3,9 @@
  * a computer with a GPU of its own and no render service.  It reads one
  * level of the image (8-bit, through the volume view's reader), holds it
  * as a 3-D texture and renders the same views, with the same presets and
- * parameters, as the service's CUDA kernels (./pathtrace.wgsl).
+ * parameters, as the service's CUDA kernels (./pathtrace.wgsl), with the
+ * surfaces of the scene's geometry layers (./geometry.wgsl) where it has
+ * them.
  */
 import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
 import organPresetsJson from "../../../runner/ngplatform_render/presets/hipct-organs.json";
@@ -13,6 +15,10 @@ import { PRECOMPUTED, precomputedUrl, storeHttpUrl } from "../../volume-view/sou
 import { VolumeClient } from "../../volume-view/volume_client.js";
 import type { ViewSpec } from "../client.js";
 import shaderSource from "./pathtrace.wgsl?raw";
+import geometrySource from "./geometry.wgsl?raw";
+import type { LiveGeometryLook } from "../geometry/live_geometry.js";
+import type { Surfaces } from "../geometry/surfaces.js";
+import { G, geometryBuffer, geometryParams, objectsByteOffset } from "./local_geometry.js";
 
 // WebGPU's types are not in this TypeScript's DOM library (and @webgpu/types is not installed): loose ones here.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -610,6 +616,9 @@ export class LocalRenderer {
   private out: GPUBuffer | undefined;
   private depth: GPUBuffer | undefined;
   private uni: GPUBuffer | undefined;
+  /** The surfaces (geometry.wgsl's gdata and G), and what they were made from. */
+  private gdata: GPUBuffer | undefined;
+  private surfaces: { s: Surfaces | undefined; look: LiveGeometryLook | undefined; key: string; uploaded: Surfaces | undefined } = { s: undefined, look: undefined, key: "", uploaded: undefined };
   private W = 0;
   private H = 0;
   private bind: GPUBindGroup | undefined;
@@ -640,6 +649,11 @@ export class LocalRenderer {
       requiredLimits: { maxStorageBufferBindingSize: Math.min(lim.maxStorageBufferBindingSize, 1 << 30), maxBufferSize: Math.min(lim.maxBufferSize, 1 << 30) },
     });
     this.device = device;
+    // Errors WebGPU reports later (a pass that does not validate): in the status, not passed over.
+    device.addEventListener?.("uncapturederror", (e: { error?: { message?: string } }) => {
+      // The first: those after it follow from it.
+      if (!this.status.startsWith("WebGPU")) this.status = `WebGPU: ${e.error?.message ?? "an error"}`;
+    });
     this.client?.dispose();
     this.client = new VolumeClient();
     const level = await readLevel(this.client, url, budget, device.limits.maxTextureDimension3D, progress);
@@ -673,6 +687,8 @@ export class LocalRenderer {
     this.params = device.createBuffer({ size: NPARAMS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.tf = device.createBuffer({ size: TF_SIZE * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.uni = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.gdata = device.createBuffer({ size: G.SIZE * 4 + 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.surfaces.uploaded = undefined;
     this.compile(device);
     this.applied = -1;
     this.ready = true;
@@ -681,7 +697,7 @@ export class LocalRenderer {
 
   private compile(device: GPUDevice): void {
     const consts = `const TF_SIZE: u32 = ${TF_SIZE}u;\n` + Object.entries(OFFSETS).map(([k, v]) => `const P_${k}: u32 = ${v}u;`).join("\n") + "\n";
-    const module = device.createShaderModule({ code: consts + shaderSource });
+    const module = device.createShaderModule({ code: consts + geometrySource + shaderSource });
     const S = GPUShaderStage.COMPUTE;
     this.layout = device.createBindGroupLayout({
       entries: [
@@ -695,6 +711,7 @@ export class LocalRenderer {
         { binding: 7, visibility: S, buffer: { type: "storage" } },
         { binding: 8, visibility: S, buffer: { type: "read-only-storage" } },
         { binding: 9, visibility: S, buffer: { type: "uniform" } },
+        { binding: 10, visibility: S, buffer: { type: "read-only-storage" } },
       ],
     });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
@@ -703,9 +720,10 @@ export class LocalRenderer {
     }
   }
 
-  private resize(W: number, H: number): void {
+  private resize(W: number, H: number, rebind = false): void {
     const device = this.device!;
-    if (W === this.W && H === this.H && this.accum) return;
+    if (W === this.W && H === this.H && this.accum && !rebind) return;
+    if (W !== this.W || H !== this.H || !this.accum) {
     this.accum?.destroy();
     this.out?.destroy();
     this.depth?.destroy();
@@ -714,6 +732,7 @@ export class LocalRenderer {
     this.accum = device.createBuffer({ size: W * H * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.out = device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     this.depth = device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    }
     this.bind = device.createBindGroup({
       layout: this.layout!,
       entries: [
@@ -727,9 +746,56 @@ export class LocalRenderer {
         { binding: 7, resource: { buffer: this.depth } },
         { binding: 8, resource: { buffer: this.bounds! } },
         { binding: 9, resource: { buffer: this.uni! } },
+        { binding: 10, resource: { buffer: this.gdata! } },
       ],
     });
   }
+
+  /**
+   * The surfaces traced with the image (none: the image alone), drawn as `look` says: the next views are rendered
+   * with them. Rendering starts again only when what is drawn changes.
+   */
+  setSurfaces(s: Surfaces | undefined, look: LiveGeometryLook | undefined): void {
+    const key = s === undefined || look === undefined ? "" : JSON.stringify([look.key, look.layers]);
+    if (s === this.surfaces.s && key === this.surfaces.key) return;
+    this.surfaces = { ...this.surfaces, s, look, key };
+    this.version++;
+    if (this.view !== undefined && !this.running) void this.loop();
+  }
+
+  /** The surfaces' buffers as the view needs them: the data once for each set of surfaces, the numbers each view. */
+  private putSurfaces(v: ViewSpec, W: number, H: number): void {
+    const device = this.device!;
+    const { s, look } = this.surfaces;
+    const live = s !== undefined && look !== undefined && s.n > 0 ? s : undefined;
+    if (live !== undefined && (this.surfaces.uploaded !== live || this.colourKey !== look!.key)) {
+      const data = geometryBuffer(live, look!.colours);
+      if (this.surfaces.uploaded === live) {
+        // The objects' colours alone: their region, at the end.
+        const at = objectsByteOffset(live);
+        device.queue.writeBuffer(this.gdata!, at, data, at / 4);
+      } else {
+        if (data.byteLength > this.gdata!.size) {
+          this.gdata!.destroy();
+          this.gdata = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+          this.resize(W, H, true);
+        }
+        device.queue.writeBuffer(this.gdata!, 0, data);
+      }
+      this.surfaces.uploaded = live;
+      this.colourKey = look!.key;
+    }
+    const wfp = v.world_from_physical ? rowMajor(v.world_from_physical) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    // A ray leaving a surface starts 2e-5 of the scene away from it (as the WebGL tracer's).
+    const lo = live ? live.lo : [0, 0, 0], hi = live ? live.hi : [0, 0, 0];
+    const corner = (p: number[]) => [0, 1, 2].map((r) => wfp[4 * r] * p[0] + wfp[4 * r + 1] * p[1] + wfp[4 * r + 2] * p[2] + wfp[4 * r + 3]);
+    const a = corner(lo), b = corner(hi);
+    const eps = 2e-5 * Math.max(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]), 1e-9);
+    // The numbers, at the buffer's start.
+    device.queue.writeBuffer(this.gdata!, 0, geometryParams(live, look, invert(wfp), eps));
+  }
+
+  private colourKey = "";
 
   /** The view to render; `tag` comes back with its frames. */
   setView(view: ViewSpec, tag = ""): void {
@@ -822,6 +888,7 @@ export class LocalRenderer {
         if (this.applied !== this.version) {
           const version = this.version;
           this.resize(W, H);
+          this.putSurfaces(v, W, H);
           const { P, preset } = this.pack(v, W, H);
           device.queue.writeBuffer(this.params!, 0, P);
           device.queue.writeBuffer(this.tf!, 0, levelTable(preset, this.level!));
@@ -900,6 +967,7 @@ export class LocalRenderer {
     this.disposed = true;
     this.client?.dispose();
     this.tex?.destroy();
+    this.gdata?.destroy();
     this.device?.destroy();
   }
 }

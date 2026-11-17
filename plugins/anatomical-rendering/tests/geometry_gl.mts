@@ -6,6 +6,9 @@
  * target; every pixel compared with a brute-force trace on the CPU (every
  * primitive tried, the same clipping and hiding).
  *
+ * The same again for the WebGPU path tracer's WGSL (local/geometry.wgsl),
+ * a compute shader writing each ray's hit to a storage buffer.
+ *
  *   npm run e2e:geometry      (vite-node; Playwright's or CHROME's Chromium, SwiftShader)
  */
 import { createRequire } from "node:module";
@@ -13,6 +16,7 @@ import { geoData, geoLayout, geometryGlsl } from "../geometry/live_geometry.ts";
 import { CONE, SPHERE, TRIANGLE } from "../geometry/lbvh.ts";
 import { NO_NORMAL, type Primitives } from "../geometry/primitives.ts";
 import { buildBlock, packSurfaces, surfaceHit } from "../geometry/surfaces.ts";
+import { geometryBuffer, geometryParams } from "../local/local_geometry.ts";
 
 const require = createRequire(import.meta.url);
 // Playwright is not a dependency of the app (no types here): what this script uses of it.
@@ -121,7 +125,9 @@ precision highp float;
 precision highp int;
 ${geometryGlsl(W, 6)}
 out vec4 o;
+uniform bool uSolid;
 void main() {
+  geoSolid = uSolid;
   vec2 p = floor(gl_FragCoord.xy);
   float x = ((p.x + 0.5) / ${SIZE}.0) * 4.8 - 2.4, y = ((p.y + 0.5) / ${SIZE}.0) * 4.8 - 2.4;
   vec3 d = normalize(vec3(0.05 * x, 0.03, 1.0));
@@ -142,7 +148,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage();
 interface Args { fs: string; data: number[]; rows: number; primAt: number; nodeAt: number; objAt: number; root: number; n: number; W: number; SIZE: number; clip: number[] }
-const result: { error?: string | null; out?: number[]; seen?: number[] } = await page.evaluate(
+const result: { error?: string | null; out?: number[]; seen?: number[]; solid?: number[] } = await page.evaluate(
   ({ fs, data, rows, primAt, nodeAt, objAt, root, n, W, SIZE, clip }: Args) => {
     const gl = document.createElement("canvas").getContext("webgl2")!;
     if (!gl.getExtension("EXT_color_buffer_float")) return { error: "no float targets" };
@@ -193,7 +199,8 @@ const result: { error?: string | null; out?: number[]; seen?: number[] } = await
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
     gl.viewport(0, 0, SIZE, SIZE);
     // Per layer: roughness, specular, emission, opacity.
-    const render = (opacity: number[]) => {
+    const render = (opacity: number[], solid = false) => {
+      gl.uniform1i(u("uSolid"), solid ? 1 : 0);
       gl.uniform4fv(u("uGeoMat"), new Float32Array(opacity.flatMap((a) => [0.5, 0.1, 0, a])));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       const out = new Float32Array(SIZE * SIZE * 4);
@@ -201,7 +208,7 @@ const result: { error?: string | null; out?: number[]; seen?: number[] } = await
       return Array.from(out);
     };
     // All opaque; then layer 0 clear and layer 1 half opaque.
-    return { out: render([1, 1, 1, 1]), seen: render([0, 0.5, 1, 1]) };
+    return { out: render([1, 1, 1, 1]), seen: render([0, 0.5, 1, 1]), solid: render([0, 0.5, 1, 1], true) };
   },
   { fs, data, rows: layout.rows, primAt: layout.primAt, nodeAt: layout.nodeAt, objAt: layout.objAt, root: s.root, n: s.n, W, SIZE, clip },
 );
@@ -211,58 +218,158 @@ if (result.error !== undefined || result.out === undefined) {
   process.exit(1);
 }
 
-let agree = 0, hits = 0, sameT = 0, anyAgree = 0, clipped = 0, hidden = 0;
-const out = result.out!;
-for (let py = 0; py < SIZE; ++py)
-  for (let px = 0; px < SIZE; ++px) {
-    const g = out.slice(4 * (py * SIZE + px), 4 * (py * SIZE + px) + 4);
-    const want = expected(px, py);
-    const gotHit = g[0] > 0;
-    if (gotHit === want.t > 0) agree++;
-    if ((g[2] > 0.5) === want.t > 0) anyAgree++;
-    if (want.t > 0) {
-      hits++;
-      if (gotHit && Math.abs(g[0] - want.t) < 1e-3 * Math.max(1, want.t)) sameT++;
-    }
-    if (gotHit) {
-      const obj = objectOf(g[1]);
-      if (obj === 3) hidden++;
-      const { o, d } = ray(px, py);
-      if (obj === 1 && -(o[0] + d[0] * g[0]) + 1.1 < -1e-4) clipped++;
-    }
-  }
-// Layer 0 clear and layer 1 (the spheres) half opaque: nothing of layer 0, nothing nearer than the CPU's nearest
-// sphere, and the spheres met by about half the rays that reach one (more where a ray passes several).
-const seen = result.seen!;
-let ofClear = 0, nearer = 0, reach = 0, stopped = 0;
-for (let py = 0; py < SIZE; ++py)
-  for (let px = 0; px < SIZE; ++px) {
-    const g = seen.slice(4 * (py * SIZE + px), 4 * (py * SIZE + px) + 4);
-    const want = expected(px, py, [2]);
-    if (g[0] > 0) {
-      const obj = objectOf(g[1]);
-      if (obj === 0 || obj === 2) ofClear++;
-      if (want.t < 0 || g[0] < want.t * (1 - 1e-3)) nearer++;
-    }
-    if (want.t > 0) {
-      reach++;
-      if (g[0] > 0) stopped++;
-    }
-  }
-const total = SIZE * SIZE;
-const checks: [boolean, string][] = [
-  [hits > total * 0.2, `the scene is met by ${hits} of ${total} rays`],
-  [agree / total > 0.998, `hit or miss as the CPU: ${agree} of ${total}`],
-  [sameT / hits > 0.995, `the same distance where both hit: ${sameT} of ${hits}`],
-  [anyAgree / total > 0.998, `a shadow ray (any hit) as the CPU: ${anyAgree} of ${total}`],
-  [hidden === 0, `nothing hit of the hidden object (${hidden})`],
-  [clipped === 0, `nothing hit beyond the cut (${clipped})`],
-  [ofClear === 0 && nearer === 0, `a clear layer is passed, and nothing met before the half-opaque one (${ofClear}, ${nearer})`],
-  [reach > 100 && stopped / reach > 0.4 && stopped / reach < 0.85, `a half-opaque layer stops ${stopped} of the ${reach} rays reaching it`],
-];
 let failed = 0;
-for (const [ok, what] of checks) {
-  console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
-  if (!ok) failed++;
+/** Each ray's (t, primitive, any hit) as the GPU found them, all opaque (`out`) and layer 0 clear, layer 1 half opaque (`seen`), against the CPU's. */
+function report(name: string, out: number[], seen: number[], solid: number[]): void {
+  let agree = 0, hits = 0, sameT = 0, anyAgree = 0, clipped = 0, hidden = 0;
+  for (let py = 0; py < SIZE; ++py)
+    for (let px = 0; px < SIZE; ++px) {
+      const g = out.slice(4 * (py * SIZE + px), 4 * (py * SIZE + px) + 4);
+      const want = expected(px, py);
+      const gotHit = g[0] > 0;
+      if (gotHit === want.t > 0) agree++;
+      if ((g[2] > 0.5) === want.t > 0) anyAgree++;
+      if (want.t > 0) {
+        hits++;
+        if (gotHit && Math.abs(g[0] - want.t) < 1e-3 * Math.max(1, want.t)) sameT++;
+      }
+      if (gotHit) {
+        const obj = objectOf(g[1]);
+        if (obj === 3) hidden++;
+        const { o, d } = ray(px, py);
+        if (obj === 1 && -(o[0] + d[0] * g[0]) + 1.1 < -1e-4) clipped++;
+      }
+    }
+  // Layer 0 clear and layer 1 (the spheres) half opaque: nothing of layer 0, nothing nearer than the CPU's nearest
+  // sphere, and the spheres met by about half the rays that reach one (more where a ray passes several).
+  let ofClear = 0, nearer = 0, reach = 0, stopped = 0;
+  for (let py = 0; py < SIZE; ++py)
+    for (let px = 0; px < SIZE; ++px) {
+      const g = seen.slice(4 * (py * SIZE + px), 4 * (py * SIZE + px) + 4);
+      const want = expected(px, py, [2]);
+      if (g[0] > 0) {
+        const obj = objectOf(g[1]);
+        if (obj === 0 || obj === 2) ofClear++;
+        if (want.t < 0 || g[0] < want.t * (1 - 1e-3)) nearer++;
+      }
+      if (want.t > 0) {
+        reach++;
+        if (g[0] > 0) stopped++;
+      }
+    }
+  // Met as solid (a camera's ray): the half-opaque layer every time, the clear one never: as the CPU without layer 0.
+  let solidAgree = 0;
+  for (let py = 0; py < SIZE; ++py)
+    for (let px = 0; px < SIZE; ++px) {
+      const g = solid.slice(4 * (py * SIZE + px), 4 * (py * SIZE + px) + 4);
+      const want = expected(px, py, [2]);
+      if ((g[0] > 0) === want.t > 0 && (want.t < 0 || Math.abs(g[0] - want.t) < 1e-3 * Math.max(1, want.t))) solidAgree++;
+    }
+  const total = SIZE * SIZE;
+  const checks: [boolean, string][] = [
+    [hits > total * 0.2, `the scene is met by ${hits} of ${total} rays`],
+    [agree / total > 0.998, `hit or miss as the CPU: ${agree} of ${total}`],
+    [sameT / hits > 0.995, `the same distance where both hit: ${sameT} of ${hits}`],
+    [anyAgree / total > 0.998, `a shadow ray (any hit) as the CPU: ${anyAgree} of ${total}`],
+    [hidden === 0, `nothing hit of the hidden object (${hidden})`],
+    [clipped === 0, `nothing hit beyond the cut (${clipped})`],
+    [ofClear === 0 && nearer === 0, `a clear layer is passed, and nothing met before the half-opaque one (${ofClear}, ${nearer})`],
+    [reach > 100 && stopped / reach > 0.4 && stopped / reach < 0.85, `a half-opaque layer stops ${stopped} of the ${reach} rays reaching it`],
+    [solidAgree / total > 0.998, `met as solid, the half-opaque layer where the CPU meets it: ${solidAgree} of ${total}`],
+  ];
+  for (const [ok, what] of checks) {
+    console.log(`${ok ? "ok  " : "FAIL"} ${name}: ${what}`);
+    if (!ok) failed++;
+  }
 }
+report("WebGL", result.out!, result.seen!, result.solid!);
+
+// ----------------------------------------------------------------- the WebGPU tracer's WGSL
+const wgsl = require("node:fs").readFileSync(new URL("../local/geometry.wgsl", import.meta.url), "utf8") as string;
+const cs = `${wgsl}
+@group(0) @binding(0) var<storage, read_write> res: array<vec4f>;
+@group(0) @binding(1) var<storage, read> solid: array<f32>;
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  if (gid.x >= ${SIZE}u || gid.y >= ${SIZE}u) { return; }
+  geoSolid = solid[0] > 0.5;
+  let x = ((f32(gid.x) + 0.5) / ${SIZE}.0) * 4.8 - 2.4;
+  let y = ((f32(gid.y) + 0.5) / ${SIZE}.0) * 4.8 - 2.4;
+  let d = normalize(vec3f(0.05 * x, 0.03, 1.0));
+  let h = geoTrace(vec3f(x, y, -6.0), d, 0.0, 1e30, false);
+  let a = geoAny(vec3f(x, y, -6.0), d, 0.0, 1e30);
+  res[gid.y * ${SIZE}u + gid.x] = vec4f(h.t, f32(h.prim), select(0.0, 1.0, a), 0.0);
+}`;
+const look = (opacity: number[]) => ({
+  layers: opacity.map((a, i) => ({ clips: i === 1 ? [clip] : [], crop: null, material: { roughness: 0.5, specular: 0.1, emission: 0, opacity: a } })),
+});
+// World to geometry: halve. The numbers at the buffer's start, as the tracer writes them each view.
+const half2 = [0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1];
+const buffers = [[1, 1, 1, 1], [0, 0.5, 1, 1], [0, 0.5, 1, 1]].map((o) => {
+  const b = geometryBuffer(s, colours);
+  b.set(geometryParams(s, look(o), half2, 1e-6));
+  return Array.from(b);
+});
+const gpuBrowser = await chromium.launch({
+  executablePath: process.env.CHROME ?? (require("node:fs").existsSync("/usr/bin/google-chrome") ? "/usr/bin/google-chrome" : undefined),
+  args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-vulkan=swiftshader", "--use-webgpu-adapter=swiftshader", "--disable-vulkan-surface", "--no-sandbox"],
+});
+const gpuPage = await gpuBrowser.newPage();
+// WebGPU is only for a secure page: an empty one from a file.
+const blank = require("node:path").join(require("node:os").tmpdir(), "ngplatform-webgpu.html");
+require("node:fs").writeFileSync(blank, "<!doctype html><title>webgpu</title>");
+await gpuPage.goto(`file://${blank}`);
+interface GpuArgs { cs: string; buffers: number[][]; SIZE: number }
+// The third: met as solid.
+const solidFlags = [0, 0, 1];
+const gpu: { error?: string; outs?: number[][] } = await gpuPage.evaluate(async ({ cs, buffers, SIZE, solidFlags }: GpuArgs & { solidFlags: number[] }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nav = navigator as any;
+  const adapter = await nav.gpu?.requestAdapter();
+  if (!adapter) return { error: "no WebGPU adapter" };
+  const device = await adapter.requestDevice();
+  const module = device.createShaderModule({ code: cs });
+  const info = await module.getCompilationInfo();
+  const errors = info.messages.filter((m: { type: string }) => m.type === "error");
+  if (errors.length) return { error: errors.map((m: { message: string; lineNum: number }) => `${m.lineNum}: ${m.message}`).join("; ") };
+  const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { GPUBufferUsage: U, GPUMapMode: M } = globalThis as any;
+  const buffer = (data: ArrayBufferView, usage: number) => {
+    const b = device.createBuffer({ size: Math.max(16, data.byteLength), usage: usage | U.COPY_DST });
+    device.queue.writeBuffer(b, 0, data);
+    return b;
+  };
+  const outs: number[][] = [];
+  for (const [bi, p] of buffers.entries()) {
+    const res = device.createBuffer({ size: SIZE * SIZE * 16, usage: U.STORAGE | U.COPY_SRC });
+    const bind = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: res } },
+        { binding: 1, resource: { buffer: buffer(new Float32Array([solidFlags[bi]]), U.STORAGE) } },
+        { binding: 10, resource: { buffer: buffer(new Uint32Array(p), U.STORAGE) } },
+      ],
+    });
+    const read = device.createBuffer({ size: SIZE * SIZE * 16, usage: U.COPY_DST | U.MAP_READ });
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind);
+    pass.dispatchWorkgroups(Math.ceil(SIZE / 8), Math.ceil(SIZE / 8));
+    pass.end();
+    enc.copyBufferToBuffer(res, 0, read, 0, SIZE * SIZE * 16);
+    device.queue.submit([enc.finish()]);
+    await read.mapAsync(M.READ);
+    outs.push(Array.from(new Float32Array(read.getMappedRange().slice(0))));
+    read.unmap();
+  }
+  return { outs };
+}, { cs, buffers, SIZE, solidFlags });
+await gpuBrowser.close();
+if (gpu.error !== undefined || gpu.outs === undefined) {
+  console.error(`FAIL WebGPU: ${gpu.error}`);
+  process.exit(1);
+}
+report("WebGPU", gpu.outs[0], gpu.outs[1], gpu.outs[2]);
 process.exit(failed ? 1 : 0);

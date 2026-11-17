@@ -1050,7 +1050,12 @@ class AnatomicalRendering {
       const clouds = layers.filter((l) => this.isVectors(l));
       for (const name of [...this.points.keys()]) if (!clouds.some((l) => l.name === name)) this.points.delete(name);
       this.rebuildSurfaces(clouds);
-      if (layers.length > 1 || clouds.length > 0) {
+      const images = layers.filter((l) => !this.isVectors(l));
+      if (images.length === 1 && clouds.length > 0) {
+        // One image and geometry: the image as the object and in WebGPU's picture at rest, the geometry traced in both.
+        void this.ensureLocal(images[0]);
+        for (const l of clouds) this.ensurePoints(l, clouds.length);
+      } else if (layers.length > 1 || clouds.length > 0) {
         this.closeLocal();
         // The images read as volumes; the geometry layers traced as surfaces.
         void this.live.open(layers.filter((l) => !this.isVectors(l)).map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
@@ -2192,6 +2197,9 @@ class AnatomicalRendering {
       this.save((x) => (x.planes = x.planes.map((p) => (p.normal.every((v) => v === 0) ? { ...planeFromView(frame.invViewProjection, frame.position, p.name), on: p.on, offset: p.offset } : p))));
     }
     const local = this.saved.where === "browser" ? this.local : undefined;
+    // The scene's surfaces in WebGPU's picture too, as this frame draws them (no picks: that is not a drawing); its
+    // picture made again only when they change.
+    if (local?.ready) local.setSurfaces(this.live.heldSurfaces, this.surfacesLook({ ...frame, registerPicks: undefined }));
     if (this.saved.where === "browser" && local === undefined && this.live.ready()) {
       // Several images drawn as one: the object is all the view shows.
       const spec = this.viewSpec(frame, 1);
@@ -3042,7 +3050,7 @@ class AnatomicalRendering {
       emission: surfaceSlider("emission", "Emission", 5),
     };
     const surfacePart = el("div", { class: "stack" },
-      field("Opacity", surfaceSliders.opacity, { info: "How much of the light the surfaces stop: below 1 they are see-through (in the moving view, a fine dither that the path-traced picture smooths)." }),
+      field("Opacity", surfaceSliders.opacity, { info: "How much of the light the surfaces stop: below 1 they are see-through, blended over what is behind them. Lower takes longer to path-trace, as the light goes on through." }),
       field("Roughness", surfaceSliders.roughness, { info: "How broad their highlights are: low is polished, high is matte." }),
       field("Specular", surfaceSliders.specular, { info: "The share of the light reflected as a highlight rather than in their colour." }),
       field("Emission", surfaceSliders.emission, { info: "Light they give off in their own colour, as if lit from within (the key light is 1)." }),
