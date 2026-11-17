@@ -23,6 +23,8 @@ import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, leve
 import { RENDER_PANEL } from "./manifest.js";
 import { type PointsLevel, pointsTable, readPoints } from "./points.js";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
+import { meshSourceOf } from "@ngplatform/sdk/sources";
+import { meshStoreUrl } from "../luxar/mesh_layers.js";
 import { axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, sceneDirection, sceneAngles, renderSource, planeClip, planeFromView, safeHref, unitMm, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
@@ -607,8 +609,13 @@ class AnatomicalRendering {
         const generation = ctx.viewer.layersGeneration?.();
         if (generation !== undefined && generation === this.lookGeneration) return;
         this.lookGeneration = generation;
-        const layer = this.vectorsAlone() ?? (this.saved.objects.on ? this.objectsLayer() : undefined);
-        const look = layer && zarrVectorsStore(layer.sources[0]) !== undefined ? JSON.stringify(this.lookOf(layer) ?? null) : "";
+        // Every Zarr Vectors layer drawn (its points here, or the objects layer on a render computer).
+        const layers = [...this.vectorLayers().filter((l) => this.isOn(l)), ...(this.saved.objects.on && this.objectsLayer() ? [this.objectsLayer()!] : [])];
+        // (A segmentation's chosen segments: their meshes are read again.)
+        const look = JSON.stringify([
+          ...layers.filter((l) => zarrVectorsStore(l.sources[0]) !== undefined).map((l) => [l.name, this.lookOf(l) ?? null]),
+          ...this.vectorLayers().filter((l) => this.isOn(l)).map((l) => [l.name, this.meshStoreOf(l) ?? null]),
+        ]);
         if (look === this.lastLayerLook) return;
         this.lastLayerLook = look;
         this.update();
@@ -662,7 +669,7 @@ class AnatomicalRendering {
   private setOn(on: boolean): void {
     // On with no image switched on (the 3-D view's Render, the command): the image selected is.
     const selected = this.edited();
-    if (on && this.renderedLayers().length === 0 && selected !== undefined && this.isImage(selected)) {
+    if (on && this.renderedLayers().length === 0 && selected !== undefined && (this.isImage(selected) || this.isVectors(selected))) {
       this.saved.looks = { ...this.saved.looks, [selected.name]: { ...this.saved.looks[selected.name], on: true } };
     }
     const target = this.target();
@@ -705,8 +712,32 @@ class AnatomicalRendering {
    * crops are fractions of it, and a render computer renders it alone.
    */
   private target(): LayerInfo | undefined {
-    if (this.images().length === 0) return this.vectorsAlone();
+    if (this.saved.where === "browser") return this.renderedLayers()[0];
+    // On a render computer: the first image; a Zarr Vectors layer alone (its geometry) while switched on.
+    if (this.images().length === 0) {
+      const v = this.vectorsAlone();
+      return v !== undefined && this.isOn(v) ? v : undefined;
+    }
     return this.renderedLayers()[0];
+  }
+
+  /**
+   * Geometry layers: Zarr Vectors layers (points, lines, surfaces) and precomputed segmentations (their chosen
+   * segments' meshes). This browser draws their points and surfaces; a render computer their geometry as objects.
+   */
+  private vectorLayers(): LayerInfo[] {
+    return this.ctx.viewer.layers().filter((l) => this.isVectors(l));
+  }
+
+  private isVectors(layer: LayerInfo): boolean {
+    if (zarrVectorsStore(layer.sources[0]) !== undefined) return true;
+    const volume = layer.type === "segmentation" ? meshSourceOf(layer.sources[0])?.volume : undefined;
+    return volume !== undefined && !volume.startsWith("graphene+");
+  }
+
+  /** The layers with a Render switch: the images, then the Zarr Vectors layers. */
+  private switchable(): LayerInfo[] {
+    return [...this.images(), ...this.vectorLayers()];
   }
 
   /**
@@ -716,8 +747,8 @@ class AnatomicalRendering {
    */
   private editing: string | undefined;
   private edited(): LayerInfo | undefined {
-    const imgs = this.images();
-    return imgs.find((l) => l.name === this.editing) ?? imgs.find((l) => l.name === this.saved.layer) ?? imgs[0] ?? this.vectorsAlone();
+    const imgs = this.switchable();
+    return imgs.find((l) => l.name === this.editing) ?? imgs.find((l) => l.name === this.saved.layer) ?? this.images()[0] ?? this.vectorsAlone() ?? imgs[0];
   }
 
   /** Whether a layer is one of the images (by name: the viewer gives new objects for its layers each time). */
@@ -727,7 +758,11 @@ class AnatomicalRendering {
 
   /** Whether an image is rendered: as its own Render switch says; for a scene of before, the one image it named. */
   private isOn(layer: LayerInfo): boolean {
-    return this.saved.looks[layer.name]?.on ?? layer.name === (this.saved.layer ?? this.images()[0]?.name);
+    const own = this.saved.looks[layer.name]?.on;
+    if (own !== undefined) return own;
+    // A Zarr Vectors layer: on when it is the scene (no image), else off until switched on.
+    if (this.isVectors(layer)) return this.images().length === 0 && layer.name === this.vectorsAlone()?.name;
+    return layer.name === (this.saved.layer ?? this.images()[0]?.name);
   }
 
   /**
@@ -735,7 +770,9 @@ class AnatomicalRendering {
    * fractions of it, so selecting another layer does not move them), then the others in the order of the layers.
    */
   private renderedLayers(): LayerInfo[] {
-    const on = this.images().filter((l) => this.isOn(l));
+    // In this browser a Zarr Vectors layer's points are drawn with the images; a render computer draws them as objects.
+    // (A segmentation with no segment chosen has nothing to draw.)
+    const on = (this.saved.where === "browser" ? this.switchable() : this.images()).filter((l) => this.isOn(l) && (!this.isVectors(l) || this.sourceOf(l) !== undefined));
     const first = on.find((l) => l.name === this.saved.layer);
     return (first ? [first, ...on.filter((l) => l !== first)] : on).slice(0, MAX_VOLUMES);
   }
@@ -752,10 +789,10 @@ class AnatomicalRendering {
       // Each image's switch written as it stands (a scene of before renders its one named image by default), so
       // changing which image comes first changes no other image's.
       const looks = { ...x.looks };
-      for (const l of this.images()) if (looks[l.name]?.on === undefined) looks[l.name] = { ...looks[l.name], on: this.isOn(l) };
+      for (const l of this.switchable()) if (looks[l.name]?.on === undefined) looks[l.name] = { ...looks[l.name], on: this.isOn(l) };
       looks[layer.name] = { ...looks[layer.name], on };
       x.looks = looks;
-      const still = this.images().filter((l) => looks[l.name]?.on === true);
+      const still = this.switchable().filter((l) => looks[l.name]?.on === true);
       // The image the crops are of: kept while it is rendered, else this one (switched on) or the first left.
       if (!still.some((l) => l.name === x.layer)) x.layer = on ? layer.name : still[0]?.name ?? x.layer;
       x.on = still.length > 0;
@@ -788,7 +825,7 @@ class AnatomicalRendering {
     const name = this.ctx.workspace.selectedLayer();
     if (name === this.lastSelected) return;
     this.lastSelected = name;
-    if (name === undefined || name === this.editing || !this.images().some((l) => l.name === name)) return;
+    if (name === undefined || name === this.editing || !this.switchable().some((l) => l.name === name)) return;
     this.editing = name;
     this.update();
   }
@@ -816,13 +853,29 @@ class AnatomicalRendering {
 
   /** What a layer renders: an image's store, or a Zarr Vectors layer's objects alone (OBJECTS_ONLY and its store). */
   private sourceOf(layer: LayerInfo): string | undefined {
+    // A segmentation's chosen segments' meshes (drawn here as surfaces): their mesh store.
+    const meshes = this.meshStoreOf(layer);
+    if (meshes !== undefined) return `${OBJECTS_ONLY}${meshes}`;
     const store = renderSource(layer.sources[0]) === undefined ? zarrVectorsStore(layer.sources[0]) : undefined;
     return store !== undefined ? `${OBJECTS_ONLY}${store}` : renderSource(layer.sources[0]);
   }
 
+  /** The most segments whose meshes are drawn here. */
+  private static readonly MESH_SEGMENTS = 64;
+
+  /** A precomputed segmentation layer with segments chosen: the mesh store of the first MESH_SEGMENTS (Luxar's reader); else undefined. */
+  private meshStoreOf(layer: LayerInfo): string | undefined {
+    if (layer.type !== "segmentation" || zarrVectorsStore(layer.sources[0]) !== undefined) return undefined;
+    const volume = meshSourceOf(layer.sources[0])?.volume;
+    if (volume === undefined || volume.startsWith("graphene+")) return undefined;
+    const shown = this.ctx.viewer.visibleSegments(layer.name);
+    if (shown === undefined || shown.all || shown.size === 0) return undefined;
+    return meshStoreUrl(volume, Array.from(shown.ids()).slice(0, AnatomicalRendering.MESH_SEGMENTS));
+  }
+
   /** A layer's Colour by look (its Display tab's Vertex colour), as its state has it now. */
   private lookOf(layer: LayerInfo): ColourByLook | undefined {
-    return this.ctx.viewer.colourLook?.(layer.name) ?? layerColourLook(this.ctx.viewer.layerSpec(layer.name));
+    return this.ctx.viewer.colourLook?.(layer.name) ?? layerColourLook(this.ctx.viewer.layerSpec?.(layer.name));
   }
 
   /** What the image's axes allow where it renders (view.ts, axesCheck): a problem that stops it, or a note. */
@@ -933,10 +986,14 @@ class AnatomicalRendering {
     this.watchObjects();
     const found = this.target();
     const browser = this.saved.where === "browser";
-    // A point cloud drawn here: Neuroglancer's own drawing of it hidden once the object shows (it then reads nothing).
-    const alone = this.vectorsAlone();
-    const pointsShown = this.saved.on && browser && alone !== undefined && found?.name === alone.name && this.points?.level !== undefined && this.live.levelOf(this.sourceOf(alone)!) === this.points.level;
-    this.hidePointsDrawing(pointsShown ? alone.name : undefined);
+    // Point clouds drawn here: Neuroglancer's own drawing of each hidden once the object shows it (it then reads nothing).
+    const drawnPoints = this.saved.on && browser
+      ? this.renderedLayers().filter((l) => {
+        const p = this.isVectors(l) ? this.points.get(l.name) : undefined;
+        return p?.level !== undefined && this.live.levelOf(this.sourceOf(l)!) === p.level;
+      })
+      : [];
+    this.hidePointsDrawing(new Set(drawnPoints.map((l) => l.name)));
     // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
     const target = found !== undefined && this.axesOf(found).problem === undefined ? found : undefined;
     if (!this.saved.on || target === undefined || (!browser && this.serviceInfo === undefined)) {
@@ -962,18 +1019,18 @@ class AnatomicalRendering {
         dispose: () => undefined,
       });
     }
-    if (browser && target.name === this.vectorsAlone()?.name) {
-      // A Zarr Vectors point cloud alone: its points as a volume of small spheres, drawn here as an image is.
-      this.closeLocal();
+    if (browser) {
       this.closeSession();
-      this.ensurePoints(target);
-    } else if (browser) {
-      this.closeSession();
-      // Several images: drawn together as one volume, each read here (this browser's path tracer takes one).
-      const layers = this.renderedLayers().filter((l) => this.axesOf(l).problem === undefined);
-      if (layers.length > 1) {
+      // Several images, or a Zarr Vectors layer's points (a volume of small spheres): drawn together as one volume,
+      // each read here (this browser's path tracer takes one image).
+      // (A segmentation with no segment chosen has nothing to draw.)
+      const layers = this.renderedLayers().filter((l) => this.axesOf(l).problem === undefined && this.sourceOf(l) !== undefined);
+      const clouds = layers.filter((l) => this.isVectors(l));
+      for (const name of [...this.points.keys()]) if (!clouds.some((l) => l.name === name)) this.points.delete(name);
+      if (layers.length > 1 || clouds.length > 0) {
         this.closeLocal();
         void this.live.open(layers.map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
+        for (const l of clouds) this.ensurePoints(l);
       } else void this.ensureLocal(target);
     } else {
       this.closeLocal();
@@ -988,18 +1045,17 @@ class AnatomicalRendering {
     this.panelUpdate?.();
   }
 
-  /** The layer whose own drawing is hidden while its points are drawn here. */
-  private pointsHidden: string | undefined;
+  /** The layers whose own drawing is hidden while their points are drawn here. */
+  private pointsHidden = new Set<string>();
 
-  private hidePointsDrawing(name: string | undefined): void {
-    if (name === this.pointsHidden) return;
-    if (this.pointsHidden !== undefined) this.ctx.viewer.hideLayerDrawing(this.pointsHidden, false);
-    this.pointsHidden = name;
-    if (name !== undefined) this.ctx.viewer.hideLayerDrawing(name, true);
+  private hidePointsDrawing(names: Set<string>): void {
+    for (const name of this.pointsHidden) if (!names.has(name)) this.ctx.viewer.hideLayerDrawing(name, false);
+    for (const name of names) if (!this.pointsHidden.has(name)) this.ctx.viewer.hideLayerDrawing(name, true);
+    this.pointsHidden = new Set(names);
   }
 
-  /** A point cloud read in this browser: what it was read for (store, colours, voxels), and the grid once made. */
-  private points: { key: string; level?: PointsLevel; text: string; failed?: boolean } | undefined;
+  /** Point clouds read in this browser, by layer: what each was read for (store, colours, voxels), and its grid once made. */
+  private readonly points = new Map<string, { key: string; level?: PointsLevel; text: string; failed?: boolean }>();
 
   /**
    * Reads a Zarr Vectors layer's points (once for its store, its Vertex colour and the voxels) and makes them a
@@ -1007,36 +1063,39 @@ class AnatomicalRendering {
    */
   private ensurePoints(layer: LayerInfo): void {
     const src = this.sourceOf(layer)!;
-    // The store as the reader opens it (gs:// and s3:// as https), as Luxar reads it.
-    const store = storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
+    // The store as the reader opens it (gs:// and s3:// as https), as Luxar reads it; a segmentation's meshes' store.
+    const store = this.meshStoreOf(layer) ?? storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
     const look = this.lookOf(layer);
-    const voxels = Math.min(this.saved.objectVoxels, 32e6);
+    // Two bytes a voxel (its nearness and its label): at most 128 M.
+    const voxels = Math.min(this.saved.objectVoxels, 128e6);
     const key = JSON.stringify([store, look?.by === "group" ? look.group : null, voxels]);
-    if (this.points?.key === key) {
-      if (this.points.level && this.live.levelOf(src) !== this.points.level) this.live.setLevel(this.points.level, src);
+    const had = this.points.get(layer.name);
+    if (had?.key === key) {
+      if (had.level && this.live.levelOf(src) !== had.level) this.live.putLevel(had.level, src);
       return;
     }
-    const mine: NonNullable<typeof this.points> = { key, text: "Object: reading the points" };
-    this.points = mine;
+    const mine = { key, text: "Object: reading the points" } as { key: string; level?: PointsLevel; text: string; failed?: boolean };
+    this.points.set(layer.name, mine);
     this.problem = "";
+    const current = () => this.points.get(layer.name) === mine;
     const say = (text: string) => {
-      if (this.points !== mine) return;
+      if (!current()) return;
       mine.text = `Object: ${text}`;
       this.statusUpdate?.();
     };
-    void readPoints(store, look, voxels, say, () => this.points !== mine).then(
+    void readPoints(store, look, voxels, say, () => !current(), (id) => this.ctx.viewer.segmentColour(layer.name, id)).then(
       (level) => {
-        if (this.points !== mine) return;
+        if (!current()) return;
         mine.level = level;
         mine.text = `Object: ${level.path} as ${level.size.join(" × ")} voxels`;
-        this.live.setLevel(level, src);
+        this.live.putLevel(level, src);
         this.update();
       },
       (e: Error) => {
-        if (this.points !== mine || e.message === "stale") return;
+        if (!current() || e.message === "stale") return;
         mine.failed = true;
         mine.text = "";
-        this.problem = `The points could not be read: ${e.message}`;
+        this.problem = `The points of ${layer.name} could not be read: ${e.message}`;
         this.statusUpdate?.();
       },
     );
@@ -2088,18 +2147,18 @@ class AnatomicalRendering {
       return Array.isArray(preset.stops) && url !== undefined ? { view, volumes: [{ url, preset, placement: this.placementOf(first!) }], ...this.liveLight() } : undefined;
     }
     const volumes: LiveLook["volumes"] = [];
-    // The images switched on; a Zarr Vectors point cloud alone when there is no image.
-    const alone = this.images().length === 0 ? this.vectorsAlone() : undefined;
-    for (const layer of alone ? [alone] : this.renderedLayers()) {
+    // The images and Zarr Vectors point clouds switched on.
+    for (const layer of this.renderedLayers()) {
       const url = this.sourceOf(layer);
       const level = url !== undefined ? this.live.levelOf(url) : undefined;
       if (url !== undefined && level?.labels !== undefined) {
         // A point cloud: its spheres opaque within, each in its group's colour, at its density.
         const colours = (level as PointsLevel).colours;
-        const density = this.densityOf(layer) ?? 400;
+        // Its own density, else opaque within a voxel (the points' grid is in millimetres).
+        const density = this.saved.looks[layer.name]?.density ?? 6 / Math.abs(level.voxelToRas[0]);
         const preset = { name: "Points", domain: "data", stops: [], density, exposure: this.saved.exposure, shade_mix: 0.9, gradient_scale: 12, roughness: 0.4, specular: 0.2, albedo: 0.9, phase_g: 0, surface_inset: 0 } as unknown as LivePreset;
         const { crop, clips } = this.cropsFor(layer, frame);
-        volumes.push({ url, preset, table: { rgba: pointsTable(colours), key: JSON.stringify(colours) }, placement: this.placementOf(layer), crop, clips });
+        volumes.push({ url, preset, table: { rgba: pointsTable(colours, (level as PointsLevel).radius), key: JSON.stringify([colours, (level as PointsLevel).radius]) }, placement: this.placementOf(layer), crop, clips });
         continue;
       }
       const preset = url !== undefined ? this.layerPreset(layer, url) : undefined;
@@ -2613,7 +2672,8 @@ class AnatomicalRendering {
     if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
     if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
     if (!host && this.local && !this.local.ready && this.localText) return { progress: this.localText };
-    if (!host && this.points !== undefined && this.points.level === undefined && !this.points.failed && this.vectorsAlone() !== undefined) return { progress: this.points.text.replace(/^Object: /, "") };
+    const reading = host ? undefined : [...this.points.values()].find((p) => p.level === undefined && !p.failed);
+    if (reading !== undefined) return { progress: reading.text.replace(/^Object: /, "") };
     return {};
   }
 
@@ -2644,11 +2704,11 @@ class AnatomicalRendering {
     // The selected image's own: Render on adds it to the volume rendered, Render off takes it out.
     const layerOn = () => {
       const l = this.edited();
-      return l !== undefined && this.saved.on && (this.isImage(l) ? this.isOn(l) : true);
+      return l !== undefined && this.saved.on && this.isOn(l);
     };
     const onSwitch = toggle(layerOn() ? "Render on" : "Render off", layerOn(), (v) => {
       const l = this.edited();
-      if (l !== undefined && this.isImage(l)) this.setLayerOn(l, v);
+      if (l !== undefined && (this.isImage(l) || this.isVectors(l))) this.setLayerOn(l, v);
       else this.setOn(v);
       onSwitch.set(layerOn());
       switchWords(layerOn());
@@ -3177,8 +3237,11 @@ class AnatomicalRendering {
       const imgs = this.images();
       const target = this.target();
       // A Zarr Vectors layer alone (no image): its geometry is the scene, on a render computer.
-      const alone = this.vectorsAlone() !== undefined;
-      const scene = imgs.length > 0 || alone;
+      const aloneScene = this.vectorsAlone() !== undefined;
+      const scene = imgs.length > 0 || this.vectorLayers().length > 0;
+      // The layer selected is a Zarr Vectors layer: it has no image settings (its points are coloured as the layer colours them).
+      const edited = this.edited();
+      const alone = edited !== undefined && this.isVectors(edited);
       const onHost_ = s.where === "host";
       const axes = target ? this.axesOf(target) : {};
       for (const e of hostOnly) e.hidden = !onHost_;
@@ -3207,7 +3270,6 @@ class AnatomicalRendering {
 
       // Rendering.
       rendering.hidden = !scene;
-      const edited = this.edited();
       const rendered = this.renderedLayers();
       const over = imgs.filter((l) => this.isOn(l)).length - rendered.length;
       layersNote.textContent = imgs.length > 0 && rendered.length === 0
@@ -3217,7 +3279,7 @@ class AnatomicalRendering {
         : "";
       layersNote.hidden = layersNote.textContent === "";
       const others = rendered.filter((l) => l.name !== edited?.name).length;
-      editingNote.textContent = edited && !alone
+      editingNote.textContent = edited
         ? `${edited.name}${others === 0 ? "" : this.isOn(edited) ? `, rendered with ${others} other image${others === 1 ? "" : "s"}` : `; ${others} other image${others === 1 ? " is" : "s are"} rendered`}. Select another image in Layers for its own settings.`
         : "";
       editingNote.hidden = editingNote.textContent === "";
@@ -3278,7 +3340,7 @@ class AnatomicalRendering {
       // Objects (a computer's renderer only).
       const objSegs = this.objectLayers();
       objectsCard.hidden = !onHost_ || !scene;
-      objectsOn.hidden = alone;
+      objectsOn.hidden = aloneScene;
       objectsEmpty.hidden = objSegs.length > 0;
       objectsBody.hidden = objSegs.length === 0;
       objectsOn.set(s.objects.on);
@@ -3295,7 +3357,7 @@ class AnatomicalRendering {
       surfaceField.hidden = zvLayer;
       insideField.hidden = zvLayer;
       objectImage.hidden = zvLayer;
-      objectsNote.textContent = alone ? (om ? `The store's ${String((om as Record<string, unknown>).kind ?? "geometry")} (level ${String((om as Record<string, unknown>).level ?? "?")}) alone: the scene has no image. Coloured as the layer is (its Display tab, Vertex colour).` : "The store's geometry alone (the scene has no image): read when the computer opens it.")
+      objectsNote.textContent = aloneScene ? (om ? `The store's ${String((om as Record<string, unknown>).kind ?? "geometry")} (level ${String((om as Record<string, unknown>).level ?? "?")}) alone: the scene has no image. Coloured as the layer is (its Display tab, Vertex colour).` : "The store's geometry alone (the scene has no image): read when the computer opens it.")
         : !s.objects.on ? ""
         : zvLayer ? (om ? `The store's ${String((om as Record<string, unknown>).kind ?? "geometry")} (level ${String((om as Record<string, unknown>).level ?? "?")}) as solid surfaces in the volume.` : "The store's geometry, as solid surfaces in the volume: read when the computer opens it.")
         : seen === undefined || seen.all || seen.size === 0 ? "Choose segments in the layer: they are the objects."
@@ -3420,7 +3482,7 @@ class AnatomicalRendering {
 
   dispose(): void {
     this.disposed = true;
-    this.hidePointsDrawing(undefined);
+    this.hidePointsDrawing(new Set());
     this.objectsWatch?.off();
     this.panelUpdate = this.statusUpdate = this.jobsUpdate = this.editorUpdate = undefined;
     this.closeSession();

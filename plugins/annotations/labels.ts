@@ -486,7 +486,7 @@ export class Labels {
       (v) => this.update(label.id, { views: v as Label["views"] }),
       "Views",
     );
-    const size = slider(Math.round(label.size), { min: 8, max: 64, step: 1, unit: "px", label: "Size", onchange: (v) => this.update(label.id, { size: v }) });
+    const size = slider(label.size, { min: 4, max: 64, step: 0.5, unit: "px", label: "Size", onchange: (v) => this.update(label.id, { size: v }) });
     const near = checkbox("2-D: only near its section", label.nearSection, (on) => this.update(label.id, { nearSection: on }));
     const what = label.anchor.kind === "group" ? "track group" : label.anchor.kind === "annotation" ? `annotation in ${label.anchor.layer}` : "point";
     return el(

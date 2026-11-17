@@ -936,10 +936,11 @@ export class LiveVolume {
   async open(urls: string | string[], voxels = LIVE_VOXELS): Promise<void> {
     const list = [...new Set(typeof urls === "string" ? [urls] : urls)].slice(0, MAX_VOLUMES);
     const each = shareOf(voxels, list.length);
-    for (const [url, v] of this.vols) if (!list.includes(url) || v.voxels !== each) this.drop(url);
+    // A level put here (a point cloud's grid, `putLevel`) is not read: kept while it is wanted.
+    for (const [url, v] of this.vols) if (!list.includes(url) || (v.voxels !== each && !isPut(url))) this.drop(url);
     this.wanted = list;
     this.failed = "";
-    const todo = list.filter((u) => !this.vols.has(u));
+    const todo = list.filter((u) => !this.vols.has(u) && !isPut(u));
     for (const url of todo) this.vols.set(url, { url, voxels: each, text: "Object: waiting to read the image" });
     if (todo.length === 0) return;
     this.onChange?.();
@@ -981,6 +982,15 @@ export class LiveVolume {
     this.failed = "";
     const v = this.vols.get(url) ?? { url, voxels: Math.round(level.size[0] * level.size[1] * level.size[2]), text: "" };
     this.vols.set(url, v);
+    this.held = undefined;
+    this.put(v, level);
+  }
+
+  /** A level made here (a point cloud's grid) for an image of the look (`url`, as `open` was given it), beside the others. */
+  putLevel(level: Level8, url: string): void {
+    const v = this.vols.get(url) ?? { url, voxels: Math.round(level.size[0] * level.size[1] * level.size[2]), text: "" };
+    this.vols.set(url, v);
+    if (v.level === level) return;
     this.held = undefined;
     this.put(v, level);
   }
@@ -1441,6 +1451,11 @@ interface Scene {
   drawn: Drawn[];
   primary: LiveParams;
   box: ReturnType<typeof lightBox>;
+}
+
+/** A look's image that is put (`putLevel`), not read: a Zarr Vectors layer's points ("objects:" and its store). */
+function isPut(url: string): boolean {
+  return url.startsWith("objects:");
 }
 
 /** An image's name from its store's address, for the readout. */

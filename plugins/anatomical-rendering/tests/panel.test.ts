@@ -231,6 +231,39 @@ describe("the Anatomical panel", () => {
     expect(words()).toBe("Render off");
   });
 
+  it("switches a Zarr Vectors layer's rendering on and off by its own switch, as an image's", async () => {
+    const CELLS = { name: "cells", type: "segmentation", sources: ["gs://b/cells.zv/|zarr-vectors:"], visible: true } as typeof IMAGE;
+    // Alone (no image): on by default, the switch turns it off and on again.
+    const alone = fakeContext({ layers: [CELLS], axes: { cells: XYZ }, state: { on: true } });
+    await activate(alone);
+    const one = { host: dom.host(), dispose: () => {} };
+    one.dispose = alone.panels.get(PANEL)!(one.host) as () => void;
+    await vi.waitFor(() => expect(dom.text(one.host)).toContain("Render on"));
+    const words = (h: HTMLElement) => h.querySelector("label.choice")!.querySelector("span")!.textContent;
+    const flip = (h: HTMLElement) => {
+      const sw = h.querySelector<HTMLInputElement>("input.switch")!;
+      dom.check(sw, !sw.checked);
+    };
+    expect(words(one.host)).toBe("Render on");
+    flip(one.host);
+    expect(readSaved(alone.state()).looks.cells).toEqual({ on: false });
+    expect(readSaved(alone.state()).on).toBe(false);
+    expect(words(one.host)).toBe("Render off");
+    flip(one.host);
+    expect(readSaved(alone.state()).looks.cells).toEqual({ on: true });
+    expect(words(one.host)).toBe("Render on");
+    one.dispose();
+    // Beside an image: off until switched on, then rendered with it.
+    const f = fakeContext({ layers: [IMAGE, CELLS], axes: { brain: XYZ, cells: XYZ }, state: { on: true, layer: "brain" } });
+    const { host } = await open(dom, f);
+    f.select("cells");
+    await vi.waitFor(() => expect(dom.text(host)).toContain("cells; 1 other image is rendered."));
+    expect(words(host)).toBe("Render off");
+    flip(host);
+    expect(readSaved(f.state()).looks).toEqual({ brain: { on: true }, cells: { on: true } });
+    expect(words(host)).toBe("Render on");
+  });
+
   it("has no view buttons (the orientation cube turns the view), and says Render on or Render off", async () => {
     const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ } });
     const { host } = await open(dom, f);

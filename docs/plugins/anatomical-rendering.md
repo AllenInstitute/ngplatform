@@ -365,7 +365,23 @@ sphere in a grid of at most 32 million voxels, coloured as the layer
 colours it (its Vertex colour's groups, in the store's colours or the
 palette's, the groups not shown left out), lit and path-traced as an
 image is. Neuroglancer's own drawing of the layer is hidden meanwhile.
-Lines and surfaces still need a render computer.
+Lines still need a render computer.
+
+**Points and meshes in this browser, each by its own switch.** A Zarr
+Vectors layer and a precomputed segmentation with meshes (its chosen
+segments, the first 64: cells of the MICrONS segmentation, say) have a
+**Render on / Render off** switch, as an image has: select the layer in
+Layers. A Zarr Vectors layer alone in a scene starts on; beside an image,
+off. Switched on, its points (spheres a voxel in radius) or its meshes' surfaces
+(thin shells, in each segment's colour, from the finest mesh level
+within 1.5 million vertices) are drawn together with the images switched
+on, as one volume: lit, path-traced and cut by their own crops.
+The grid holds each voxel's distance to the nearest point (or surface),
+fitted to the points and up to 128 M voxels (the Object voxels setting):
+a point is drawn a voxel in radius and a surface as a shell about a voxel
+thick, so a thin dendrite stays thin down to the grid's voxel (about a
+micrometre for a few MICrONS cells). A layer's density, when set, makes
+them translucent; otherwise they are opaque.
 
 Cuts and crops apply to objects as to the volume. Stills and movies
 draw them too. This browser's renderer does not draw objects yet.

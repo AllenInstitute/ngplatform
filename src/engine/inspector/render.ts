@@ -19,6 +19,7 @@ import { colormapControl } from "./colormap.js";
 import { lookupTableControl } from "./lookup.js";
 import { hasOutlines, setOutlines } from "../outlines.js";
 import { shaderSection } from "./shader.js";
+import { ANNOTATION_SIZES, type AnnotationSize, hasSize, sizeDefault, withSize } from "../annotation_sizes.js";
 import { colourBySection } from "./colour_by.js";
 import { surfaceSection } from "./surface.js";
 import {
@@ -276,9 +277,9 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
       section(
         "Skeletons",
         row("Mode (2D)", enumSelect(scope, skeleton.params2d.mode)),
-        row("Line width (2D)", slider(scope, skeleton.params2d.lineWidth, { min: 1, max: 40, step: 1 })),
+        row("Line width (2D)", slider(scope, skeleton.params2d.lineWidth, { min: 0.1, max: 40, step: 0.1 })),
         row("Mode (3D)", enumSelect(scope, skeleton.params3d.mode)),
-        row("Line width (3D)", slider(scope, skeleton.params3d.lineWidth, { min: 1, max: 40, step: 1 })),
+        row("Line width (3D)", slider(scope, skeleton.params3d.lineWidth, { min: 0.1, max: 40, step: 0.1 })),
       ),
       hasSkeletons,
     ),
@@ -297,6 +298,8 @@ function annotationRender(scope: Scope, l: AnnotationUserLayer): HTMLElement[] {
       "Display",
       showWhen(scope, row("Annotation colour", colour(scope, ads.color), "The colour defaultColor() gives in the shader"), usesDefault),
       showWhen(scope, note("The shader sets the colours; call defaultColor() in it to choose one here."), derived([processed], () => !usesDefault.value)),
+      row("Point size", sizeSlider(scope, ads, ANNOTATION_SIZES.point), "Points and line ends, in pixels (fractions too)"),
+      row("Line width", sizeSlider(scope, ads, ANNOTATION_SIZES.line), "Lines and box edges, in pixels (fractions too)"),
     ),
     shaderSection(scope, l, {
       fragmentMain: ads.shader,
@@ -305,10 +308,39 @@ function annotationRender(scope: Scope, l: AnnotationUserLayer): HTMLElement[] {
       codeVisible: l.codeVisible,
       hideInactive: l.hideInactiveShaderControls,
       help: `${DOCS}/annotation/rendering.md`,
+      // Shown as Point size and Line width above.
+      skipControls: [ANNOTATION_SIZES.point.name, ANNOTATION_SIZES.line.name],
       properties: () => (ads.annotationProperties.value ?? []).map((p: { identifier: string; type: string }) => ({ name: `prop_${p.identifier}`, type: p.type })),
       propertiesChanged: [ads.annotationProperties],
     }),
   ];
+}
+
+/**
+ * A slider for an annotation size: the shader's control (added, with the calls that use it, the first time it is
+ * moved), else Neuroglancer's own size.
+ */
+function sizeSlider(scope: Scope, ads: any, size: AnnotationSize): HTMLElement {
+  const shader = ads.shader as Watch<string>;
+  const controls = ads.shaderControls;
+  const trackable = (): Watch<number> | undefined => (hasSize(shader.value, size) ? controls.state.get(size.name)?.trackable : undefined);
+  const w: Watch<number> = {
+    get value() {
+      return trackable()?.value ?? sizeDefault(shader.value, size);
+    },
+    set value(v: number) {
+      const t = trackable();
+      if (t !== undefined) t.value = v;
+      else shader.value = withSize(shader.value, size, v);
+    },
+    changed: {
+      add(listener: () => void) {
+        const offs = [shader.changed.add(listener), controls.changed.add(listener)];
+        return () => offs.forEach((off) => off());
+      },
+    },
+  };
+  return slider(scope, w, { min: size.min, max: size.max, step: size.step });
 }
 
 // ------------------------------------------------------------ single mesh

@@ -31,6 +31,8 @@ export interface ShaderModels {
   /** Per-object values the shader can read, by name and type. */
   properties?: () => { name: string; type: string; range?: string }[];
   propertiesChanged?: Watch<unknown>[];
+  /** Controls shown elsewhere (not in the list of the shader's controls). */
+  skipControls?: string[];
   /** Rows shown above the code (an image layer's colour map). */
   rows?: HTMLElement[];
 }
@@ -137,6 +139,7 @@ function shaderControls(scope: Scope, layer: UserLayer, m: ShaderModels): HTMLEl
     let hidden = 0;
     const entries = [...state.state];
     for (const [name, controlState] of entries) {
+      if (m.skipControls?.includes(name)) continue;
       if (m.hideInactive?.value && !active.value.has(name)) {
         hidden++;
         continue;

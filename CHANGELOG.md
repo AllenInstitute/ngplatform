@@ -46,6 +46,18 @@ The production polish: the work of an audit of every panel and plugin
 - Anatomical rendering draws a Zarr Vectors point cloud on its own (a cell
   atlas) in this browser: each point a small lit, path-traced sphere in
   its group's colour as the layer colours it; no render computer needed.
+- Point clouds, Zarr Vectors layers and a segmentation's chosen segments'
+  meshes each have a Render on / off switch, as images do, and are drawn
+  in this browser together with the images switched on (meshes as
+  surfaces in their segment colours).
+- Points and surfaces are drawn at their size: a grid of each voxel's
+  distance to the nearest point (fitted to the points, up to 128 M
+  voxels) draws a point a voxel in radius and a surface as a shell about a
+  voxel thick, where blobs three voxels wide made dendrites and cells
+  look bulky; opaque by default.
+- Annotation layers have Point size and Line width sliders (Display), in
+  fractions of a pixel; skeleton line widths and label sizes take
+  fractions too.
 
 ### One left column, views first
 
