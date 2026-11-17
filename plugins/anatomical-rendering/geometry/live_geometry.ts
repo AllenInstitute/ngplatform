@@ -55,6 +55,8 @@ uniform vec3 uGeoCropLo[GEO_LAYERS];
 uniform vec3 uGeoCropHi[GEO_LAYERS];
 uniform float uGeoRough;
 uniform float uGeoSpec;
+// How far (world) a ray leaving a surface starts from it.
+uniform float uGeoEps;
 
 ivec2 geoAt(int i) { return ivec2(i & (GEO_W - 1), i >> GEO_SHIFT); }
 vec4 geoData(int i) { return texelFetch(uGeoData, geoAt(i), 0); }
@@ -323,7 +325,7 @@ export class GeometryTextures {
   }
 
   /** The surfaces' uniforms and textures (on `unit` and the next) for program `p`. */
-  bind(gl: WebGL2RenderingContext, p: WebGLProgram, unit: number, s: Surfaces, look: LiveGeometryLook, geoFromWorld: number[], maxClips: number): void {
+  bind(gl: WebGL2RenderingContext, p: WebGLProgram, unit: number, s: Surfaces, look: LiveGeometryLook, geoFromWorld: number[], maxClips: number, eps: number): void {
     const u = (name: string) => gl.getUniformLocation(p, name);
     gl.activeTexture(gl.TEXTURE0 + unit);
     gl.bindTexture(gl.TEXTURE_2D, this.data!);
@@ -342,6 +344,7 @@ export class GeometryTextures {
     gl.uniform3fv(u("uGeoCropHi"), new Float32Array(layers.flatMap((l) => l?.crop?.[1] ?? [1e30, 1e30, 1e30])));
     gl.uniform1f(u("uGeoRough"), look.roughness);
     gl.uniform1f(u("uGeoSpec"), look.specular);
+    gl.uniform1f(u("uGeoEps"), eps);
   }
 
   dispose(gl: WebGL2RenderingContext | undefined): void {

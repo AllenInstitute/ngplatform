@@ -426,6 +426,10 @@ vec3 hgdir(vec3 w, float g) {
 // The transmittance from world point w toward dir (unit) to where it leaves every volume, a voxel (of the volume it
 // is in) a step.
 float transmit(vec3 w, vec3 dir) {
+#ifdef GEO
+  // A surface in the way: none of the light.
+  if (geoAny(w, dir, uGeoEps, 1e30)) return 0.0;
+#endif
   Ray r = ray(w, dir);
   float tau = 0.0;
   float v0;
@@ -456,8 +460,9 @@ float transmit(vec3 w, vec3 dir) {
 }
 // Moves world point w to where a ray toward dir first scatters (where its optical depth reaches -log(1 - u),
 // stepVox voxels a step), and says which volume it is in there; false when it leaves every volume first.
-bool collide(inout vec3 w, out int at, vec3 dir, float stepVox) {
+bool collideTo(inout vec3 w, out int at, vec3 dir, float stepVox, float tmax) {
   Ray r = ray(w, dir);
+  float tEnd = min(r.t1, tmax);
   float target = -log(1.0 - rnd());
   float tau = 0.0;
   at = -1;
@@ -465,7 +470,7 @@ bool collide(inout vec3 w, out int at, vec3 dir, float stepVox) {
   FINEST(r, r.t0, v0)
   float t = r.t0 + stepVox * (v0 < 1e29 ? v0 : 0.0) * rnd();
   for (int i = 0; i < 8192; ++i) {
-    if (t >= r.t1) return false;
+    if (t >= tEnd) return false;
     float vox;
     FINEST(r, t, vox)
     if (vox >= 1e29) {
@@ -500,6 +505,40 @@ bool collide(inout vec3 w, out int at, vec3 dir, float stepVox) {
   }
   return false;
 }
+bool collide(inout vec3 w, out int at, vec3 dir, float stepVox) { return collideTo(w, at, dir, stepVox, 1e30); }
+#ifdef GEO
+// What a ray from w toward dir meets first: 0 nothing (it leaves); 1 the volumes, scattering in volume at (w moved
+// there); 2 a surface (w moved there; its normal facing the ray, and its colour).
+int scatterEvent(inout vec3 w, out int at, out vec3 sn, out vec3 sc, vec3 dir, float stepVox) {
+  int prim;
+  vec2 uv;
+  sn = vec3(0.0);
+  sc = vec3(0.0);
+  float ts = geoHit(w, dir, uGeoEps, 1e30, prim, uv);
+  vec3 w0 = w;
+  if (collideTo(w, at, dir, stepVox, ts > 0.0 ? ts : 1e30)) return 1;
+  if (ts < 0.0) return 0;
+  geoSurface(prim, uv, w0, dir, ts, sn, sc);
+  w = w0 + dir * ts + sn * uGeoEps;
+  return 2;
+}
+// A direction off a surface (normal n, toward wo): a glossy lobe about the mirror direction at the surfaces'
+// specular share, else cosine-weighted (the throughput then takes the colour); false: below the surface.
+bool geoBounce(vec3 n, vec3 wo, vec3 albedo, inout vec3 thr, out vec3 nd) {
+  if (rnd() < uGeoSpec) {
+    vec3 rf = normalize(n * (2.0 * dot(n, wo)) - wo);
+    float e = max(1.0, 2.0 / max(uGeoRough * uGeoRough, 1e-4) - 2.0);
+    float ct = pow(rnd(), 1.0 / (e + 1.0));
+    float st = sqrt(max(0.0, 1.0 - ct * ct));
+    float ph = 6.2831853 * rnd();
+    nd = normalize(basis(rf) * vec3(st * cos(ph), st * sin(ph), ct));
+    return dot(nd, n) > 0.0;
+  }
+  nd = cosdir(n);
+  thr *= albedo;
+  return true;
+}
+#endif
 // Where world point w is in volume k (voxels).
 vec3 voxOf(int k, vec3 w) { return (uVoxFromWorld[k] * vec4(w, 1.0)).xyz; }`;
 
@@ -517,7 +556,8 @@ float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.0671
 const FS = (o: Frame3d["outputs"], n: number, geoW = 0) => one(n, `#version 300 es
 ${COMMON(n)}
 ${TONE}
-${geoW ? geometryGlsl(geoW, MAX_CLIPS) : ""}
+${geoW ? `#define GEO
+${geometryGlsl(geoW, MAX_CLIPS)}` : ""}
 uniform highp sampler3D uLight;
 uniform bool uHasLight;
 uniform float uHeldAround;
@@ -644,7 +684,8 @@ void main() {
     vec3 albedo;
     geoSurface(sPrim, sUv, ow, dw, ts, nrm, albedo);
     vec3 p = w + nrm * (1e-5 * ts);
-    float Tl = geoAny(p, uLightDir, 0.0, 1e30) ? 0.0 : (uHasLight ? lightAt(p).a : clear(p, uLightDir, 25.0));
+    // (The light held includes the surfaces' shadows, softly: read half a cell out, off the surface's own.)
+    float Tl = geoAny(p, uLightDir, uGeoEps, 1e30) ? 0.0 : (uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).a : clear(p, uLightDir, 25.0));
     vec3 sky = env(nrm);
     sky = mix(sky, uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).rgb : sky, uHeldAround * 0.5);
     vec3 col = geoBrdfCos(nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uGeoSpec);
@@ -670,8 +711,10 @@ void main() {
 // (alpha). Later passes: one path from a point in the cell in a direction from all round, as the path
 // tracer's (up to three scatterings, the light at each through what pass 0 found, the surroundings
 // where it leaves), averaged into what the passes before found (colour).
-const BAKE_FS = (n: number) => one(n, `#version 300 es
+const BAKE_FS = (n: number, geoW = 0) => one(n, `#version 300 es
 ${COMMON(n)}
+${geoW ? `#define GEO
+${geometryGlsl(geoW, MAX_CLIPS)}` : ""}
 ${RANDOM}
 uniform highp sampler3D uPrev;
 uniform int uLayer;
@@ -686,7 +729,21 @@ vec3 incoming(vec3 w, vec3 dir) {
   vec3 L = vec3(0.0);
   for (int bounce = 0; bounce < 3; ++bounce) {
     int k;
+#ifdef GEO
+    vec3 sn, sc;
+    int ev = scatterEvent(w, k, sn, sc, dir, 1.5);
+    if (ev == 0) return L + thr * env(dir);
+    if (ev == 2) {
+      // A surface: the key light on it, then on off it.
+      L += thr * geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * transmit(w, uLightDir);
+      vec3 nd;
+      if (!geoBounce(sn, -dir, sc, thr, nd)) return L;
+      dir = nd;
+      continue;
+    }
+#else
     if (!collide(w, k, dir, 1.5)) return L + thr * env(dir);
+#endif
     vec3 vk = voxOf(k, w);
     thr *= colourAt(k, vk, tf(k, tex(k, vk))) * uAlbedo[k];
     L += thr * uLightRgb * (hg(dot(dir, uLightDir), uPhaseG[k]) * lightAt(w));
@@ -704,15 +761,22 @@ void main() {
   }
   vec4 prev = texelFetch(uPrev, cell, 0);
   vec3 at = w + (vec3(rnd(), rnd(), rnd()) - 0.5) * uCellW;
-  o = vec4(mix(prev.rgb, incoming(at, sphere()), 1.0 / float(uPass)), prev.a);
+  float a = prev.a;
+#ifdef GEO
+  // Surfaces much thinner than a cell: the light reaching the cell is the mean over points in it, not its centre's.
+  a = mix(prev.a, transmit(at, uLightDir), 1.0 / float(uPass + 1));
+#endif
+  o = vec4(mix(prev.rgb, incoming(at, sphere()), 1.0 / float(uPass)), a);
 }`);
 
 // One sample a pixel of the view at rest, path-traced as pathtrace.wgsl's trace (the same light,
 // surface and volume scattering, bounces and roulette), added to the samples before: colour and
 // coverage (a path that met tissue), and the depth where the pixel's ray first meets tissue and the
 // samples taken. Only the rows uRow of every uRows are traced in a pass; the others are copied.
-const TRACE_FS = (n: number) => one(n, `#version 300 es
+const TRACE_FS = (n: number, geoW = 0) => one(n, `#version 300 es
 ${COMMON(n)}
+${geoW ? `#define GEO
+${geometryGlsl(geoW, MAX_CLIPS)}` : ""}
 ${RANDOM}
 uniform sampler2D uPrevSum;
 uniform sampler2D uPrevAux;
@@ -727,12 +791,25 @@ layout(location = 0) out vec4 oSum;
 layout(location = 1) out vec4 oAux;
 
 // The GL depth where the ray first meets tissue (half its light gone), half a voxel a step; 1 for none.
+float glDepth(vec3 w) {
+  vec4 p = uVP * vec4(w, 1.0);
+  return clamp((p.z / p.w) * 0.5 + 0.5, 0.0, 0.99999);
+}
 float firstHit(vec3 ow, vec3 dw) {
+  float tsurf = 1e30;
+#ifdef GEO
+  {
+    int p_;
+    vec2 c_;
+    float h = geoHit(ow, dw, 0.0, 1e30, p_, c_);
+    if (h > 0.0) tsurf = h;
+  }
+#endif
   Ray r = ray(ow, dw);
   float T = 1.0;
   float t = r.t0;
   for (int i = 0; i < 8192; ++i) {
-    if (t >= r.t1) break;
+    if (t >= min(r.t1, tsurf)) break;
     float vox;
     FINEST(r, t, vox)
     if (vox >= 1e29) {
@@ -751,13 +828,10 @@ float firstHit(vec3 ow, vec3 dw) {
     float s;
     SIGMA(r, t, s)
     T *= exp(-s * dt);
-    if (T <= 0.5) {
-      vec4 p = uVP * vec4(ow + dw * t, 1.0);
-      return clamp((p.z / p.w) * 0.5 + 0.5, 0.0, 0.99999);
-    }
+    if (T <= 0.5) return glDepth(ow + dw * t);
     t += dt;
   }
-  return 1.0;
+  return tsurf < 1e30 ? glDepth(ow + dw * tsurf) : 1.0;
 }
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
@@ -782,11 +856,35 @@ void main() {
   for (int bounce = 0; bounce <= 16; ++bounce) {
     if (bounce > uMaxBounces) break;
     int k;
+#ifdef GEO
+    vec3 sn, sc;
+    int ev = scatterEvent(w, k, sn, sc, dir, 0.5);
+    if (ev == 0) {
+      if (bounce > 0) L += thr * env(dir);
+      break;
+    }
+    if (bounce == 0) alpha = 1.0;
+    if (ev == 2) {
+      // A surface: the key light on it (shadowed by surfaces and the volumes), then a bounce off it.
+      float Ts = transmit(w, uLightDir);
+      if (Ts > 0.0) L += thr * geoBrdfCos(sn, -dir, uLightDir, sc) * uLightRgb * Ts;
+      vec3 nd;
+      if (!geoBounce(sn, -dir, sc, thr, nd)) break;
+      dir = nd;
+      if (bounce >= 2) {
+        float q = min(0.95, max(thr.x, max(thr.y, thr.z)));
+        if (rnd() > q) break;
+        thr /= q;
+      }
+      continue;
+    }
+#else
     if (!collide(w, k, dir, 0.5)) {
       if (bounce > 0) L += thr * env(dir);
       break;
     }
     if (bounce == 0) alpha = 1.0;
+#endif
     vec3 v = voxOf(k, w);
     vec3 albedo = colourAt(k, v, tf(k, tex(k, v))) * uAlbedo[k];
     vec3 g = grad(k, v);
@@ -842,6 +940,8 @@ uniform sampler2D uAux;
 uniform vec4 uViewport;
 uniform float uExposure;
 uniform vec2 uBand;
+// Blended by coverage (where the colour output alone can be blended): the least drawn; else 0.5, opaque.
+uniform float uMinCover;
 layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
@@ -852,9 +952,11 @@ void main() {
   ivec2 px = ivec2(gl_FragCoord.xy - uViewport.xy);
   vec4 s = texelFetch(uSum, px, 0);
   vec2 a = texelFetch(uAux, px, 0).rg;
-  if (a.g < 1.0 || s.a < 0.5 * a.g || a.r >= 1.0) discard;
+  float cover = a.g >= 1.0 ? s.a / a.g : 0.0;
+  if (cover < uMinCover || s.a <= 0.0 || a.r >= 1.0) discard;
   gl_FragDepth = a.r;
-  out_color = vec4(tone(s.rgb / s.a * uExposure), 1.0);
+  // Where only some of a pixel's paths met something (a dendrite thinner than the pixel): that share of it.
+  out_color = vec4(tone(s.rgb / s.a * uExposure), uMinCover < 0.5 ? cover : 1.0);
   out_z = vec4(1.0 - a.r);
   out_pickId = vec4(0.0);
 }`;
@@ -1173,11 +1275,14 @@ export class LiveVolume {
     const materials = sorted.map((d) => [d.vol.url, d.vol.level!.path, d.q.density, d.q.albedo, d.q.phaseG, d.q.worldFromVox, d.q.clips.slice(0, 4 * d.q.nclip), d.q.cropLo, d.q.cropHi]);
     // A light that turns with the camera: its direction to a degree or so, so a still camera keeps what is held.
     const dir = primary.lightDir.map((x) => Math.round(x * 50) / 50);
-    const heldKey = JSON.stringify([tfKey, materials, surf ? [surf.bvh.n, surf.bvh.lo, surf.bvh.hi] : null, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
+    const geoKey = surf ? [surf.bvh.n, surf.bvh.lo, surf.bvh.hi, look.geometry!.key, look.geometry!.layers, look.geometry!.roughness, look.geometry!.specular] : null;
+    const heldKey = JSON.stringify([tfKey, materials, geoKey, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
     if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0 };
     primary.lightDir = this.held.lightDir;
     primary.envUp = this.held.envUp;
-    const scene: Scene = { n, drawn: sorted, primary, box };
+    // A ray leaving a surface starts 2e-5 of the scene away from it (float32 hits are good to about 1e-6 of it).
+    const diag = box.cell * Math.hypot(...box.grid);
+    const scene: Scene = { n, drawn: sorted, primary, box, geo: surf ? { surf, look: look.geometry!, geoFromWorld: invert(wfp), geoW, eps: 2e-5 * diag } : undefined };
     // A light that turns with the camera is held again once the camera rests; short rays stand in while it moves.
     const baking = !(look.lightFollows && frame.moving);
     if (this.canBake && baking && this.held.pass < LIGHT_PASSES) this.bakeSome(gl, scene);
@@ -1194,9 +1299,7 @@ export class LiveVolume {
       this.stillSince = now;
       this.traced = undefined;
     }
-    // (Not yet with surfaces: the path tracer does not meet them, and would take their pixels.)
-    if (surf !== undefined) this.traced = undefined;
-    else if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
+    if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
     else if (this.canBake) {
       // A frame after the camera stops, to start path-tracing it.
       clearTimeout(this.settle);
@@ -1224,7 +1327,6 @@ export class LiveVolume {
       const held = this.canBake && baking ? this.held.pass : 0;
       gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
       gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
-      if (surf !== undefined) this.geoTex.bind(gl, p, UNIT.vol + 2 * n, surf, look.geometry!, invert(wfp), MAX_CLIPS);
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -1236,6 +1338,15 @@ export class LiveVolume {
       gl.uniform4f(u("uViewport"), vp[0], vp[1], vp[2], vp[3]);
       gl.uniform1f(u("uExposure"), primary.exposure);
       gl.uniform2f(u("uBand"), split * (1 - traced), split);
+      // The colour output blended by coverage (the depth and pick outputs not), where the GPU can blend it alone.
+      const ext = gl.getExtension("OES_draw_buffers_indexed") as { enableiOES(t: number, i: number): void; disableiOES(t: number, i: number): void; blendFuncSeparateiOES(i: number, a: number, b: number, c: number, d: number): void; blendEquationiOES(i: number, m: number): void } | null;
+      const blendWas = gl.isEnabled(gl.BLEND);
+      if (ext !== null && !blendWas) {
+        ext.enableiOES(gl.BLEND, frame.outputs.color);
+        ext.blendEquationiOES(frame.outputs.color, gl.FUNC_ADD);
+        ext.blendFuncSeparateiOES(frame.outputs.color, gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
+      }
+      gl.uniform1f(u("uMinCover"), ext !== null && !blendWas ? 0.02 : 0.5);
       gl.activeTexture(gl.TEXTURE0 + UNIT.sum);
       gl.bindTexture(gl.TEXTURE_2D, this.sumRead!);
       gl.uniform1i(u("uSum"), UNIT.sum);
@@ -1244,6 +1355,7 @@ export class LiveVolume {
       gl.uniform1i(u("uAux"), UNIT.aux);
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (ext !== null && !blendWas) ext.disableiOES(gl.BLEND, frame.outputs.color);
     }
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
@@ -1342,6 +1454,9 @@ export class LiveVolume {
       gl.bindTexture(gl.TEXTURE_3D, d.vol.occ!);
       gl.uniform1i(u(`uOcc${k}`), UNIT.vol + s.n + k);
     });
+    // The surfaces, on the units after the volumes'.
+    const g = s.geo;
+    if (g !== undefined) this.geoTex.bind(gl, p, UNIT.vol + 2 * s.n, g.surf, g.look, g.geoFromWorld, MAX_CLIPS, g.eps);
   }
 
   /** Draws into framebuffer `fb` (`w` × `h`); Neuroglancer's framebuffer, viewport, colour mask and tests are as they were after. */
@@ -1369,7 +1484,8 @@ export class LiveVolume {
    */
   private bakeSome(gl: WebGL2RenderingContext, s: Scene): void {
     const h = this.held!;
-    const p = this.program(gl, `bake ${s.n}`, () => BAKE_FS(s.n), true);
+    const geoW = s.geo?.geoW ?? 0;
+    const p = this.program(gl, `bake ${s.n} ${geoW}`, () => BAKE_FS(s.n, geoW), true);
     if (p === undefined) return;
     const u = (name: string) => gl.getUniformLocation(p, name);
     const grid = s.box.grid;
@@ -1404,7 +1520,8 @@ export class LiveVolume {
    * more rows a pass while frames come quickly, fewer while they are slow.
    */
   private traceSome(gl: WebGL2RenderingContext, s: Scene, frame: Frame3d, w: number, h: number, max: number): void {
-    const p = this.program(gl, `trace ${s.n}`, () => TRACE_FS(s.n), true);
+    const geoW = s.geo?.geoW ?? 0;
+    const p = this.program(gl, `trace ${s.n} ${geoW}`, () => TRACE_FS(s.n, geoW), true);
     if (p === undefined) return;
     if (this.traceSize[0] !== w || this.traceSize[1] !== h) {
       for (const [t, f] of [[this.sumRead, gl.RGBA32F], [this.sumFill, gl.RGBA32F], [this.auxRead, gl.RG32F], [this.auxFill, gl.RG32F]] as const) {
@@ -1542,6 +1659,8 @@ interface Scene {
   drawn: Drawn[];
   primary: LiveParams;
   box: ReturnType<typeof lightBox>;
+  /** The surfaces drawn with the volumes: theirs, the frame's look of them, world to their space, the data's width, a ray's start off them. */
+  geo?: { surf: Surfaces; look: LiveGeometryLook; geoFromWorld: number[]; geoW: number; eps: number };
 }
 
 /** A row-major 4 × 4 as column-major (lightBox's matrices are the shader's). */

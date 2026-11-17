@@ -381,7 +381,10 @@ on, as one volume: lit, path-traced and cut by their own crops.
 - **Built:** into a BVH in the background, in about a second for 2 million triangles.
 - **Drawn:** with the images. Each surface is shadowed by the others and cut by its layer's planes, in its segment's colour, so a dendrite is as thin as its mesh.
 
-While surfaces are drawn, the view stays the live preview, one ray a pixel. The accumulated path tracing does not include them yet, so very thin branches can look broken at a distance.
+Once the view is still, the surfaces are path-traced with the volumes:
+- they shadow each other and the tissue;
+- light bounces off them;
+- a branch thinner than a pixel shows by how much of the pixel it covers.
 
 Point clouds still use the grid below.
 

@@ -321,13 +321,14 @@ with EM, and a cut plane opens them.
 
 ### 3. Surfaces in the path tracer and the held light (3 days)
 
-- [ ] `PT_FS`:
+- [x] `PT_FS`:
   - surface events;
   - next-event estimation through surfaces and volume;
   - BRDF bounces;
   - `firstHit` with surfaces.
-- [ ] `transmit` and `collide` bounded by surfaces.
-- [ ] Light bake: surfaces block light and bounce it.
+- [x] `transmit` and `collide` bounded by surfaces.
+- [x] Light bake: surfaces block light and bounce it.
+- [x] The shader's traversal against the CPU reference on a GPU (`npm run e2e:geometry`): every ray's hit and distance, shadow rays, hidden objects and cuts. *Done in place of the golden images below.*
 - [ ] Golden images: a sphere's shadow on a volume and a volume's shadow
       on a sphere. The CUDA render of the same scene and view is compared
       within a tolerance; the scenes come from `test_objects.py`.
@@ -411,9 +412,37 @@ picture of the same view within the tolerance.
 | Thickness | dendrites at the mesh's own thickness |
 | With EM and a cut plane | both cut by the plane, the cells sitting in front of the EM's cut face |
 
-**Limits until step 3:**
-- With surfaces drawn, the progressive path tracer is paused: it does not meet surfaces, and its picture would take their pixels. The view is the preview, one ray a pixel, so dendrites thinner than a pixel break up.
-- The held light ignores surfaces.
+Step 2's two limits, the paused path tracer and the held light ignoring surfaces, are lifted by step 3.
+
+2026-11-17: step 3, except the CUDA golden-image comparison.
+
+**The path tracer:**
+- A path meets the surfaces and the volumes in order (`scatterEvent`).
+- At a surface:
+  - the key light, shadowed by surfaces and through the volumes (`transmit`);
+  - then a bounce, glossy or diffuse (`geoBounce`).
+- The pixel's depth is the nearer of the volume's first hit and the surface.
+
+**The held light:**
+- Surfaces block light and bounce it.
+- A cell's light is averaged over points in it, so a dendrite thinner than a cell shades it partly, not wholly.
+
+**Composite:**
+- The path-traced picture is blended by coverage on the colour output only (`OES_draw_buffers_indexed`), so sub-pixel dendrites fade in as samples arrive instead of dropping out.
+
+**A ray leaving a surface:**
+- It starts 2e-5 of the scene away from it.
+- At 1e-6 the MICrONS cells showed self-shadowing stripes in float32.
+
+**Checked:**
+
+| What | Result |
+|---|---|
+| `npm run e2e:geometry` (SwiftShader) | 9,216 of 9,216 rays agree with the CPU |
+| The four MICrONS cells, alone | path-traced (38 samples): shadowed by one another, glossy, dendrites as lit tubes |
+| The cells with EM and a cut plane | path-traced together |
+
+**Not done:** the CUDA comparison of the same still, the plan's "done when". It needs the same scene in both renderers; it waits for a fixture both can read.
 
 ## Risks
 
