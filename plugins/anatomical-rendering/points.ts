@@ -294,26 +294,42 @@ async function objectGroups(storeUrl: string, attribute: string, colour: string 
  * `scalar` is what Luxar's reader is asked for (`group:<attribute>[:<colour attribute>]`, else "none").
  */
 /** A store's mesh, read for the path tracer to trace as surfaces: its chunks at the level read, and millimetres a store unit. */
-export interface MeshRead {
-  kind: "meshes";
+/**
+ * A store's geometry, read for the path tracer to trace as surfaces, spheres or tubes: its chunks at the level
+ * read, millimetres a store unit, and how its points are grouped (as `chunkPoints` takes them).
+ */
+export interface GeometryRead {
+  kind: "meshes" | "points" | "lines";
   chunks: BuiltChunk[];
   mm: number[];
   level: number;
-  triangles: number;
+  /** Triangles, points or segments. */
+  count: number;
+  /** The vertices' bounds (store coordinates). */
+  lower: number[];
+  upper: number[];
+  /** Points' and lines' groups: per vertex (read by group), else per object (`byObject`), else none. */
+  perVertex: boolean;
+  byObject?: ObjectGroups;
+  /** Lines: each vertex's value is its radius (store units). */
+  radii: boolean;
 }
 
-export async function readPoints(storeUrl: string, look: ColourByLook | undefined, voxels: number, say: (text: string) => void, stale: () => boolean, segmentColour?: (id: bigint) => [number, number, number] | undefined, surfaces = false): Promise<PointsLevel | MeshRead> {
+export async function readPoints(storeUrl: string, look: ColourByLook | undefined, voxels: number, say: (text: string) => void, stale: () => boolean, segmentColour?: (id: bigint) => [number, number, number] | undefined, surfaces = false): Promise<PointsLevel | GeometryRead> {
   const g0 = look?.by === "group" ? look.group : undefined;
   // The group's index and colour attributes read with the points (a taxonomy's tier: a cell's class).
   const client = new StoreClient(storeUrl, { attributes: g0 !== undefined ? [g0.attribute, ...(g0.colorAttribute ? [g0.colorAttribute] : [])] : [] });
   try {
     const info = await client.ready;
     const meshes = info.primitive === "triangles";
-    if (info.primitive === "lines") throw new Error("this browser draws points and surfaces; this store holds lines (a render computer draws those)");
+    const lines = info.primitive === "lines";
+    if (lines && !surfaces) throw new Error("this browser draws lines as tubes only (a render computer draws them otherwise)");
     const g = look?.by === "group" ? look.group : undefined;
     // Groups per vertex (an attribute the reader exposes), else per object (the object table's columns: a cell's class).
     const perVertex = g !== undefined && info.attributes.some((a) => a.id === g.attribute);
-    client.setScalar(g !== undefined && perVertex ? `group:${g.attribute}${g.colours === "stored" && g.colorAttribute ? `:${g.colorAttribute}` : ""}` : "object");
+    // Lines not grouped by vertex: each vertex's radius (an SWC's), where the store has one.
+    const radius = lines && !perVertex ? info.attributes.find((a) => /^radi(us|i)$/i.test(a.id) && a.components === 1) : undefined;
+    client.setScalar(g !== undefined && perVertex ? `group:${g.attribute}${g.colours === "stored" && g.colorAttribute ? `:${g.colorAttribute}` : ""}` : radius ? `attribute:${radius.id}` : "object");
     const objects = g !== undefined && !perVertex ? objectGroups(storeUrl, g.attribute, g.colours === "stored" ? g.colorAttribute : undefined) : undefined;
     const level = pointsLevelIndex(info);
     const shape = info.levels[level].chunkShape;
@@ -336,7 +352,12 @@ export async function readPoints(storeUrl: string, look: ColourByLook | undefine
     const { lower, upper } = vertexBounds(chunks);
     say("placing the points");
     await new Promise((r) => setTimeout(r, 0));
-    if (meshes && surfaces) return { kind: "meshes", chunks, mm: mmPerUnit(info), level, triangles: chunks.reduce((n, c) => n + c.triangleCount, 0) };
+    if (surfaces) {
+      const kind = meshes ? "meshes" : lines ? "lines" : "points";
+      const count = chunks.reduce((n, c) => n + (meshes ? c.triangleCount : lines ? c.segmentCount : c.pointCount || c.vertexCount), 0);
+      const byObject = await objects;
+      return { kind, chunks, mm: mmPerUnit(info), level, count, lower, upper, perVertex, byObject, radii: radius !== undefined };
+    }
     if (meshes) {
       // Surfaces: their triangles as thin shells, each object in its segment colour.
       say("placing the surfaces");

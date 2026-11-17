@@ -56,6 +56,11 @@ The production polish: the work of an audit of every panel and plugin
   voxel thick, where blobs three voxels wide made dendrites and cells
   look bulky; opaque by default.
 - A segmentation's meshes are traced as real surfaces in this browser, not voxelised. The BVH is built in a worker with the render computer's algorithm and layout, and is tested against it bit for bit. Dendrites keep their mesh's own thickness, are lit with shadows, are cut by planes, and are drawn with images such as EM. They are path-traced with the volumes: they shadow each other and the volume, take light bounced off them into the held light, and thin branches are blended by how much of a pixel they cover. `npm run e2e:geometry` checks the shader's traversal against the CPU's on a GPU.
+- Points and lines are traced too:
+  - point clouds as spheres (a quarter of their spacing in radius);
+  - streamlines, skeletons and SWC as tubes (the store's radii, else a sixth of a segment).
+
+  Each layer has a Size in the Rendering card. Lines no longer need a render computer.
 - The anatomical renderer draws a scene whose first layer is hidden in Neuroglancer; the layer shown in the views is rendered when none is switched.
 - A Zarr Vectors layer can be coloured by any of its attributes again, for example a gene: the attribute search box was hidden by a style that hid every empty element in a stack, inputs included.
 - Annotation layers have Point size and Line width sliders (Display), in

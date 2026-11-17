@@ -386,7 +386,13 @@ Once the view is still, the surfaces are path-traced with the volumes:
 - light bounces off them;
 - a branch thinner than a pixel shows by how much of the pixel it covers.
 
-Point clouds still use the grid below.
+**Points and lines are traced the same way:**
+- **Points** are spheres, a quarter of their mean spacing in radius.
+- **Lines** (streamlines, skeletons, SWC) are tubes between their vertices: the store's radii where it has a `radius` attribute, else a sixth of a segment's length.
+
+The layer's **Size** in the Rendering card scales both. They are coloured as the layer colours them: by group (the groups not shown left out), else by object. Those colours are fixed when the geometry is made: a change of groups reads the layer again.
+
+The grid below remains only for older looks; it is removed in a later version.
 
 The grid holds each voxel's distance to the nearest point (or surface),
 fitted to the points and up to 128 M voxels (the Object voxels setting):

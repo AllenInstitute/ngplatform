@@ -21,10 +21,11 @@ import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX
 import { placementMm } from "../luxar/view_math.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { type MeshRead, type PointsLevel, pointsTable, readPoints } from "./points.js";
-import { joinPrimitives, meshPrimitives, type Primitives } from "./geometry/primitives.js";
+import { type GeometryRead, type PointsLevel, pointsTable, readPoints } from "./points.js";
+import { joinPrimitives } from "./geometry/primitives.js";
+import { type LayerGeometry, layerGeometry } from "./geometry/from_read.js";
 import { buildSurfacesAsync, type Surfaces } from "./geometry/surfaces.js";
-import { GEO_LAYERS } from "./geometry/live_geometry.js";
+import { GEO_LAYERS, GEO_MAX } from "./geometry/live_geometry.js";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { meshSourceOf } from "@ngplatform/sdk/sources";
 import { meshStoreUrl } from "../luxar/mesh_layers.js";
@@ -79,6 +80,8 @@ export interface LayerLook {
   on?: boolean;
   preset?: string;
   density?: number;
+  /** Points' and lines' size in this browser: times their natural radius. */
+  size?: number;
   cuts?: Cut[];
   planes?: CameraPlane[];
   boxes?: Crop[];
@@ -280,6 +283,7 @@ export function readSaved(raw: unknown): Saved {
           ...(typeof v.on === "boolean" ? { on: v.on } : {}),
           ...(typeof v.preset === "string" && v.preset ? { preset: v.preset } : {}),
           ...(typeof v.density === "number" && Number.isFinite(v.density) ? { density: v.density } : {}),
+          ...(typeof v.size === "number" && Number.isFinite(v.size) && v.size > 0 ? { size: v.size } : {}),
           ...(Array.isArray(v.cuts) ? { cuts: readCuts(v.cuts) } : {}),
           ...(Array.isArray(v.planes) ? { planes: readPlanes({ planes: v.planes }) } : {}),
           ...(Array.isArray(v.boxes) ? { boxes: readBoxes(v.boxes) } : {}),
@@ -1002,7 +1006,7 @@ class AnatomicalRendering {
     const drawnPoints = this.saved.on && browser
       ? this.renderedLayers().filter((l) => {
         const p = this.isVectors(l) ? this.points.get(l.name) : undefined;
-        if (p?.mesh !== undefined) return this.surfaceLayout?.layers.some((x) => x.name === l.name) === true && this.live.heldSurfaces !== undefined;
+        if (p?.geom !== undefined) return this.surfaceLayout?.layers.some((x) => x.name === l.name) === true && this.live.heldSurfaces !== undefined;
         return p?.level !== undefined && this.live.levelOf(this.sourceOf(l)!) === p.level;
       })
       : [];
@@ -1075,7 +1079,7 @@ class AnatomicalRendering {
   /** Point clouds read in this browser, by layer: what each was read for (store, colours, voxels), and its grid once made. */
   private readonly points = new Map<string, PointsEntry>();
   /** The surfaces traced now: which layers' meshes, in order, each one's objects (ids) from where in the numbering. */
-  private surfaceLayout: { key: string; layers: { name: string; ids: bigint[]; offset: number }[] } | undefined;
+  private surfaceLayout: { key: string; layers: { name: string; geometry: Built; offset: number }[] } | undefined;
   private surfacesWanted = "";
 
   /**
@@ -1110,9 +1114,9 @@ class AnatomicalRendering {
       (level) => {
         if (!current()) return;
         if ("kind" in level) {
-          // A mesh: its triangles, placed, traced as surfaces with the other layers' (rebuildSurfaces).
-          mine.mesh = meshOf(level, placement);
-          mine.text = `Object: level ${level.level}, ${mine.mesh.ids.length} object${mine.mesh.ids.length === 1 ? "" : "s"}, ${level.triangles.toLocaleString()} triangles as surfaces`;
+          // Geometry: a mesh's triangles, points as spheres, lines as tubes, traced with the other layers' (rebuildSurfaces).
+          mine.geom = { read: level, placement, look };
+          mine.text = `Object: level ${level.level}, ${level.count.toLocaleString()} ${level.kind === "meshes" ? "triangles" : level.kind === "lines" ? "segments" : "points"}`;
           this.update();
           return;
         }
@@ -1137,25 +1141,43 @@ class AnatomicalRendering {
    * (in a worker) when they change; none when no mesh is drawn.
    */
   private rebuildSurfaces(layers: LayerInfo[]): void {
-    const meshes = layers.map((l) => ({ l, mesh: this.points.get(l.name)?.mesh })).filter((x): x is { l: LayerInfo; mesh: MeshPrims } => x.mesh !== undefined).slice(0, GEO_LAYERS);
-    const key = JSON.stringify(meshes.map((x) => [x.l.name, x.mesh.serial]));
+    // Each layer's primitives, made again when its size changes.
+    const parts: { l: LayerInfo; g: Built }[] = [];
+    for (const l of layers) {
+      const e = this.points.get(l.name);
+      if (e?.geom === undefined || parts.length >= GEO_LAYERS) continue;
+      const size = this.saved.looks[l.name]?.size ?? 1;
+      const geom = e.geom;
+      if (geom.built?.size !== size) {
+        const g = layerGeometry(geom.read, toMmOf(geom.read, geom.placement), geom.look, size, (id) => this.ctx.viewer.segmentColour(l.name, id));
+        geom.built = { ...g, size, serial: ++geometrySerial };
+        e.text = `Object: level ${geom.read.level}, ${g.text}`;
+      }
+      parts.push({ l, g: geom.built });
+    }
+    const key = JSON.stringify(parts.map((x) => [x.l.name, x.g.serial]));
     if (key === this.surfacesWanted) return;
     this.surfacesWanted = key;
-    if (meshes.length === 0) {
+    if (parts.length === 0) {
       this.surfaceLayout = undefined;
       this.live.putSurfaces(undefined);
       return;
     }
-    const joined = joinPrimitives(meshes.map((x) => ({ ...x.mesh.prims, objectCount: x.mesh.ids.length })));
-    const objectCount = meshes.reduce((n, x) => n + x.mesh.ids.length, 0);
-    const triangles = joined.objects.length;
+    const total = parts.reduce((n, x) => n + x.g.prims.objects.length, 0);
+    if (total > GEO_MAX) {
+      this.problem = `Too much geometry to trace here: ${total.toLocaleString()} primitives (at most ${GEO_MAX.toLocaleString()}).`;
+      this.statusUpdate?.();
+      return;
+    }
+    const joined = joinPrimitives(parts.map((x) => ({ ...x.g.prims, objectCount: x.g.objectCount })));
+    const objectCount = parts.reduce((n, x) => n + x.g.objectCount, 0);
     const started = performance.now();
     void buildSurfacesAsync({ ...joined, objectCount }).then(
       (s: Surfaces) => {
         if (this.surfacesWanted !== key) return;
-        this.surfaceLayout = { key, layers: meshes.map((x, i) => ({ name: x.l.name, ids: x.mesh.ids, offset: joined.offsets[i] })) };
+        this.surfaceLayout = { key, layers: parts.map((x, i) => ({ name: x.l.name, geometry: x.g, offset: joined.offsets[i] })) };
         const ms = Math.round(performance.now() - started);
-        this.live.putSurfaces(s, `Surfaces: ${triangles.toLocaleString()} triangles, ${objectCount} object${objectCount === 1 ? "" : "s"} (built in ${ms} ms)`);
+        this.live.putSurfaces(s, `Surfaces: ${total.toLocaleString()} primitives, ${objectCount.toLocaleString()} object${objectCount === 1 ? "" : "s"} (built in ${ms} ms)`);
         this.update();
       },
       (e: Error) => {
@@ -1175,11 +1197,13 @@ class AnatomicalRendering {
     const keyParts: unknown[] = [];
     const layers = layout.layers.map((x, li) => {
       const layer = this.ctx.viewer.layers().find((l) => l.name === x.name);
-      x.ids.forEach((id, i) => {
-        const c = layer ? (this.ctx.viewer.segmentColour(x.name, id) ?? [0.8, 0.8, 0.8]) : [0, 0, 0];
+      const g = x.geometry;
+      for (let i = 0; i < g.objectCount; ++i) {
+        // A mesh's segments as the layer colours them now; points' and lines' as they were coloured.
+        const c = g.ids ? (this.ctx.viewer.segmentColour(x.name, g.ids[i]) ?? [0.8, 0.8, 0.8]) : g.colours!.subarray(3 * i, 3 * i + 3);
         colours.set([c[0], c[1], c[2], layer ? li + 1 : 0], 4 * (x.offset + i));
-      });
-      keyParts.push(Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + x.ids.length))));
+      }
+      keyParts.push(g.ids ? Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + g.objectCount))) : [g.serial, layer !== undefined]);
       const { clips } = layer ? this.cropsFor(layer, frame) : { clips: [] };
       return { clips, crop: null };
     });
@@ -2757,7 +2781,7 @@ class AnatomicalRendering {
     if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
     if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
     if (!host && this.local && !this.local.ready && this.localText) return { progress: this.localText };
-    const reading = host ? undefined : [...this.points.values()].find((p) => p.level === undefined && p.mesh === undefined && !p.failed);
+    const reading = host ? undefined : [...this.points.values()].find((p) => p.level === undefined && p.geom === undefined && !p.failed);
     if (reading !== undefined) return { progress: reading.text.replace(/^Object: /, "") };
     return {};
   }
@@ -2920,6 +2944,15 @@ class AnatomicalRendering {
     // Whose settings follow: the image selected in the Layers panel.
     const editingNote = el("p", { class: "hint" });
     const densityField = field("Density", density, { info: "How opaque the tissue is: higher gives crisper surfaces, lower more translucent ones." });
+    // Points' and lines' size here: times their natural radius (a quarter of the points' spacing; a sixth of a segment).
+    const setSize = (v: number) => {
+      const l = this.edited();
+      if (l === undefined) return;
+      this.setLook(l, { size: v });
+      this.update();
+    };
+    const geometrySize = slider(1, { min: 0.1, max: 5, step: 0.05, label: "Size", unit: "×", onchange: setSize });
+    const geometrySizeField = field("Size", geometrySize, { info: "Spheres' and tubes' radius, times their natural one: a quarter of the points' mean spacing, a sixth of a segment's length, or the store's own radii." });
     const presetRow = el("div", { class: "row" },
       field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
       button("Load…", () => this.loadPresetFile()));
@@ -2931,6 +2964,7 @@ class AnatomicalRendering {
       windowPart,
       editorPart,
       densityField,
+      geometrySizeField,
       field("Exposure", exposure),
       jar,
     );
@@ -3412,6 +3446,10 @@ class AnatomicalRendering {
       regions.hidden = !onHost_ || imgs.length === 0;
       jar.hidden = !onHost_ || alone;
       densityField.hidden = alone;
+      // Points and lines drawn here: their size.
+      const kind = edited ? this.points.get(edited.name)?.geom?.read.kind : undefined;
+      geometrySizeField.hidden = !(alone && !onHost_ && (kind === "points" || kind === "lines"));
+      if (edited) geometrySize.set(this.saved.looks[edited.name]?.size ?? 1);
       // A point cloud drawn here has no preset: its spheres are coloured as the layer colours its points.
       presetRow.hidden = alone && this.saved.where === "browser";
       regionsEmpty.hidden = segs.length > 0;
@@ -3593,28 +3631,23 @@ export const plugin: PluginModule = {
   },
 };
 
-/** A Zarr Vectors or mesh layer read for this browser's renderer: its points as a grid, or its mesh's triangles. */
+/** A Zarr Vectors or mesh layer read for this browser's renderer: its points as a grid, or its geometry to trace. */
 interface PointsEntry {
   key: string;
   level?: PointsLevel;
-  mesh?: MeshPrims;
+  /** The geometry read, where its layer places it and as it colours it; its primitives at a size once made. */
+  geom?: { read: GeometryRead; placement?: ArrayLike<number>; look: ColourByLook | undefined; built?: Built };
   text: string;
   failed?: boolean;
 }
 
-/** A layer's mesh as primitives (placed, millimetres), its objects' ids in their numbering; `serial` tells reads apart. */
-interface MeshPrims {
-  prims: Primitives;
-  ids: bigint[];
-  serial: number;
-}
+/** A layer's primitives, made at `size`; `serial` tells makings apart. */
+type Built = LayerGeometry & { size: number; serial: number };
 
-let meshSerial = 0;
+let geometrySerial = 0;
 
-/** A mesh read's triangles in physical millimetres, placed by `placement` (column-major; undefined: where they are). */
-function meshOf(read: MeshRead, placement: ArrayLike<number> | undefined): MeshPrims {
+/** Store coordinates to physical millimetres, placed by `placement` (column-major; undefined: where they are). */
+function toMmOf(read: GeometryRead, placement: ArrayLike<number> | undefined): number[] {
   const scale = [read.mm[0], 0, 0, 0, 0, read.mm[1], 0, 0, 0, 0, read.mm[2], 0, 0, 0, 0, 1];
-  const toMm = placement ? mul(rowMajor(placement), scale) : scale;
-  const ids: bigint[] = [];
-  return { prims: meshPrimitives(read.chunks, toMm, ids), ids, serial: ++meshSerial };
+  return placement ? mul(rowMajor(placement), scale) : scale;
 }

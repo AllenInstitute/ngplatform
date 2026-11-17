@@ -338,16 +338,15 @@ picture of the same view within the tolerance.
 
 ### 4. Points and lines (2 days)
 
-- [ ] Spheres for point clouds, with point size in µm per layer, through
-      the Layers card's existing width slider, scaled.
-- [ ] Round cones for streamlines, skeletons and SWC, with radii from the
-      store or the line width.
-- [ ] `readPoints` stops refusing lines ("needs a render computer").
+- [x] Spheres for point clouds. *Changed:* their size is a per-layer **Size** (× a natural radius, a quarter of the points' mean spacing) in the Rendering card, not the Layers card's pixel width.
+- [x] Round cones for streamlines, skeletons and SWC, with radii from the store (a `radius`/`radii` vertex attribute) or a sixth of a segment's length, × Size.
+- [x] `readPoints` stops refusing lines.
 - [ ] Tests:
-  - the ABC atlas as spheres;
-  - a `.trk` bundle;
-  - an SWC neuron;
-  - a group colour change, which must not rebuild.
+  - [x] the ABC atlas as spheres, in the browser;
+  - [x] a tractogram as tubes, in the browser (`hcp1065_whole_brain`);
+  - [x] points, groups and lines (with and without radii) to primitives (`geometry_read.test.ts`);
+  - [ ] an SWC neuron in the browser (no store with radii to hand);
+  - [ ] a group colour change without a rebuild. *Not so:* points' and lines' colours are fixed when they are made, and a change of the layer's groups reads them again.
 
 **Done when:** every Zarr Vectors kind renders in the browser.
 
@@ -443,6 +442,23 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 | The cells with EM and a cut plane | path-traced together |
 
 **Not done:** the CUDA comparison of the same still, the plan's "done when". It needs the same scene in both renderers; it waits for a fixture both can read.
+
+2026-11-17: step 4.
+
+**Points and lines:** points are traced as spheres and lines as round cones, through `geometry/from_read.ts`.
+
+**Colours:**
+- A mesh's objects take their segments' colours each frame.
+- Points' and lines' colours are fixed when the primitives are made: by group as the layer colours them, else by object.
+
+**Measured:**
+
+| Data | Primitives | BVH build |
+|---|---|---|
+| ABC atlas, level 1 | 10,672 spheres | 46 ms |
+| HCP-1065 tractogram, level 2 (5,031 streamlines) | 995,524 tubes | 445 ms |
+
+**Not yet:** the ABC atlas's finer level is over the 1.5 M-point read budget. The Quality › Geometry budget (step 5) is where to raise it.
 
 ## Risks
 
