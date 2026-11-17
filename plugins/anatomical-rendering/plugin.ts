@@ -21,7 +21,10 @@ import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX
 import { placementMm } from "../luxar/view_math.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { type PointsLevel, pointsTable, readPoints } from "./points.js";
+import { type MeshRead, type PointsLevel, pointsTable, readPoints } from "./points.js";
+import { joinPrimitives, meshPrimitives, type Primitives } from "./geometry/primitives.js";
+import { buildSurfacesAsync, type Surfaces } from "./geometry/surfaces.js";
+import { GEO_LAYERS } from "./geometry/live_geometry.js";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { meshSourceOf } from "@ngplatform/sdk/sources";
 import { meshStoreUrl } from "../luxar/mesh_layers.js";
@@ -760,9 +763,18 @@ class AnatomicalRendering {
   private isOn(layer: LayerInfo): boolean {
     const own = this.saved.looks[layer.name]?.on;
     if (own !== undefined) return own;
-    // A Zarr Vectors layer: on when it is the scene (no image), else off until switched on.
-    if (this.isVectors(layer)) return this.images().length === 0 && layer.name === this.vectorsAlone()?.name;
-    return layer.name === (this.saved.layer ?? this.images()[0]?.name);
+    return layer.name === this.defaultLayer()?.name;
+  }
+
+  /**
+   * The layer rendered when none has been switched: the one the scene named, else the first shown in the views (an
+   * image, else a segmentation's meshes or a Zarr Vectors layer: not a hidden image before them), else the first image.
+   */
+  private defaultLayer(): LayerInfo | undefined {
+    const named = this.saved.layer !== undefined ? this.switchable().find((l) => l.name === this.saved.layer) : undefined;
+    if (named !== undefined) return named;
+    const drawable = (l: LayerInfo) => !this.isVectors(l) || this.meshStoreOf(l) !== undefined || zarrVectorsStore(l.sources[0]) !== undefined;
+    return this.switchable().find((l) => l.visible && drawable(l)) ?? this.images()[0] ?? this.vectorsAlone();
   }
 
   /**
@@ -990,6 +1002,7 @@ class AnatomicalRendering {
     const drawnPoints = this.saved.on && browser
       ? this.renderedLayers().filter((l) => {
         const p = this.isVectors(l) ? this.points.get(l.name) : undefined;
+        if (p?.mesh !== undefined) return this.surfaceLayout?.layers.some((x) => x.name === l.name) === true && this.live.heldSurfaces !== undefined;
         return p?.level !== undefined && this.live.levelOf(this.sourceOf(l)!) === p.level;
       })
       : [];
@@ -1006,14 +1019,18 @@ class AnatomicalRendering {
         this.closeSession();
         this.closeLocal();
         this.live.close();
+        this.surfaceLayout = undefined;
+        this.surfacesWanted = "";
       }
       this.panelUpdate?.();
       return;
     }
-    if (this.handleLayer !== target.name) {
+    // Drawn in the 3-D view with a layer Neuroglancer draws: a hidden layer's drawing (and so the render) is skipped.
+    const host = [target, ...this.renderedLayers()].find((l) => l.visible) ?? this.ctx.viewer.layers().find((l) => l.visible) ?? target;
+    if (this.handleLayer !== host.name) {
       this.handle?.dispose();
-      this.handleLayer = target.name;
-      this.handle = this.ctx.viewer.draw3d(target.name, {
+      this.handleLayer = host.name;
+      this.handle = this.ctx.viewer.draw3d(host.name, {
         draw: (frame) => this.drawer.draw(frame),
         isReady: () => this.drawer.isReady(),
         dispose: () => undefined,
@@ -1027,6 +1044,7 @@ class AnatomicalRendering {
       const layers = this.renderedLayers().filter((l) => this.axesOf(l).problem === undefined && this.sourceOf(l) !== undefined);
       const clouds = layers.filter((l) => this.isVectors(l));
       for (const name of [...this.points.keys()]) if (!clouds.some((l) => l.name === name)) this.points.delete(name);
+      this.rebuildSurfaces(clouds);
       if (layers.length > 1 || clouds.length > 0) {
         this.closeLocal();
         void this.live.open(layers.map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
@@ -1055,7 +1073,10 @@ class AnatomicalRendering {
   }
 
   /** Point clouds read in this browser, by layer: what each was read for (store, colours, voxels), and its grid once made. */
-  private readonly points = new Map<string, { key: string; level?: PointsLevel; text: string; failed?: boolean }>();
+  private readonly points = new Map<string, PointsEntry>();
+  /** The surfaces traced now: which layers' meshes, in order, each one's objects (ids) from where in the numbering. */
+  private surfaceLayout: { key: string; layers: { name: string; ids: bigint[]; offset: number }[] } | undefined;
+  private surfacesWanted = "";
 
   /**
    * Reads a Zarr Vectors layer's points (once for its store, its Vertex colour and the voxels) and makes them a
@@ -1068,13 +1089,15 @@ class AnatomicalRendering {
     const look = this.lookOf(layer);
     // Two bytes a voxel (its nearness and its label): at most 128 M.
     const voxels = Math.min(this.saved.objectVoxels, 128e6);
-    const key = JSON.stringify([store, look?.by === "group" ? look.group : null, voxels]);
+    // (A mesh is placed as its layer is when its surfaces are made: placed again, made again.)
+    const placement = this.placementOf(layer);
+    const key = JSON.stringify([store, look?.by === "group" ? look.group : null, voxels, placement ? Array.from(placement) : null]);
     const had = this.points.get(layer.name);
     if (had?.key === key) {
       if (had.level && this.live.levelOf(src) !== had.level) this.live.putLevel(had.level, src);
       return;
     }
-    const mine = { key, text: "Object: reading the points" } as { key: string; level?: PointsLevel; text: string; failed?: boolean };
+    const mine: PointsEntry = { key, text: "Object: reading the points" };
     this.points.set(layer.name, mine);
     this.problem = "";
     const current = () => this.points.get(layer.name) === mine;
@@ -1083,9 +1106,16 @@ class AnatomicalRendering {
       mine.text = `Object: ${text}`;
       this.statusUpdate?.();
     };
-    void readPoints(store, look, voxels, say, () => !current(), (id) => this.ctx.viewer.segmentColour(layer.name, id)).then(
+    void readPoints(store, look, voxels, say, () => !current(), (id) => this.ctx.viewer.segmentColour(layer.name, id), true).then(
       (level) => {
         if (!current()) return;
+        if ("kind" in level) {
+          // A mesh: its triangles, placed, traced as surfaces with the other layers' (rebuildSurfaces).
+          mine.mesh = meshOf(level, placement);
+          mine.text = `Object: level ${level.level}, ${mine.mesh.ids.length} object${mine.mesh.ids.length === 1 ? "" : "s"}, ${level.triangles.toLocaleString()} triangles as surfaces`;
+          this.update();
+          return;
+        }
         mine.level = level;
         mine.text = `Object: ${level.path} as ${level.size.join(" × ")} voxels`;
         this.live.putLevel(level, src);
@@ -1100,6 +1130,60 @@ class AnatomicalRendering {
       },
     );
     this.statusUpdate?.();
+  }
+
+  /**
+   * The surfaces traced: the meshes of the layers drawn (`layers`, in order, at most GEO_LAYERS) built into one BVH
+   * (in a worker) when they change; none when no mesh is drawn.
+   */
+  private rebuildSurfaces(layers: LayerInfo[]): void {
+    const meshes = layers.map((l) => ({ l, mesh: this.points.get(l.name)?.mesh })).filter((x): x is { l: LayerInfo; mesh: MeshPrims } => x.mesh !== undefined).slice(0, GEO_LAYERS);
+    const key = JSON.stringify(meshes.map((x) => [x.l.name, x.mesh.serial]));
+    if (key === this.surfacesWanted) return;
+    this.surfacesWanted = key;
+    if (meshes.length === 0) {
+      this.surfaceLayout = undefined;
+      this.live.putSurfaces(undefined);
+      return;
+    }
+    const joined = joinPrimitives(meshes.map((x) => ({ ...x.mesh.prims, objectCount: x.mesh.ids.length })));
+    const objectCount = meshes.reduce((n, x) => n + x.mesh.ids.length, 0);
+    const triangles = joined.objects.length;
+    const started = performance.now();
+    void buildSurfacesAsync({ ...joined, objectCount }).then(
+      (s: Surfaces) => {
+        if (this.surfacesWanted !== key) return;
+        this.surfaceLayout = { key, layers: meshes.map((x, i) => ({ name: x.l.name, ids: x.mesh.ids, offset: joined.offsets[i] })) };
+        const ms = Math.round(performance.now() - started);
+        this.live.putSurfaces(s, `Surfaces: ${triangles.toLocaleString()} triangles, ${objectCount} object${objectCount === 1 ? "" : "s"} (built in ${ms} ms)`);
+        this.update();
+      },
+      (e: Error) => {
+        if (this.surfacesWanted !== key) return;
+        this.problem = `The surfaces could not be built: ${e.message}`;
+        this.statusUpdate?.();
+      },
+    );
+  }
+
+  /** The surfaces' look for a frame: each object's colour (its segment's) and layer, each layer's cuts. */
+  private surfacesLook(frame: Frame3d): LiveLook["geometry"] {
+    const layout = this.surfaceLayout;
+    const s = this.live.heldSurfaces;
+    if (layout === undefined || s === undefined) return undefined;
+    const colours = new Float32Array(4 * s.objectCount);
+    const keyParts: unknown[] = [];
+    const layers = layout.layers.map((x, li) => {
+      const layer = this.ctx.viewer.layers().find((l) => l.name === x.name);
+      x.ids.forEach((id, i) => {
+        const c = layer ? (this.ctx.viewer.segmentColour(x.name, id) ?? [0.8, 0.8, 0.8]) : [0, 0, 0];
+        colours.set([c[0], c[1], c[2], layer ? li + 1 : 0], 4 * (x.offset + i));
+      });
+      keyParts.push(Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + x.ids.length))));
+      const { clips } = layer ? this.cropsFor(layer, frame) : { clips: [] };
+      return { clips, crop: null };
+    });
+    return { colours, key: JSON.stringify([layout.key, keyParts]), layers, roughness: 0.45, specular: 0.15, exposure: this.saved.exposure };
   }
 
   /** The layers that can be objects: precomputed segmentations (their chosen segments) and Zarr Vectors stores (their geometry). */
@@ -2167,7 +2251,8 @@ class AnatomicalRendering {
       const { crop, clips } = this.cropsFor(layer, frame);
       volumes.push({ url, preset, placement: this.placementOf(layer), crop, clips });
     }
-    return volumes.length > 0 ? { view, volumes, ...this.liveLight() } : undefined;
+    const geometry = this.surfacesLook(frame);
+    return volumes.length > 0 || geometry !== undefined ? { view, volumes, geometry, ...this.liveLight() } : undefined;
   }
 
   /** The surroundings as the lighting style has them (else the preset's), at the strength set; whether the light turns with the camera. */
@@ -2672,7 +2757,7 @@ class AnatomicalRendering {
     if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
     if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
     if (!host && this.local && !this.local.ready && this.localText) return { progress: this.localText };
-    const reading = host ? undefined : [...this.points.values()].find((p) => p.level === undefined && !p.failed);
+    const reading = host ? undefined : [...this.points.values()].find((p) => p.level === undefined && p.mesh === undefined && !p.failed);
     if (reading !== undefined) return { progress: reading.text.replace(/^Object: /, "") };
     return {};
   }
@@ -3507,3 +3592,29 @@ export const plugin: PluginModule = {
     ctx.subscriptions.push(() => r.dispose());
   },
 };
+
+/** A Zarr Vectors or mesh layer read for this browser's renderer: its points as a grid, or its mesh's triangles. */
+interface PointsEntry {
+  key: string;
+  level?: PointsLevel;
+  mesh?: MeshPrims;
+  text: string;
+  failed?: boolean;
+}
+
+/** A layer's mesh as primitives (placed, millimetres), its objects' ids in their numbering; `serial` tells reads apart. */
+interface MeshPrims {
+  prims: Primitives;
+  ids: bigint[];
+  serial: number;
+}
+
+let meshSerial = 0;
+
+/** A mesh read's triangles in physical millimetres, placed by `placement` (column-major; undefined: where they are). */
+function meshOf(read: MeshRead, placement: ArrayLike<number> | undefined): MeshPrims {
+  const scale = [read.mm[0], 0, 0, 0, 0, read.mm[1], 0, 0, 0, 0, read.mm[2], 0, 0, 0, 0, 1];
+  const toMm = placement ? mul(rowMajor(placement), scale) : scale;
+  const ids: bigint[] = [];
+  return { prims: meshPrimitives(read.chunks, toMm, ids), ids, serial: ++meshSerial };
+}

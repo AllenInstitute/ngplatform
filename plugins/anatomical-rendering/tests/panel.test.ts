@@ -264,6 +264,18 @@ describe("the Anatomical panel", () => {
     expect(words(host)).toBe("Render on");
   });
 
+  it("renders the layer shown when none is switched (not a hidden image), drawn with a layer Neuroglancer draws", async () => {
+    const EM = { ...IMAGE, name: "em", visible: false };
+    const CELLS = { name: "cells", type: "segmentation", sources: ["gs://b/cells.zv/|zarr-vectors:"], visible: true } as typeof IMAGE;
+    const f = fakeContext({ layers: [EM, CELLS], axes: { em: XYZ, cells: XYZ }, state: { on: true, where: "browser" } });
+    await activate(f);
+    await vi.waitFor(() => expect(f.drawnOn.at(-1)).toBe("cells"));
+    // The hidden image switched on too: still drawn with the layer shown.
+    const g = fakeContext({ layers: [EM, CELLS], axes: { em: XYZ, cells: XYZ }, state: { on: true, where: "browser", layer: "em", looks: { em: { on: true }, cells: { on: true } } } });
+    await activate(g);
+    await vi.waitFor(() => expect(g.drawnOn.at(-1)).toBe("cells"));
+  });
+
   it("has no view buttons (the orientation cube turns the view), and says Render on or Render off", async () => {
     const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ } });
     const { host } = await open(dom, f);

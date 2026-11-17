@@ -376,6 +376,15 @@ off. Switched on, its points (spheres a voxel in radius) or its meshes' surfaces
 (thin shells, in each segment's colour, from the finest mesh level
 within 1.5 million vertices) are drawn together with the images switched
 on, as one volume: lit, path-traced and cut by their own crops.
+**Meshes as surfaces.** A segmentation's meshes are traced as triangles, not put in a grid:
+- **Read:** the chosen segments' mesh level, within 1.5 million vertices.
+- **Built:** into a BVH in the background, in about a second for 2 million triangles.
+- **Drawn:** with the images. Each surface is shadowed by the others and cut by its layer's planes, in its segment's colour, so a dendrite is as thin as its mesh.
+
+While surfaces are drawn, the view stays the live preview, one ray a pixel. The accumulated path tracing does not include them yet, so very thin branches can look broken at a distance.
+
+Point clouds still use the grid below.
+
 The grid holds each voxel's distance to the nearest point (or surface),
 fitted to the points and up to 128 M voxels (the Object voxels setting):
 a point is drawn a voxel in radius and a surface as a shell about a voxel

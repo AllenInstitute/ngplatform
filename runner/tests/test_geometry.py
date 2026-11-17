@@ -170,3 +170,18 @@ def test_round_cones_and_spheres_are_hit_where_they_are():
     one = geometry.build(geometry.cones(np.array([[0.0, 0, 0]]), np.array([[1.0, 0, 0]]), 0.1, 0.2), kinds=np.array([geometry.CONE]))
     t1, _, _ = _trace(one, np.array([[-1.0, 0, 0]]), np.array([[1.0, 0, 0]]))
     assert abs(t1[0] - 0.9) < 1e-4
+
+
+def test_the_shared_vectors_are_what_cuda_builds():
+    """geometry_vectors.json, which the browser's build is checked against, is still this build's tree and hits."""
+    import json
+
+    import make_geometry_vectors as mk
+
+    want = json.loads(mk.OUT.read_text())["built"]
+    got = mk.built()
+    for k in ("kinds", "objects", "kids", "prim"):
+        assert got[k] == want[k], k
+    for k in ("prims", "nodes"):
+        np.testing.assert_array_equal(np.float32(got[k]), np.float32(want[k]), k)
+    np.testing.assert_allclose(got["t"], want["t"], rtol=1e-6, atol=1e-7)

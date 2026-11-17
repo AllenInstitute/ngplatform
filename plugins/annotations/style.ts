@@ -6,7 +6,7 @@
  */
 export const STYLE = `
 .an { display: grid; gap: var(--sp-2); }
-.an .stack > :empty { display: none; }
+.an .stack > :is(div, p, span, section, ul, ol):empty { display: none; }
 .an-end { display: flex; justify-content: flex-end; }
 .an-inline { display: flex; gap: var(--sp-2); align-items: center; }
 .an-inline .num-input { width: 0; flex: 1; min-width: 44px; }

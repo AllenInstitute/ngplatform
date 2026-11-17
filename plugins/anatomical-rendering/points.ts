@@ -293,7 +293,16 @@ async function objectGroups(storeUrl: string, attribute: string, colour: string 
  * Reads a store's points (the finest level within POINTS_MAX), coloured as `look` says, and makes the grid.
  * `scalar` is what Luxar's reader is asked for (`group:<attribute>[:<colour attribute>]`, else "none").
  */
-export async function readPoints(storeUrl: string, look: ColourByLook | undefined, voxels: number, say: (text: string) => void, stale: () => boolean, segmentColour?: (id: bigint) => [number, number, number] | undefined): Promise<PointsLevel> {
+/** A store's mesh, read for the path tracer to trace as surfaces: its chunks at the level read, and millimetres a store unit. */
+export interface MeshRead {
+  kind: "meshes";
+  chunks: BuiltChunk[];
+  mm: number[];
+  level: number;
+  triangles: number;
+}
+
+export async function readPoints(storeUrl: string, look: ColourByLook | undefined, voxels: number, say: (text: string) => void, stale: () => boolean, segmentColour?: (id: bigint) => [number, number, number] | undefined, surfaces = false): Promise<PointsLevel | MeshRead> {
   const g0 = look?.by === "group" ? look.group : undefined;
   // The group's index and colour attributes read with the points (a taxonomy's tier: a cell's class).
   const client = new StoreClient(storeUrl, { attributes: g0 !== undefined ? [g0.attribute, ...(g0.colorAttribute ? [g0.colorAttribute] : [])] : [] });
@@ -327,6 +336,7 @@ export async function readPoints(storeUrl: string, look: ColourByLook | undefine
     const { lower, upper } = vertexBounds(chunks);
     say("placing the points");
     await new Promise((r) => setTimeout(r, 0));
+    if (meshes && surfaces) return { kind: "meshes", chunks, mm: mmPerUnit(info), level, triangles: chunks.reduce((n, c) => n + c.triangleCount, 0) };
     if (meshes) {
       // Surfaces: their triangles as thin shells, each object in its segment colour.
       say("placing the surfaces");

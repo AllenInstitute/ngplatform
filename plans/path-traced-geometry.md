@@ -185,7 +185,8 @@ precomputed segmentation, the image within them, no streaming.
   both slower: the EM is dense nearly everywhere inside a cell, so exact
   tracking already stops after a few steps. Moving frames are half size
   (about 20 ms).
-- [ ] Stills and movies (jobs) with objects; the browser renderer.
+- [ ] Stills and movies (jobs) with objects; the browser renderer (planned in
+  [browser-geometry.md](browser-geometry.md)).
 - [ ] An EM preset among the built-in presets.
 
 Measured on MICrONS (`seg_m1300`, `em`): a cell is 0.8–6 M triangles at

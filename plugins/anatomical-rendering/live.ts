@@ -28,6 +28,8 @@ import type { Frame3d } from "@ngplatform/sdk";
 import { VolumeClient } from "../volume-view/volume_client.js";
 import type { ViewSpec } from "./client.js";
 import { brickBounds, cameraAxes, invert, type Level8, type LevelPreset, levelTable, mul, readLevel, rowMajor, TF_SIZE } from "./local/local.js";
+import { GeometryTextures, geometryGlsl, geoWidth, type LiveGeometryLook } from "./geometry/live_geometry.js";
+import type { Surfaces } from "./geometry/surfaces.js";
 
 /** The voxels of the level read for the object by default (Quality › Object); this browser's path tracer shares its own. */
 export const LIVE_VOXELS = 64e6;
@@ -61,6 +63,8 @@ export interface LiveLook {
   env?: LiveEnv;
   /** The light turns with the camera: the light held is path-traced again only once the camera rests. */
   lightFollows?: boolean;
+  /** The surfaces held (`putSurfaces`) as this frame draws them; none: not drawn. */
+  geometry?: LiveGeometryLook;
 }
 
 /** One image of a look: its preset, its placement, and its own crop (fractions of it; null: none) and cuts (else the view's). */
@@ -510,9 +514,10 @@ float noise() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.0671
 // Each pixel's ray through the volumes, from the camera of this frame. Light as the path tracer's
 // (pathtrace.wgsl: brdf_cos, hg, envlight), from the light held for the object; until it is, the
 // light's through a short ray toward it and the surroundings' through one along the surface's normal.
-const FS = (o: Frame3d["outputs"], n: number) => one(n, `#version 300 es
+const FS = (o: Frame3d["outputs"], n: number, geoW = 0) => one(n, `#version 300 es
 ${COMMON(n)}
 ${TONE}
+${geoW ? geometryGlsl(geoW, MAX_CLIPS) : ""}
 uniform highp sampler3D uLight;
 uniform bool uHasLight;
 uniform float uHeldAround;
@@ -563,7 +568,12 @@ void main() {
   vec3 dw = normalize(far - ow);
   Ray r = ray(ow, dw);
   float t1 = min(r.t1, length(far - ow));
-  if (t1 <= r.t0) discard;
+  // The nearest surface: the volumes are marched up to it.
+  float ts = -1.0;
+  int sPrim = -1;
+  vec2 sUv = vec2(0.0);
+  ${geoW ? "ts = geoHit(ow, dw, 0.0, length(far - ow), sPrim, sUv);\n  if (ts > 0.0) t1 = min(t1, ts);" : ""}
+  if (t1 <= r.t0 && ts < 0.0) discard;
   vec3 around = (uEnvTop + 2.0 * uEnvHorizon + uEnvBottom) * (0.25 * uEnvScale);
   vec3 L = vec3(0.0);
   float T = 1.0;
@@ -626,6 +636,25 @@ void main() {
       hit = w;
     }
   }
+  ${geoW ? `// The surface, lit as the volume is: the key light (its shadow from the surfaces, then through the
+  // volumes as held), and the surroundings' by its normal.
+  if (ts > 0.0 && T >= 0.02) {
+    vec3 w = ow + dw * ts;
+    vec3 nrm;
+    vec3 albedo;
+    geoSurface(sPrim, sUv, ow, dw, ts, nrm, albedo);
+    vec3 p = w + nrm * (1e-5 * ts);
+    float Tl = geoAny(p, uLightDir, 0.0, 1e30) ? 0.0 : (uHasLight ? lightAt(p).a : clear(p, uLightDir, 25.0));
+    vec3 sky = env(nrm);
+    sky = mix(sky, uHasLight ? lightAt(p + nrm * (0.5 * uCellW)).rgb : sky, uHeldAround * 0.5);
+    vec3 col = geoBrdfCos(nrm, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uGeoSpec);
+    L += T * col;
+    T = 0.0;
+    if (!met) {
+      met = true;
+      hit = w;
+    }
+  }` : ""}
   // As the picture: drawn where the ray met tissue, at the depth where it did.
   if (!met) discard;
   vec3 c = tone(L / (1.0 - T) * uExposure);
@@ -915,18 +944,25 @@ export class LiveVolume {
   private auxFill: WebGLTexture | undefined;
   private traceSize = [0, 0];
   private traceFb: WebGLFramebuffer | undefined;
+  /** The surfaces traced with the volumes (meshes: `putSurfaces`), and their textures. */
+  private surfaces: Surfaces | undefined;
+  private surfacesText = "";
+  private readonly geoTex = new GeometryTextures();
+  /** A volume of nothing about the surfaces, drawn when they are drawn alone (the shaders take at least one volume). */
+  private empty: { key: string; vol: Vol } | undefined;
 
   /** What the object shows, or why it shows nothing. */
   get text(): string {
     const vols = this.wanted.map((u) => this.vols.get(u)).filter((v): v is Vol => v !== undefined);
-    if (vols.length === 0) return "";
+    if (vols.length === 0 && !this.surfaces) return "";
     const one = vols.length === 1;
     const lines = vols.map((v) => (one ? v.text : `${v.text} (${shortName(v.url)})`));
+    if (this.surfaces) lines.push(this.surfacesText);
     const base = this.failed ? `Object: ${this.failed}` : lines.join("\n");
     const h = this.held;
     if (this.failed || !this.ready() || h === undefined || !this.canBake) return base;
     const traced = this.traced && this.traced.samples >= 1 ? `; path-traced, ${Math.floor(this.traced.samples)} samples` : "";
-    return `${base}\n${one ? "" : `${vols.length} images as one volume; `}light ${h.pass >= LIGHT_PASSES ? "done" : `${Math.max(0, h.pass - 1)} of ${LIGHT_PASSES - 1} passes`}${traced}`;
+    return `${base}\n${vols.length > 1 ? `${vols.length} images as one volume; ` : ""}light ${h.pass >= LIGHT_PASSES ? "done" : `${Math.max(0, h.pass - 1)} of ${LIGHT_PASSES - 1} passes`}${traced}`;
   }
 
   /**
@@ -1020,7 +1056,35 @@ export class LiveVolume {
   }
 
   ready(): boolean {
-    return !this.failed && this.wanted.some((u) => this.vols.get(u)?.level !== undefined);
+    return !this.failed && (this.surfaces !== undefined || this.wanted.some((u) => this.vols.get(u)?.level !== undefined));
+  }
+
+  /** Surfaces traced with the volumes (undefined: none); `text` says what they are. */
+  putSurfaces(s: Surfaces | undefined, text = ""): void {
+    if (this.surfaces === s) return;
+    this.surfaces = s;
+    this.surfacesText = text;
+    this.held = undefined;
+    this.onChange?.();
+  }
+
+  /** The surfaces held. */
+  get heldSurfaces(): Surfaces | undefined {
+    return this.surfaces;
+  }
+
+  /** A volume of nothing filling the surfaces' box (millimetres), for frames that draw the surfaces alone. */
+  private emptyAbout(s: Surfaces): Vol {
+    const lo = s.bvh.lo, hi = s.bvh.hi;
+    const key = JSON.stringify([lo, hi]);
+    if (this.empty?.key === key) return this.empty.vol;
+    if (this.empty && this.gl) for (const t of [this.empty.vol.tex, this.empty.vol.occ]) if (t) this.gl.deleteTexture(t);
+    const ext = [0, 1, 2].map((a) => Math.max(hi[a] - lo[a], 1e-9));
+    const c = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2);
+    const level: Level8 = { data: new Uint8Array([0]), size: [1, 1, 1], voxelToRas: [ext[0], 0, 0, c[0], 0, ext[1], 0, c[1], 0, 0, ext[2], c[2], 0, 0, 0, 1], range: [0, 255], pct: new Map(), window: undefined, path: "surfaces" };
+    const vol: Vol = { url: "surfaces:", voxels: 1, level, text: "" };
+    this.empty = { key, vol };
+    return vol;
   }
 
   /** The level held for the first image, once read. */
@@ -1053,9 +1117,24 @@ export class LiveVolume {
       shown.push({ vol, spec });
       if (shown.length >= MAX_VOLUMES) break;
     }
+    // The surfaces, where the look draws them: two texture units of their own, so a volume fewer.
+    const surf = look.geometry !== undefined && this.surfaces !== undefined && this.surfaces.bvh.n > 0 ? this.surfaces : undefined;
+    if (surf !== undefined) {
+      if (shown.length >= MAX_VOLUMES) shown.length = MAX_VOLUMES - 1;
+      const why = this.geoTex.upload(gl, surf, look.geometry!);
+      if (why !== undefined) {
+        this.surfacesText = `Surfaces: ${why}`;
+        return false;
+      }
+      if (shown.length === 0) {
+        const preset = { name: "Surfaces", domain: "data", stops: [], density: 0, exposure: look.geometry!.exposure } as unknown as LivePreset;
+        shown.push({ vol: this.emptyAbout(surf), spec: { url: "surfaces:", preset, table: { rgba: new Float32Array(TF_SIZE * 4), key: "empty" }, crop: [[2, 2, 2], [-1, -1, -1]], clips: [] } });
+      }
+    }
     if (shown.length === 0) return false;
     const n = shown.length;
-    const program = this.program(gl, `fs ${n} ${JSON.stringify(frame.outputs)}`, () => FS(frame.outputs, n));
+    const geoW = surf !== undefined ? geoWidth(gl.getParameter(gl.MAX_TEXTURE_SIZE) as number) : 0;
+    const program = this.program(gl, `fs ${n} ${geoW} ${JSON.stringify(frame.outputs)}`, () => FS(frame.outputs, n, geoW));
     if (program === undefined) return false;
 
     // Each image's level on the GPU, and its table's row and clear bricks.
@@ -1076,7 +1155,10 @@ export class LiveVolume {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, TF_SIZE, n, 0, gl.RGBA, gl.FLOAT, rows);
       this.tfKey = tfKey;
     }
-    const box = lightBox(sorted.map((d) => d.q));
+    // The light held covers the surfaces too.
+    const wfp = look.view.world_from_physical ? rowMajor(look.view.world_from_physical) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const about = surf ? [{ worldFromVox: colMajor(mul(wfp, this.emptyAbout(surf).level!.voxelToRas)), dims: [1, 1, 1] }] : [];
+    const box = lightBox([...sorted.map((d) => d.q), ...about]);
     const gridKey = JSON.stringify(box.grid);
     if (this.lightGridKey !== gridKey) {
       for (const t of [this.lightRead!, this.lightFill!]) {
@@ -1091,7 +1173,7 @@ export class LiveVolume {
     const materials = sorted.map((d) => [d.vol.url, d.vol.level!.path, d.q.density, d.q.albedo, d.q.phaseG, d.q.worldFromVox, d.q.clips.slice(0, 4 * d.q.nclip), d.q.cropLo, d.q.cropHi]);
     // A light that turns with the camera: its direction to a degree or so, so a still camera keeps what is held.
     const dir = primary.lightDir.map((x) => Math.round(x * 50) / 50);
-    const heldKey = JSON.stringify([tfKey, materials, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
+    const heldKey = JSON.stringify([tfKey, materials, surf ? [surf.bvh.n, surf.bvh.lo, surf.bvh.hi] : null, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
     if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0 };
     primary.lightDir = this.held.lightDir;
     primary.envUp = this.held.envUp;
@@ -1112,7 +1194,9 @@ export class LiveVolume {
       this.stillSince = now;
       this.traced = undefined;
     }
-    if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
+    // (Not yet with surfaces: the path tracer does not meet them, and would take their pixels.)
+    if (surf !== undefined) this.traced = undefined;
+    else if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
     else if (this.canBake) {
       // A frame after the camera stops, to start path-tracing it.
       clearTimeout(this.settle);
@@ -1140,6 +1224,7 @@ export class LiveVolume {
       const held = this.canBake && baking ? this.held.pass : 0;
       gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
       gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
+      if (surf !== undefined) this.geoTex.bind(gl, p, UNIT.vol + 2 * n, surf, look.geometry!, invert(wfp), MAX_CLIPS);
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
@@ -1404,6 +1489,8 @@ export class LiveVolume {
     this.held = undefined;
     this.lightGridKey = "";
     for (const v of this.vols.values()) [v.tex, v.occ, v.uploaded, v.occKey] = [undefined, undefined, undefined, undefined];
+    this.geoTex.dispose(undefined);
+    this.empty = undefined;
     this.vao = gl.createVertexArray()!;
     this.tf = this.texture(gl, gl.TEXTURE_2D);
     // Drawing into float textures (the light held) needs this; without it the short rays stand in.
@@ -1427,6 +1514,10 @@ export class LiveVolume {
   /** Lets the levels and their GPU resources go. */
   close(): void {
     for (const url of [...this.vols.keys()]) this.drop(url);
+    this.geoTex.dispose(this.gl);
+    if (this.empty && this.gl) for (const t of [this.empty.vol.tex, this.empty.vol.occ]) if (t) this.gl.deleteTexture(t);
+    this.empty = undefined;
+    this.surfaces = undefined;
     this.wanted = [];
     this.failed = "";
     this.held = undefined;
@@ -1451,6 +1542,11 @@ interface Scene {
   drawn: Drawn[];
   primary: LiveParams;
   box: ReturnType<typeof lightBox>;
+}
+
+/** A row-major 4 × 4 as column-major (lightBox's matrices are the shader's). */
+function colMajor(m: readonly number[]): number[] {
+  return [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => m[4 * r + c]));
 }
 
 /** A look's image that is put (`putLevel`), not read: a Zarr Vectors layer's points ("objects:" and its store). */

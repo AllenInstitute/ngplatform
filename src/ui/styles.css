@@ -1660,9 +1660,10 @@ textarea.state-input.tall { min-height: 50vh; }
 .row:has(> .field) { align-items: end; }
 .row > .field { flex: 1 1 120px; min-width: 0; }
 .stack { display: grid; gap: var(--sp-4); align-content: start; }
-/* A part with nothing in it now (a region not shown) takes no gap. */
-.stack > :empty,
-.card > .card-body > :empty { display: none; }
+/* A part with nothing in it now (a region not shown) takes no gap. Containers only: an input, a
+   select or an image has no children either, and is never empty in this sense. */
+.stack > :is(div, p, span, section, ul, ol):empty,
+.card > .card-body > :is(div, p, span, section, ul, ol):empty { display: none; }
 /* In the left column a card is open at its sides, as a dataset's: lines above and below, its head on
    the column's edge, its body one step (12 px) in, every row ending on the column's one right edge. */
 .side .card { border-left: 0; border-right: 0; }

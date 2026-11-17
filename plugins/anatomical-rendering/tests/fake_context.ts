@@ -101,6 +101,8 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
   let selected: string | undefined;
   const panels = new Map<string, (host: HTMLElement) => (() => void) | void>();
   const drawers: Drawer3d[] = [];
+  /** The layer each drawer was given to. */
+  const drawnOn: string[] = [];
   const ng: Record<string, unknown> = { position: [0, 0, 0], projectionOrientation: [0, 0, 0, 1], projectionScale: 256, layout: "xy-3d" };
   const invoked: string[] = [];
   const toasts: string[] = [];
@@ -138,8 +140,9 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
       getState: () => ng,
       patchState: (edit: (ng: unknown) => void) => edit(ng),
       layerTransform: (name: string) => (axes[name] ? { rank: axes[name].names.length, input: axes[name], output: axes[name], matrix: new Float64Array(), defaultMatrix: new Float64Array() } : undefined),
-      draw3d: (_layer: string, drawer: Drawer3d) => {
+      draw3d: (layer: string, drawer: Drawer3d) => {
         drawers.push(drawer);
+        drawnOn.push(layer);
         return { redraw: () => undefined, dispose: () => undefined };
       },
     },
@@ -171,6 +174,7 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
     services,
     panels,
     drawers,
+    drawnOn,
     ng,
     invoked,
     toasts,
