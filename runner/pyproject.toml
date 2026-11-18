@@ -3,9 +3,10 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ngplatform-runner"
-version = "0.1.0"
-description = "Runs zarr-vectors-tools jobs on this computer for ngplatform, and serves files to its viewer."
+name = "ngplatform"
+# The app's version (package.json), as ngplatform_runner.__version__ (tests/runner_api.test.ts keeps them equal).
+dynamic = ["version"]
+description = "ngplatform on this computer: the app in a window of its own (`ngplatform`), and the runner that runs its jobs and serves files to it (`ngplatform-runner`)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -16,7 +17,9 @@ dependencies = []
 
 [project.optional-dependencies]
 jobs = ["zarr-vectors-tools"]
-# The render service (ngplatform_render), on a computer with an NVIDIA GPU.
+# The render service (ngplatform_render), on a computer with an NVIDIA GPU; `gpu` is the same, for
+# `pip install ngplatform[gpu]`.
+gpu = ["numpy", "zarr>=3", "fsspec", "aiohttp", "pillow", "cupy-cuda12x", "DracoPy", "zarr-vectors"]
 render = ["numpy", "zarr>=3", "fsspec", "aiohttp", "pillow", "cupy-cuda12x", "DracoPy", "zarr-vectors"]
 # Fitting splats (the render service's --splat-python, a Python of its own): torch with CUDA, and the gsplat
 # whose API splat/fit.py is written against (GSPLAT_VERSION there).
@@ -26,10 +29,16 @@ splat = ["numpy", "pillow", "torch", "gsplat==1.4.0"]
 test = ["pytest", "numpy", "zarr>=3", "fsspec", "aiohttp", "pillow"]
 
 [project.scripts]
+ngplatform = "ngplatform_local.__main__:main"
 ngplatform-runner = "ngplatform_runner.__main__:main"
 
+[tool.setuptools.dynamic]
+version = { attr = "ngplatform_runner.__version__" }
+
 [tool.setuptools]
-packages = ["ngplatform_runner", "ngplatform_runner.tasks", "ngplatform_render"]
+packages = ["ngplatform_runner", "ngplatform_runner.tasks", "ngplatform_render", "ngplatform_local"]
 
 [tool.setuptools.package-data]
 ngplatform_render = ["params.json", "presets/*.json", "lightmaps/*.npy", "lightmaps/credits.json"]
+# The app's build, copied in by `npm run build:local` before the wheel is made (not in git).
+ngplatform_local = ["app/**/*"]

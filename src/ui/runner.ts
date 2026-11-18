@@ -67,12 +67,32 @@ async function openOutput(wb: Workbench, runner: RunnerService, output: RunnerOu
  * with `&name=…` (from `python -m ngplatform_runner tunnel`) adds or
  * updates the computer of that name, beside This computer.
  */
-export function pairFromLink(wb: Workbench, runner: RunnerService, hash = location.hash): void {
+export function pairFromLink(wb: Workbench, runner: RunnerService, hash = location.hash, origin = location.origin): void {
   const pairing = pairingFromHash(hash);
   if (pairing === undefined) return;
   history.replaceState(null, "", location.pathname + location.search);
   const other = pairing.name !== undefined && pairing.name !== LOCAL_HOST;
+  // The local app (`ngplatform`): the page was served by this very runner, so it pairs without asking, and
+  // opens the files named on the command line (`&open=<path>`, each under the runner's roots) as layers.
+  const local = !other && servedBy(pairing.address, origin);
+  const opens = local ? new URLSearchParams(hash.slice(1)).getAll("open") : [];
   void (async () => {
+    if (local) {
+      try {
+        await runner.pair(pairing.address, pairing.token);
+      } catch (e) {
+        toast(`Could not reach this app's runner: ${(e as Error).message}`, "error");
+        return;
+      }
+      for (const path of opens) {
+        try {
+          await openRunnerPath(wb, runner, path);
+        } catch (e) {
+          toast(`Could not open ${baseName(path)}: ${(e as Error).message}`, "error");
+        }
+      }
+      return;
+    }
     const yes = await confirmDialog(
       other
         ? `Pair this browser with ${pairing.name}, the runner at ${pairing.address}? It runs jobs on that computer and serves files under its folders to this app.${wb.hosts.others().includes(pairing.name!) ? ` It replaces the pairing with ${pairing.name} this browser has.` : ""}`
@@ -88,6 +108,15 @@ export function pairFromLink(wb: Workbench, runner: RunnerService, hash = locati
       toast(`Could not pair: ${(e as Error).message}`, "error");
     }
   })();
+}
+
+/** Whether the page (at `origin`) was served by the runner at `address`: the local app's case. */
+export function servedBy(address: string, origin: string): boolean {
+  try {
+    return new URL(address).origin === new URL(origin).origin;
+  } catch {
+    return false;
+  }
 }
 
 function pairForm(runner: RunnerService, note?: string, where = "this computer"): HTMLElement {

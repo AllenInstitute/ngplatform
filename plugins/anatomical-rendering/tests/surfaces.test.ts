@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BuiltChunk } from "../../luxar/chunk_build.js";
 import { geoData, geoLayout } from "../geometry/live_geometry.js";
 import { type Bvh, buildLbvh, CONE, primHit, SPHERE, TRIANGLE } from "../geometry/lbvh.js";
-import { expandPrims, meshPrimitives, NO_NORMAL, packNormal, type Primitives, unpackNormal } from "../geometry/primitives.js";
+import { expandPrims, meshPrimitives, NO_NORMAL, orientOutward, packNormal, type Primitives, unpackNormal } from "../geometry/primitives.js";
 import { buildBlock, packSurfaces, traceSurfaces } from "../geometry/surfaces.js";
 import { collapse, LEAF, WIDE, wideChildren } from "../geometry/wide.js";
 
@@ -173,5 +173,29 @@ describe("the wide BVH", () => {
     expect((data[4 * (nodeAt + 3)] & LEAF) >>> 0).toBe(LEAF);
     // Each primitive's kind (triangles: 0) and object.
     expect(data[4 * primAt + 3] >>> 30).toBe(TRIANGLE);
+  });
+});
+
+describe("meshes wound outward", () => {
+  // A tetrahedron about the origin, each face wound outward; and the same wound inward (each face turned over).
+  const vertices = new Float32Array([1, 1, 1, 0, 1, -1, -1, 0, -1, 1, -1, 0, -1, -1, 1, 0]);
+  const outward = [0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 3, 2];
+  const inward = outward.map((_, i) => outward[i - (i % 3) + [0, 2, 1][i % 3]]);
+  const volume = (index: Uint32Array, from: number) => {
+    let v = 0;
+    for (let k = from; k < from + 4; ++k) {
+      const [a, b, c] = [0, 1, 2].map((j) => Array.from(vertices.subarray(4 * index[3 * k + j], 4 * index[3 * k + j] + 3)));
+      v += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+    }
+    return v;
+  };
+
+  it("turns over an object wound inward, and leaves one wound outward", () => {
+    const index = new Uint32Array([...outward, ...inward]);
+    expect(volume(index, 0)).toBeGreaterThan(0);
+    expect(volume(index, 4)).toBeLessThan(0);
+    orientOutward(vertices, index, new Int32Array([0, 0, 0, 0, 1, 1, 1, 1]), 8);
+    expect(Array.from(index.subarray(0, 12))).toEqual(outward);
+    expect(volume(index, 4)).toBeGreaterThan(0);
   });
 });

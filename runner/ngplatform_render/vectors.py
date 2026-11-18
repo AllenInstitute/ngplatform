@@ -44,6 +44,19 @@ def store_url(url: str) -> str:
     return u + "/"
 
 
+def _zv(raw: bytes | str | None) -> tuple[dict, dict]:
+    """A node's zarr.json as (its attributes, its Zarr Vectors properties), in format 0.9 or 0.10: 0.10 keeps
+    every node's under `zarr_vectors` (`kind` saying which node it is); 0.9 a level's under
+    `zarr_vectors_level`, an array's beside `zv_array`, the root's under `zarr_vectors`."""
+    attrs = json.loads(raw).get("attributes", {}) if raw else {}
+    zv = attrs.get("zarr_vectors")
+    if isinstance(zv, dict) and "kind" in zv:
+        return attrs, zv
+    if "zarr_vectors_level" in attrs:
+        return attrs, attrs["zarr_vectors_level"]
+    return attrs, zv if isinstance(zv, dict) else attrs
+
+
 def _levels(ds, base: str) -> list[tuple[int, int]]:
     """The store's levels and their vertex counts, from each level's metadata (finest first)."""
     from .precomputed import _get
@@ -53,9 +66,49 @@ def _levels(ds, base: str) -> list[tuple[int, int]]:
         raw = _get(f"{base}{k}/zarr.json")
         if raw is None:
             break
-        lv = json.loads(raw).get("attributes", {}).get("zarr_vectors_level", {})
-        out.append((k, int(lv.get("vertex_count") or 0)))
+        out.append((k, int(_zv(raw)[1].get("vertex_count") or 0)))
     return out
+
+
+def _element(base: str, level: int) -> str | None:
+    """A volume mesh's element (format 0.10's `element` on links/0: tetra, pyramid, wedge, hexahedron), or None."""
+    from .precomputed import _get
+
+    element = _zv(_get(f"{base}{level}/links/0/zarr.json"))[1].get("element")
+    return None if element is None else str(element)
+
+
+#: Each volume element's faces in VTK order, outward right-hand normals (zarr_vectors/core/elements.py's tables).
+ELEMENT_FACES = {
+    "tetra": ((0, 1, 3), (1, 2, 3), (2, 0, 3), (0, 2, 1)),
+    "pyramid": ((0, 3, 2, 1), (0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)),
+    "wedge": ((0, 1, 2), (3, 5, 4), (0, 3, 4, 1), (1, 4, 5, 2), (2, 5, 3, 0)),
+    "hexahedron": ((0, 4, 7, 3), (1, 2, 6, 5), (0, 1, 5, 4), (3, 7, 6, 2), (0, 3, 2, 1), (4, 5, 6, 7)),
+}
+
+
+def fan(faces: np.ndarray) -> np.ndarray:
+    """Polygon faces (F, k), each as k - 2 triangles fanned from its first corner, winding kept."""
+    faces = np.asarray(faces, np.int64)
+    if faces.ndim != 2 or faces.shape[1] < 3:
+        return np.zeros((0, 3), np.int64)
+    if faces.shape[1] == 3:
+        return faces
+    return np.concatenate([faces[:, [0, i, i + 1]] for i in range(1, faces.shape[1] - 1)])
+
+
+def boundary_triangles(cells: np.ndarray, element: str) -> np.ndarray:
+    """A volume mesh's surface: the cells' faces no other cell shares, wound outward, as triangles (quads split)."""
+    table = ELEMENT_FACES[element]
+    cells = np.asarray(cells, np.int64).reshape(-1, len({i for f in table for i in f}))
+    out = []
+    for size in sorted({len(f) for f in table}):
+        faces = np.concatenate([cells[:, list(f)] for f in table if len(f) == size])
+        if len(faces) == 0:
+            continue
+        _, inverse, counts = np.unique(np.sort(faces, axis=1), axis=0, return_inverse=True, return_counts=True)
+        out.append(fan(faces[counts[inverse.ravel()] == 1]))
+    return np.concatenate(out) if out else np.zeros((0, 3), np.int64)
 
 
 def _unit_mm(base: str) -> float:
@@ -63,10 +116,12 @@ def _unit_mm(base: str) -> float:
     from .precomputed import _get
 
     raw = _get(f"{base}zarr.json")
-    attrs = json.loads(raw).get("attributes", {}) if raw else {}
-    axes = (attrs.get("multiscales") or [{}])[0].get("axes") or attrs.get("zarr_vectors", {}).get("axes") or []
+    attrs, root = _zv(raw)
+    # (Format 0.10's multiscales is the convention's object, its axes in the zarr_vectors block.)
+    ms = attrs.get("multiscales")
+    axes = (ms[0].get("axes") if isinstance(ms, list) and ms and isinstance(ms[0], dict) else None) or root.get("axes") or []
     units = [a.get("unit") for a in axes if isinstance(a, dict) and a.get("unit")]
-    crs = attrs.get("zarr_vectors", {}).get("crs", {}).get("units") if isinstance(attrs.get("zarr_vectors", {}).get("crs"), dict) else None
+    crs = root.get("crs", {}).get("units") if isinstance(root.get("crs"), dict) else None
     unit = units[0] if units else crs
     return float(UNIT_MM.get(unit or "", 1.0))
 
@@ -163,7 +218,17 @@ def load(url: str, budget: int = 4_000_000, radius_mm: float | None = None, leve
         colours, objects = _hash_colours(uniq), inv.astype(np.int32)
         meta["edges"] = int(len(prims))
     elif kind == "mesh":
-        f = np.asarray(r.faces, np.int64).reshape(-1, 3)
+        # Polygon faces fanned into triangles; a volume mesh's cells (`element`) as their surface.
+        element = _element(base, int(level))
+        raw = np.asarray(r.faces if r.faces is not None else np.zeros((0, 3)), np.int64)
+        if element in ELEMENT_FACES:
+            f = boundary_triangles(raw, element)
+            meta["element"] = element
+            meta["cells"] = int(len(raw))
+        elif element is not None:
+            raise ValueError(f"the store's cells are {element!r} elements, which cannot be drawn (tetra, pyramid, wedge and hexahedron can)")
+        else:
+            f = fan(raw if raw.ndim == 2 else raw.reshape(-1, 3))
         prims = pos[f].reshape(-1, 9).astype(np.float32)
         kinds = np.full(len(prims), geometry.TRIANGLE, np.int32)
         vertex = f[:, 0]

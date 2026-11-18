@@ -115,7 +115,31 @@ export function meshPrimitives(chunks: readonly BuiltChunk[], toMm: readonly num
     }
     base += n;
   }
+  orientOutward(vertices, index, objects, f);
   return { vertices, index, objects, kinds: new Int32Array(f).fill(TRIANGLE) };
+}
+
+/**
+ * Each object's triangles wound outward (counter-clockwise seen from outside), as the tracers' capped cuts take a
+ * surface met from behind as the inside of a solid: an object whose signed volume is negative (wound inward, or
+ * mirrored by its transform) has every triangle turned over.
+ */
+export function orientOutward(vertices: Float32Array, index: Uint32Array, objects: Int32Array, count: number): void {
+  const volume = new Map<number, number>();
+  for (let k = 0; k < count; ++k) {
+    const a = 4 * index[3 * k], b = 4 * index[3 * k + 1], c = 4 * index[3 * k + 2];
+    const ax = vertices[a], ay = vertices[a + 1], az = vertices[a + 2];
+    const bx = vertices[b], by = vertices[b + 1], bz = vertices[b + 2];
+    const cx = vertices[c], cy = vertices[c + 1], cz = vertices[c + 2];
+    const v = ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    volume.set(objects[k], (volume.get(objects[k]) ?? 0) + v);
+  }
+  for (let k = 0; k < count; ++k) {
+    if ((volume.get(objects[k]) ?? 0) >= 0) continue;
+    const t = index[3 * k + 1];
+    index[3 * k + 1] = index[3 * k + 2];
+    index[3 * k + 2] = t;
+  }
 }
 
 /** A point at store coordinates, and its object's index (its colour's); -1 leaves it out. */

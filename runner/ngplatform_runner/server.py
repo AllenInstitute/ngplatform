@@ -28,6 +28,7 @@ import hmac
 import html
 import http.client
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -39,7 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from . import __version__, hostinfo
+from . import RUNNER_API, __version__, hostinfo
 from .jobs import JobManager
 from .kinds import BadRequest, check_servable, plan_serve
 from .paths import PathRefused, Roots, find, listing
@@ -112,6 +113,7 @@ class RunnerServer(ThreadingHTTPServer):
         tools: str | None = None,
         public_url: str | None = None,
         services: Services | None = None,
+        app_dir: Path | None = None,
     ):
         public_hosts = public_netlocs(public_url)
         super().__init__(("127.0.0.1", port), Handler)
@@ -126,6 +128,9 @@ class RunnerServer(ThreadingHTTPServer):
         self.python = python
         self.tools = tools
         self.started = time.time()
+        # The app's built files (a local app's: ngplatform_local), served at /app/ to anyone who may reach the
+        # runner, without the token: they are the same files as the public site's.
+        self.app_dir = app_dir.resolve() if app_dir is not None else None
         self.serves_lock = threading.RLock()
         self.serves: dict[str, dict[str, Any]] = {s["id"]: s for s in manager.extra.get("serves", [])}
         self._restore_serves()
@@ -246,6 +251,7 @@ class RunnerServer(ThreadingHTTPServer):
         return {
             "name": "ngplatform-runner",
             "version": __version__,
+            "runnerApi": RUNNER_API,
             "pid": os.getpid(),
             "started": self.started,
             "address": base or self.base,
@@ -412,6 +418,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/stores/") and method in ("GET", "HEAD"):
                 self._stores(path)
                 return
+            if self.server.app_dir is not None and method in ("GET", "HEAD") and (path == "/" or path == "/app" or path.startswith("/app/")):
+                self._app(path)
+                return
             if not self._origin_allowed(self._origin()):
                 self._error(403, f"the origin {self._origin()} is not allowed (start the runner with --allow-origin {self._origin()})")
                 return
@@ -433,6 +442,40 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except Exception as e:  # noqa: BLE001 - reported to the app, not a crash
             self._error(500, f"{type(e).__name__}: {e}")
+
+    def _app(self, path: str) -> None:
+        """The app's files (RunnerServer.app_dir) at /app/; / and /app go to /app/."""
+        if path in ("/", "/app"):
+            self.send_response(302)
+            self.send_header("Location", "/app/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        root = self.server.app_dir
+        rel = urllib.parse.unquote(path[len("/app/"):]) or "index.html"
+        target = (root / rel).resolve()
+        # Nothing outside the app's folder, and no hidden files.
+        if root not in target.parents or any(part.startswith(".") for part in Path(rel).parts) or not target.is_file():
+            self._error(404, f"no such file in the app: {rel}")
+            return
+        kind = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        if target.suffix in (".js", ".mjs"):
+            kind = "text/javascript"
+        elif target.suffix == ".wasm":
+            kind = "application/wasm"
+        if kind.startswith("text/") or kind in ("application/json", "image/svg+xml"):
+            kind += "; charset=utf-8"
+        body = target.read_bytes()
+        # Built assets are named by their contents: kept. The page, the service worker and the build's
+        # description change from build to build: asked for again each time.
+        hashed = rel.startswith("assets/")
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if hashed else "no-cache")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _api(self, method: str, path: str, query: dict) -> None:
         s = self.server

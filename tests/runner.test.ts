@@ -1,6 +1,7 @@
 /** The runner client: addresses, pairing, requests with the token, and the job list it keeps. */
 import { describe, expect, it } from "vitest";
 import { normaliseAddress, pairingFromHash, RunnerClient, RunnerError, RunnerService } from "../src/platform/runner.js";
+import { servedBy } from "../src/ui/runner.js";
 import type { RunnerJob } from "../src/sdk/types.js";
 
 function memory() {
@@ -68,6 +69,20 @@ describe("runner addresses", () => {
     expect(pairingFromHash("#!{}")).toBeUndefined();
     expect(pairingFromHash("#runner=http%3A%2F%2Fevil.example&token=abcdefghijklmnopqrstu")).toBeUndefined();
     expect(pairingFromHash("#runner=http%3A%2F%2F127.0.0.1%3A8765&token=short")).toBeUndefined();
+    // The local app's link: the runner that served the page, and files to open.
+    const link = "#runner=http%3A//127.0.0.1%3A8766&token=abcdefghijklmnopqrstu&open=/data/t1.nii.gz&open=/data/My%20Scans/brain.ome.zarr";
+    expect(pairingFromHash(link)).toEqual({ address: "http://127.0.0.1:8766", token: "abcdefghijklmnopqrstu" });
+    expect(new URLSearchParams(link.slice(1)).getAll("open")).toEqual(["/data/t1.nii.gz", "/data/My Scans/brain.ome.zarr"]);
+  });
+});
+
+describe("the local app's runner", () => {
+  it("is the one that served the page: same scheme, host and port", () => {
+    expect(servedBy("http://127.0.0.1:8766", "http://127.0.0.1:8766")).toBe(true);
+    expect(servedBy("http://127.0.0.1:8766", "http://127.0.0.1:8765")).toBe(false);
+    expect(servedBy("http://localhost:8766", "http://127.0.0.1:8766")).toBe(false);
+    expect(servedBy("http://127.0.0.1:8766", "https://alleninstitute.github.io")).toBe(false);
+    expect(servedBy("not an address", "http://127.0.0.1:8766")).toBe(false);
   });
 });
 

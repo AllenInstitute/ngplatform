@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import { defineConfig, type Plugin } from "vite";
 import { neuroglancerCheck } from "./scripts/neuroglancer_pin.mjs";
 import { contentSecurityPolicy } from "./src/platform/csp.js";
 import type { BuildInfo } from "./src/platform/build_info.js";
+import { RUNNER_API } from "./src/platform/runner_api.js";
 import { type BuiltFile, shellFiles } from "./src/sw_parts.js";
 
 // Neuroglancer is consumed as TypeScript source (see package.json), following
@@ -130,6 +133,79 @@ function serviceWorker(): Plugin {
 }
 
 /**
+ * Model files for local development (MedSAM2's, from tools/medsam2/): the
+ * dev server serves the repository's models/ folder at /models/, where the
+ * app looks for them by default. Not in public/, so a build never copies
+ * them into the app (or the site, or the local app's wheel).
+ */
+function localModels(): Plugin {
+  const dir = fileURLToPath(new URL("./models/", import.meta.url));
+  return {
+    name: "ngplatform-local-models",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const path = decodeURIComponent((req.url ?? "").split("?")[0]);
+        if (!path.startsWith("/models/")) return next();
+        const file = resolve(dir, path.slice("/models/".length));
+        let size = 0;
+        try {
+          size = file.startsWith(dir) ? statSync(file).size : 0;
+        } catch {
+          size = 0;
+        }
+        if (!size) {
+          res.statusCode = 404;
+          return res.end();
+        }
+        res.setHeader("Content-Type", file.endsWith(".json") ? "application/json" : "application/octet-stream");
+        res.setHeader("Content-Length", String(size));
+        res.end(readFileSync(file));
+      });
+    },
+  };
+}
+
+/**
+ * What the build is, as files beside the page, for a local app (runner/ngplatform_local) to keep level
+ * with the deployed site: build.json (this build's BuildInfo and the runner API it needs) and files.json
+ * (every file of the build, its size and SHA-256, source maps left out as the deploy leaves them out).
+ * The local app compares the site's build.json with its own and, when the site's is newer, fetches the
+ * files files.json lists, checking each.
+ */
+function buildManifest(): Plugin {
+  let root = "";
+  return {
+    name: "ngplatform-build-manifest",
+    apply: "build",
+    configResolved(config) {
+      root = resolve(config.root, config.build.outDir);
+    },
+    closeBundle() {
+      let entries: string[];
+      try {
+        entries = readdirSync(root, { recursive: true }) as string[];
+      } catch {
+        return;
+      }
+      // (Vite builds each worker apart, through these plugins too: only the page's build writes them, last.)
+      if (!entries.includes("index.html")) return;
+      const info = { ...BUILD, runnerApi: RUNNER_API };
+      writeFileSync(join(root, "build.json"), `${JSON.stringify(info, null, 2)}\n`);
+      const files = entries
+        .map((f) => f.split(sep).join("/"))
+        .filter((f) => statSync(join(root, f)).isFile() && !f.endsWith(".map") && f !== "files.json")
+        .sort()
+        .map((f) => {
+          const data = readFileSync(join(root, f));
+          return { path: relative(root, join(root, f)).split(sep).join("/"), size: data.length, sha256: createHash("sha256").update(data).digest("hex") };
+        });
+      writeFileSync(join(root, "files.json"), `${JSON.stringify({ commit: BUILD.commit, files }, null, 1)}\n`);
+    },
+  };
+}
+
+/**
  * Zarr Vectors' Neuroglancer module is on by default, and main.ts waits for
  * it before it builds the shell; as a dynamic import it would start to
  * download only once the main bundle has run.  Listed as a module preload
@@ -154,7 +230,7 @@ function preloadDefaultPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [serviceWorker(), preloadDefaultPlugin(), contentSecurity()],
+  plugins: [serviceWorker(), preloadDefaultPlugin(), contentSecurity(), buildManifest(), localModels()],
   define: {
     __BUILD_INFO__: JSON.stringify(BUILD),
   },

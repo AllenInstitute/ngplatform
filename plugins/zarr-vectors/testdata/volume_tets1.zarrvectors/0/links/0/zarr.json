@@ -1,0 +1,22 @@
+{
+  "attributes": {
+    "zarr_vectors": {
+      "kind": "links_family",
+      "level_delta": 0,
+      "link_width": 4,
+      "directed": false,
+      "store": "canonical",
+      "sid_ndim": 3,
+      "num_links": 162,
+      "num_physical_records": 162,
+      "element": "tetra"
+    },
+    "zarr_conventions": [
+      {
+        "uuid": "66268a61-7833-4995-bbcb-233bb417dae5"
+      }
+    ]
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

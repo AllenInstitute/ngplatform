@@ -16,7 +16,7 @@ const G_ROOT: u32 = 1u;
 const G_PRIM_AT: u32 = 2u;
 const G_NODE_AT: u32 = 3u;
 const G_OBJ_AT: u32 = 4u;
-const G_NCLIP: u32 = 5u;       // a count a layer
+const G_NCLIP: u32 = 5u;       // a layer: its cuts' count, + 256 where they are capped
 const G_EPS: u32 = 9u;
 const G_FROM_WORLD: u32 = 10u; // geometry from world, row-major 3 x 4
 const G_MAT: u32 = 22u;        // a layer: roughness, specular, emission, opacity
@@ -141,19 +141,91 @@ fn geoHash(i: u32, o: vec3f, d: vec3f) -> f32 {
   h ^= h >> 16u;
   return f32(h >> 8u) / 16777216.0;
 }
+// A round cone's signed distance at p (Quilez's sdRoundCone).
+fn geoConeDist(p: vec3f, a: vec3f, r1: f32, b: vec3f, r2: f32) -> f32 {
+  let ba = b - a;
+  let l2 = dot(ba, ba);
+  let rr = r1 - r2;
+  let a2 = l2 - rr * rr;
+  let il2 = 1.0 / l2;
+  let pa = p - a;
+  let y = dot(pa, ba);
+  let z = y - l2;
+  let xv = pa * l2 - ba * y;
+  let x2 = dot(xv, xv);
+  let y2 = y * y * l2;
+  let z2 = z * z * l2;
+  let k = sign(rr) * rr * rr * x2;
+  if (sign(z) * a2 * z2 > k) { return sqrt(x2 + z2) * il2 - r2; }
+  if (sign(y) * a2 * y2 < k) { return sqrt(x2 + y2) * il2 - r1; }
+  return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+}
+// A round cone's gradient at p (its outward normal, not unit), from end a (xyz, radius) to b.
+fn geoConeGrad(p: vec3f, a4: vec4f, b4: vec4f) -> vec3f {
+  let e = 1e-3 * max(a4.w + b4.w, 1e-12);
+  return vec3f(geoConeDist(p + vec3f(e, 0.0, 0.0), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3f(e, 0.0, 0.0), a4.xyz, a4.w, b4.xyz, b4.w),
+               geoConeDist(p + vec3f(0.0, e, 0.0), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3f(0.0, e, 0.0), a4.xyz, a4.w, b4.xyz, b4.w),
+               geoConeDist(p + vec3f(0.0, 0.0, e), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3f(0.0, 0.0, e), a4.xyz, a4.w, b4.xyz, b4.w));
+}
 // Kept at world point w (geometry point p) for layer li: inside its crop, cut away by none of its cuts.
 fn geoKept(li: u32, w: vec3f, p: vec3f) -> bool {
   let c = G_CROP + 6u * li;
   if (any(p < gv3(c)) || any(p > gv3(c + 3u))) { return false; }
-  let n = gu(G_NCLIP + li);
+  let n = gu(G_NCLIP + li) & 255u;
   for (var i = 0u; i < n; i++) {
     let o = G_CLIPS + 4u * (GEO_CLIPS * li + i);
     if (dot(gv3(o), w) + gf(o + 3u) < 0.0) { return false; }
   }
   return true;
 }
-struct GeoHit { t: f32, prim: u32, uv: vec2f }
+// Whether the ray (geometry d) leaves the solid primitive i bounds at geometry point p: met from inside (its
+// outward face away from the ray; meshes are wound outward, geometry/primitives.ts orientOutward).
+fn geoLeaves(i: u32, p: vec3f, d: vec3f) -> bool {
+  let q = geoPrim(i);
+  let kind = q.w >> 30u;
+  var n: vec3f;
+  if (kind == 0u) {
+    let a = geoVert(q.x).xyz;
+    n = cross(geoVert(q.y).xyz - a, geoVert(q.z).xyz - a);
+  } else if (kind == 2u) {
+    n = p - geoVert(q.x).xyz;
+  } else {
+    n = geoConeGrad(p, geoVert(q.x), geoVert(q.y));
+  }
+  return dot(n, d) > 0.0;
+}
+struct GeoEnter { t: f32, face: u32 }
+// Where the world ray (ow, dw; geometry o, d) enters layer li's kept part (its crop and cuts, convex): t (-1e30 when
+// it starts in it), and the face (a cut k: k; the crop's: GEO_CLIPS + 2 * axis, + 1 for its high side).
+fn geoEnter(li: u32, ow: vec3f, dw: vec3f, o: vec3f, d: vec3f) -> GeoEnter {
+  var r: GeoEnter;
+  r.t = -1e30;
+  r.face = 0u;
+  let n = gu(G_NCLIP + li) & 255u;
+  for (var i = 0u; i < n; i++) {
+    let c = G_CLIPS + 4u * (GEO_CLIPS * li + i);
+    let s = dot(gv3(c), dw);
+    if (s <= 0.0) { continue; }
+    let ti = -(dot(gv3(c), ow) + gf(c + 3u)) / s;
+    if (ti > r.t) { r.t = ti; r.face = i; }
+  }
+  let cl = gv3(G_CROP + 6u * li);
+  let ch = gv3(G_CROP + 6u * li + 3u);
+  for (var a = 0u; a < 3u; a++) {
+    if (d[a] > 0.0 && cl[a] > -1e29) {
+      let ti = (cl[a] - o[a]) / d[a];
+      if (ti > r.t) { r.t = ti; r.face = GEO_CLIPS + 2u * a; }
+    } else if (d[a] < 0.0 && ch[a] < 1e29) {
+      let ti = (ch[a] - o[a]) / d[a];
+      if (ti > r.t) { r.t = ti; r.face = GEO_CLIPS + 2u * a + 1u; }
+    }
+  }
+  return r;
+}
 // The nearest kept surface the world ray (ow, dw) meets in (tmin, tmax) (t -1: none); anyHit: the first found.
+// Where the layer's cuts are capped and the surface met is the inside of a solid the ray entered the kept part
+// through a cut (or crop) to reach, the cut face instead: there, uv.x = -1 - the face (geoEnter's).
+struct GeoHit { t: f32, prim: u32, uv: vec2f }
 fn geoTrace(ow: vec3f, dw: vec3f, tmin: f32, tmax: f32, anyHit: bool) -> GeoHit {
   var hit: GeoHit;
   hit.t = -1.0;
@@ -227,6 +299,16 @@ fn geoTrace(ow: vec3f, dw: vec3f, tmin: f32, tmax: f32, anyHit: bool) -> GeoHit 
       if (sp < 64u) { stack[sp] = kn[j]; sp += 1u; }
     }
   }
+  if (!anyHit && hit.t >= 0.0) {
+    let li = min(u32(max(geoObj(geoPrim(hit.prim).w & 0x3fffffffu).w, 1.0)) - 1u, GEO_LAYERS - 1u);
+    if (gu(G_NCLIP + li) >= 256u) {
+      let e = geoEnter(li, ow, dw, o, d);
+      if (e.t > tmin && e.t < hit.t && geoLeaves(hit.prim, o + d * hit.t, d)) {
+        hit.t = e.t;
+        hit.uv = vec2f(-1.0 - f32(e.face), 0.0);
+      }
+    }
+  }
   return hit;
 }
 fn geoAny(ow: vec3f, dw: vec3f, tmin: f32, tmax: f32) -> bool { return geoTrace(ow, dw, tmin, tmax, true).t >= 0.0; }
@@ -235,25 +317,6 @@ fn geoOct(p: u32) -> vec3f {
   var n = vec3f(e, 1.0 - abs(e.x) - abs(e.y));
   if (n.z < 0.0) { n = vec3f((1.0 - abs(n.yx)) * select(vec2f(-1.0), vec2f(1.0), n.xy >= vec2f(0.0)), n.z); }
   return normalize(n);
-}
-// A round cone's signed distance at p (Quilez's sdRoundCone).
-fn geoConeDist(p: vec3f, a: vec3f, r1: f32, b: vec3f, r2: f32) -> f32 {
-  let ba = b - a;
-  let l2 = dot(ba, ba);
-  let rr = r1 - r2;
-  let a2 = l2 - rr * rr;
-  let il2 = 1.0 / l2;
-  let pa = p - a;
-  let y = dot(pa, ba);
-  let z = y - l2;
-  let xv = pa * l2 - ba * y;
-  let x2 = dot(xv, xv);
-  let y2 = y * y * l2;
-  let z2 = z * z * l2;
-  let k = sign(rr) * rr * rr * x2;
-  if (sign(z) * a2 * z2 > k) { return sqrt(x2 + z2) * il2 - r2; }
-  if (sign(y) * a2 * y2 < k) { return sqrt(x2 + y2) * il2 - r1; }
-  return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
 }
 struct Surface { n: vec3f, colour: vec3f, rough: f32, spec: f32, emit: f32, op: f32, obj: u32 }
 // The surface at a hit of the world ray (ow, dw) at t: its world normal (facing the ray), colour and material.
@@ -271,7 +334,18 @@ fn geoSurface(h: GeoHit, ow: vec3f, dw: vec3f) -> Surface {
   s.op = m.w;
   let p = geoPoint(ow + dw * h.t);
   var n: vec3f;
-  if (kind == 0u) {
+  if (h.uv.x < -0.5) {
+    // A capped cut: the cut's plane (world), or the crop's face (geometry).
+    let face = u32(-h.uv.x - 0.5);
+    let li = min(u32(max(ob.w, 1.0)) - 1u, GEO_LAYERS - 1u);
+    if (face < GEO_CLIPS) {
+      s.n = normalize(gv3(G_CLIPS + 4u * (GEO_CLIPS * li + face)));
+      if (dot(s.n, dw) > 0.0) { s.n = -s.n; }
+      return s;
+    }
+    n = vec3f(0.0);
+    n[(face - GEO_CLIPS) / 2u] = 1.0;
+  } else if (kind == 0u) {
     let a = gdata[G_VEC4 + q.x];
     let b = gdata[G_VEC4 + q.y];
     let c = gdata[G_VEC4 + q.z];
@@ -281,12 +355,7 @@ fn geoSurface(h: GeoHit, ow: vec3f, dw: vec3f) -> Surface {
   } else if (kind == 2u) {
     n = p - geoVert(q.x).xyz;
   } else {
-    let a4 = geoVert(q.x);
-    let b4 = geoVert(q.y);
-    let e = 1e-3 * max(a4.w + b4.w, 1e-12);
-    n = vec3f(geoConeDist(p + vec3f(e, 0.0, 0.0), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3f(e, 0.0, 0.0), a4.xyz, a4.w, b4.xyz, b4.w),
-              geoConeDist(p + vec3f(0.0, e, 0.0), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3f(0.0, e, 0.0), a4.xyz, a4.w, b4.xyz, b4.w),
-              geoConeDist(p + vec3f(0.0, 0.0, e), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3f(0.0, 0.0, e), a4.xyz, a4.w, b4.xyz, b4.w));
+    n = geoConeGrad(p, geoVert(q.x), geoVert(q.y));
   }
   s.n = normalize(geoNormalToWorld(n));
   if (dot(s.n, dw) > 0.0) { s.n = -s.n; }

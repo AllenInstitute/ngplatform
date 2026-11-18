@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>MedSAM2 ONNX in the browser</title>
+<script type="module">
+// The four MedSAM2 graphs on onnxruntime-web's WebAssembly backend (the app's version), each against Python's outputs.
+const ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
+const ort = await import(ORT + "ort.wasm.bundle.min.mjs");
+ort.env.wasm.wasmPaths = ORT;
+ort.env.wasm.numThreads = crossOriginIsolated ? Math.min(8, navigator.hardwareConcurrency) : 1;
+const manifest = await (await fetch("ref/manifest.json")).json();
+const T = {};
+for (const [name, { shape, dtype }] of Object.entries(manifest)) {
+  const buf = await (await fetch(`ref/${name}.bin`)).arrayBuffer();
+  const data = dtype === "int32" ? new Int32Array(buf) : dtype === "int64" ? new BigInt64Array(buf) : new Float32Array(buf);
+  T[name] = new ort.Tensor(dtype, data, shape);
+}
+const report = { threads: ort.env.wasm.numThreads, isolated: crossOriginIsolated, results: [] };
+const diff = (a, b) => { let m = 0, s = 1; for (let i = 0; i < b.length; ++i) { m = Math.max(m, Math.abs(a[i] - b[i])); s = Math.max(s, Math.abs(b[i])); } return m / s; };
+async function run(file, feeds, want) {
+  const t0 = performance.now();
+  const s = await ort.InferenceSession.create(`models/${file}`, { executionProviders: ["wasm"] });
+  const load = performance.now() - t0;
+  await s.run(feeds); // warm
+  const t1 = performance.now();
+  const out = await s.run(feeds);
+  const ms = performance.now() - t1;
+  const errs = Object.fromEntries(Object.entries(want).map(([k, ref]) => [k, diff(out[k].data, T[ref].data)]));
+  report.results.push({ file, loadMs: Math.round(load), runMs: Math.round(ms), maxRelDiff: errs });
+}
+try {
+  await run("encoder.onnx", { image: T.image }, { high0: "high0", high1: "high1", vision: "vision", vision_pos: "vision_pos" });
+  await run("heads.onnx", { pix: T.pix, high0: T.high0, high1: T.high1, point_coords: T.point_coords, point_labels: T.point_labels }, { masks: "masks", ious: "ious", obj_ptrs: "obj_ptrs", object_score: "object_score" });
+  await run("memory_encoder.onnx", { vision: T.vision, mask: T.mask, object_score: T.object_score, binarize: new ort.Tensor("float32", new Float32Array([1]), [1]) }, { maskmem: "maskmem", maskmem_pos: "maskmem_pos" });
+  const ma = Object.fromEntries(["vision", "vision_pos", "mem_feats", "mem_pos", "mem_tpos", "obj_ptrs", "obj_tpos", "t_diff_max"].map((k) => [k, T["ma_" + k]]));
+  await run("memory_attention.onnx", ma, { pix: "pix2" });
+} catch (e) { report.error = String(e && e.message || e); }
+window.__report = report;
+document.title = "done";
+</script>

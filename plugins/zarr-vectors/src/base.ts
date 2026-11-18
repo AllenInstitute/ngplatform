@@ -22,14 +22,17 @@ import type {
   ZarrVectorsLevel,
   ZarrVectorsLinksConvention,
 } from "./store.js";
+import type { VolumeElement } from "./elements.js";
 import type { SliceViewChunkSpecification } from "neuroglancer/unstable/sliceview/base.js";
 
 /** What every reader of a store's geometry needs to know about it. */
 export interface ZarrVectorsGeometryDescription {
   geometryKind: ZarrVectorsGeometryKind;
   linksConvention: ZarrVectorsLinksConvention;
-  /** 2 for edges; 3 or more for faces. */
+  /** 2 for edges; 3 or more for faces, or a volume element's vertices. */
   linkWidth: number;
+  /** A volume mesh's element (format 0.10's `element` on `links/0`): records are solid cells, drawn as their boundary. */
+  element?: VolumeElement;
   /**
    * zarr-vectors-tools' skeleton layout. In `"linked"` stores a cross-chunk
    * `[child, parent]` link replaces the child's implied parent; in `"split"`

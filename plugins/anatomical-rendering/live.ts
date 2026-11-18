@@ -41,6 +41,8 @@ const BRICK = 8;
 export const LIGHT_SIDE = 96;
 export const LIGHT_PASSES = 48;
 const LAYERS_PER_DRAW = 8;
+/** At fewest, 1 row in this many path-traced a pass (a slow GPU, or a heavy scene). */
+const MAX_ROWS = 64;
 /** The view at rest is path-traced once the camera has been still this long, up to the view's samples (at most MAX_TRACED). */
 const STILL_MS = 150;
 const MAX_TRACED = 1024;
@@ -419,6 +421,9 @@ vec3 hgdir(vec3 w, float g) {
 // The transmittance from world point w toward dir (unit) to where it leaves every volume, a voxel (of the volume it
 // is in) a step.
 float transmit(vec3 w, vec3 dir) {
+#ifdef CUT_SHADOW
+  return 1.0;
+#endif
 #ifdef GEO
   // A surface in the way: none of the light.
   if (geoAny(w, dir, uGeoEps, 1e30)) return 0.0;
@@ -507,9 +512,17 @@ int scatterEvent(inout vec3 w, out int at, out vec3 sn, out vec3 sc, vec3 dir, f
   vec2 uv;
   sn = vec3(0.0);
   sc = vec3(0.0);
+#ifdef CUT_GEO
+  float ts = -1.0;
+  prim = 0;
+  uv = vec2(0.0);
+#else
   float ts = geoHit(w, dir, uGeoEps, 1e30, prim, uv);
+#endif
   vec3 w0 = w;
+#ifndef CUT_VOLUME
   if (collideTo(w, at, dir, stepVox, ts > 0.0 ? ts : 1e30)) return 1;
+#endif
   if (ts < 0.0) return 0;
   geoSurface(prim, uv, w0, dir, ts, sn, sc);
   w = w0 + dir * ts + sn * uGeoEps;
@@ -797,6 +810,7 @@ void main() {
 // coverage (a path that met tissue), and the depth where the pixel's ray first meets tissue and the
 // samples taken. Only the rows uRow of every uRows are traced in a pass; the others are copied.
 const TRACE_FS = (n: number, geoW = 0) => one(n, `#version 300 es
+${GPU_CUTS.map((c) => `#define CUT_${c.toUpperCase()}`).join("\n")}
 ${COMMON(n)}
 ${geoW ? `#define GEO
 ${geometryGlsl(geoW, MAX_CLIPS)}` : ""}
@@ -880,11 +894,13 @@ void main() {
   vec4 b = uInvVP * vec4(ndc, 1.0, 1.0);
   vec3 w = a.xyz / a.w;
   vec3 dir = normalize(b.xyz / b.w - w);
+#ifndef CUT_FIRST
   if (aux.g == 0.0) {
     float ob;
     aux.r = firstHit(w, dir, ob);
     aux.b = ob;
   }
+#endif
   vec3 L = vec3(0.0);
   vec3 thr = vec3(1.0);
   float alpha = 0.0;
@@ -892,6 +908,9 @@ void main() {
   int passes = 0;
   for (int step_ = 0; step_ <= 48; ++step_) {
     int bounce = step_ - passes;
+#ifdef CUT_BOUNCES
+    if (bounce > 0) break;
+#endif
     if (bounce > uMaxBounces || bounce > 16) break;
     int k;
 #ifdef GEO
@@ -1036,9 +1055,83 @@ interface Held {
   /** The light's direction and the surroundings' up (world) when it was set: fixed to the object since. */
   lightDir: number[];
   envUp: number[];
-  /** Passes done, and the layer of the pass under way. */
+  /** Passes done, and the layer of the pass under way and the row in it. */
   pass: number;
   layer: number;
+  row: number;
+}
+
+/**
+ * The GPU's work kept to a frame or so at a time, so that no submission runs long enough for the GPU's watchdog to
+ * reset it (losing the context: on a GPU that also drives a display, a few seconds): one batch in flight (a fence
+ * after it; nothing more sent until it is done), and in how many frames it was seen done, for sizing the next.
+ * Frames, not milliseconds: a fence can only be looked at when a frame is drawn, so the time to the frame it is seen
+ * done in says as much about the frames (which other work may make long) as about the batch.
+ */
+export class GpuPacer {
+  private sync: WebGLSync | null = null;
+  private frames = 0;
+
+  /**
+   * Whether the last batch is done, looked at once a frame: then in how many frames (1: by the next frame; null
+   * when there was none); undefined while it is not.
+   */
+  done(gl: WebGL2RenderingContext): number | null | undefined {
+    if (this.sync === null) return null;
+    this.frames++;
+    if (gl.getSyncParameter(this.sync, gl.SYNC_STATUS) !== gl.SIGNALED) return undefined;
+    gl.deleteSync(this.sync);
+    this.sync = null;
+    return this.frames;
+  }
+
+  /** After a batch: a fence behind it. */
+  sent(gl: WebGL2RenderingContext): void {
+    this.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    this.frames = 0;
+  }
+
+  /** Forgets a batch (its context lost or its work dropped). */
+  reset(gl: WebGL2RenderingContext | undefined): void {
+    if (this.sync !== null && gl && !gl.isContextLost()) gl.deleteSync(this.sync);
+    this.sync = null;
+  }
+}
+
+/** A batch done by the next frame: the next is made larger. Seen done only this many frames on: smaller. */
+const SLOW_FRAMES = 3;
+
+/**
+ * Debugging the GPU's time (localStorage ngplatform.gputiming set): each batch of the light and of path tracing
+ * waited for (a pixel read back) and its time logged as "[gpu] …". Slows drawing; for measuring only.
+ */
+const GPU_TIMING = (() => {
+  try {
+    return typeof localStorage !== "undefined" && !!localStorage.getItem("ngplatform.gputiming");
+  } catch {
+    return false;
+  }
+})();
+/**
+ * Debugging the trace's cost (localStorage ngplatform.gpucut, a comma list): parts of the path-tracing pass left
+ * out, to time the rest: first (the first-hit depth), shadow (shadow rays: all lit), volume (the volume march),
+ * geo (the surfaces), bounces (the first event only). The picture is then wrong; for measuring only.
+ */
+const GPU_CUTS: string[] = (() => {
+  try {
+    return typeof localStorage !== "undefined" ? (localStorage.getItem("ngplatform.gpucut") ?? "").split(",").map((x) => x.trim()).filter((x) => /^[a-z]+$/.test(x)) : [];
+  } catch {
+    return [];
+  }
+})();
+/** Waits for the GPU (a pixel of framebuffer `fb` read back) and logs how long `what` took since `t0`. */
+function gpuTimed(gl: WebGL2RenderingContext, fb: WebGLFramebuffer, t0: number, what: string): void {
+  const was = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb);
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array(4));
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, was);
+  console.log(`[gpu] ${what}: ${(performance.now() - t0).toFixed(1)} ms`);
 }
 
 /** One image held: its level once read, its bricks' bounds, and its textures on the GPU. */
@@ -1085,6 +1178,10 @@ export class LiveVolume {
   private tfKey = "";
   /** The light held: the textures read and filled, the grid they hold, the framebuffer filling them; none where floats cannot be drawn to. */
   private held: Held | undefined;
+  private readonly bakePacer = new GpuPacer();
+  private readonly tracePacer = new GpuPacer();
+  /** Rows of the light's grid a batch (0: not yet sized). */
+  private bakeRows = 0;
   private lightRead: WebGLTexture | undefined;
   private lightFill: WebGLTexture | undefined;
   private lightGridKey = "";
@@ -1252,6 +1349,9 @@ export class LiveVolume {
     const look = this.failed ? undefined : this.look?.(frame);
     if (look === undefined) return false;
     const gl = frame.gl;
+    // The GPU reset the page's drawing (a draw ran past its watchdog, or the driver restarted): nothing more can be
+    // drawn in this context; said so, not as a texture too small (every limit reads 0 then).
+    if (gl.isContextLost()) return this.fail("the GPU stopped this page's drawing (its WebGL context was lost): reload the page to draw again");
     if (this.gl !== gl) this.reset(gl);
     const maxSide = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE) as number;
     // The images of the look that are read (and fit this GPU), in its order.
@@ -1325,7 +1425,7 @@ export class LiveVolume {
     const dir = primary.lightDir.map((x) => Math.round(x * 50) / 50);
     const geoKey = surf ? [surf.n, surf.lo, surf.hi, look.geometry!.key, look.geometry!.layers] : null;
     const heldKey = JSON.stringify([tfKey, materials, geoKey, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
-    if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0 };
+    if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0, row: 0 };
     primary.lightDir = this.held.lightDir;
     primary.envUp = this.held.envUp;
     // A ray leaving a surface starts 2e-5 of the scene away from it (float32 hits are good to about 1e-6 of it).
@@ -1636,8 +1736,9 @@ export class LiveVolume {
   }
 
   /**
-   * Path-traces LAYERS_PER_DRAW layers of the light held into the texture being filled, reading the
-   * one filled before; a pass done, the two change places.
+   * Path-traces some rows of the light held into the texture being filled, reading the one filled before; a pass
+   * done, the two change places. As many rows as the GPU does within a frame or two (bakeRows: up to LAYERS_PER_DRAW
+   * layers, down to a row), the next batch sent once the last is done.
    */
   private bakeSome(gl: WebGL2RenderingContext, s: Scene): void {
     const h = this.held!;
@@ -1646,6 +1747,12 @@ export class LiveVolume {
     if (p === undefined) return;
     const u = (name: string) => gl.getUniformLocation(p, name);
     const grid = s.box.grid;
+    const frames = this.bakePacer.done(gl);
+    if (frames === undefined) return;
+    // Sized by the last batch: a new grid starts at an eighth of a layer.
+    if (this.bakeRows === 0) this.bakeRows = Math.max(1, grid[1] >> 3);
+    else if (frames !== null && frames >= SLOW_FRAMES) this.bakeRows = Math.max(1, Math.floor(this.bakeRows / 2));
+    else if (frames === 1) this.bakeRows = Math.min(LAYERS_PER_DRAW * grid[1], this.bakeRows * 2);
     this.offscreen(gl, this.fb!, grid[0], grid[1], () => {
       gl.useProgram(p);
       this.common(gl, p, s);
@@ -1657,10 +1764,20 @@ export class LiveVolume {
         gl.uniform1i(u("uPrev"), UNIT.light);
       };
       pass();
-      for (let k = 0; k < LAYERS_PER_DRAW && h.pass < LIGHT_PASSES; ++k) {
+      const t0 = GPU_TIMING ? performance.now() : 0;
+      const at = `pass ${h.pass} layer ${h.layer} row ${h.row}`;
+      // Bands of rows (a scissor), layer after layer.
+      gl.enable(gl.SCISSOR_TEST);
+      for (let left = this.bakeRows; left > 0 && h.pass < LIGHT_PASSES; ) {
+        const rows = Math.min(left, grid[1] - h.row);
         gl.framebufferTextureLayer(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, this.lightFill!, 0, h.layer);
         gl.uniform1i(u("uLayer"), h.layer);
+        gl.scissor(0, h.row, grid[0], rows);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
+        left -= rows;
+        h.row += rows;
+        if (h.row < grid[1]) continue;
+        h.row = 0;
         if (++h.layer < grid[2]) continue;
         h.layer = 0;
         h.pass++;
@@ -1668,7 +1785,10 @@ export class LiveVolume {
         pass();
         this.onChange?.();
       }
+      gl.disable(gl.SCISSOR_TEST);
+      if (GPU_TIMING) gpuTimed(gl, this.fb!, t0, `light ${this.bakeRows} rows of ${grid.join("×")} from ${at}`);
     });
+    this.bakePacer.sent(gl);
   }
 
   /**
@@ -1702,13 +1822,12 @@ export class LiveVolume {
     }
     const t = this.traced;
     if (t.samples >= max) return;
-    const now = performance.now();
-    if (t.last > 0 && fixedRows === undefined) {
-      const dt = now - t.last;
-      if (dt > 45 && t.rows < 8) t.rows *= 2;
-      else if (dt < 22 && t.rows > 1) t.rows /= 2;
-    }
-    t.last = now;
+    // One pass in flight; its rows (1 of every `rows`) sized by how long the last took.
+    const frames = this.tracePacer.done(gl);
+    if (frames === undefined) return;
+    if (frames !== null && frames >= SLOW_FRAMES && t.rows < MAX_ROWS) t.rows *= 2;
+    else if (frames === 1 && t.rows > 1) t.rows /= 2;
+    t.last = performance.now();
     const u = (name: string) => gl.getUniformLocation(p, name);
     this.offscreen(gl, fb, w, h, () => {
       gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sumFill!, 0);
@@ -1729,10 +1848,13 @@ export class LiveVolume {
       gl.activeTexture(gl.TEXTURE0 + UNIT.aux);
       gl.bindTexture(gl.TEXTURE_2D, this.auxRead!);
       gl.uniform1i(u("uPrevAux"), UNIT.aux);
+      const t0 = GPU_TIMING ? performance.now() : 0;
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (GPU_TIMING) gpuTimed(gl, fb, t0, `trace ${w}×${h}, 1 row in ${t.rows}, pass ${t.pass}`);
     });
     [this.sumRead, this.sumFill] = [this.sumFill, this.sumRead];
     [this.auxRead, this.auxFill] = [this.auxFill, this.auxRead];
+    this.tracePacer.sent(gl);
     t.pass++;
     t.samples += 1 / t.rows;
     if (Math.floor(t.samples) !== Math.floor(t.samples - 1 / t.rows)) this.onChange?.();
@@ -1757,6 +1879,9 @@ export class LiveVolume {
   }
 
   private reset(gl: WebGL2RenderingContext): void {
+    this.bakePacer.reset(this.gl);
+    this.tracePacer.reset(this.gl);
+    this.bakeRows = 0;
     this.gl = gl;
     this.programs = new Map();
     this.tfKey = "";

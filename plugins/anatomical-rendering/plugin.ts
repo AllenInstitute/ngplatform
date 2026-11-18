@@ -24,6 +24,8 @@ import { RENDER_PANEL } from "./manifest.js";
 import { allocateLevels, GEOMETRY_BUDGET, type GeometryRead, groupColours, readGeometry } from "./points.js";
 import { layerGeometry } from "./geometry/from_read.js";
 import { lodChunks } from "./geometry/lod.js";
+import { framesFor, type MovieView, rotationFrames } from "./movie_camera.js";
+import { canEncodeMp4, encodeMp4 } from "@ngplatform/sdk/video";
 import type { BuiltChunk } from "../luxar/chunk_build.js";
 import { type Block, buildBlockAsync, packSurfaces } from "./geometry/surfaces.js";
 import { DEFAULT_SURFACE, GEO_LAYERS, GEO_MAX, geoBytes, type SurfaceMaterial } from "./geometry/live_geometry.js";
@@ -85,6 +87,8 @@ export interface LayerLook {
   size?: number;
   /** A geometry layer's surfaces' material in this browser (else DEFAULT_SURFACE's). */
   surface?: Partial<SurfaceMaterial>;
+  /** A geometry layer's cuts in this browser: closed with a face in each object's colour (default), or left open. */
+  capCuts?: boolean;
   cuts?: Cut[];
   planes?: CameraPlane[];
   boxes?: Crop[];
@@ -290,6 +294,7 @@ export function readSaved(raw: unknown): Saved {
           ...(typeof v.density === "number" && Number.isFinite(v.density) ? { density: v.density } : {}),
           ...(typeof v.size === "number" && Number.isFinite(v.size) && v.size > 0 ? { size: v.size } : {}),
           ...(v.surface && typeof v.surface === "object" ? { surface: readSurface(v.surface) } : {}),
+          ...(typeof v.capCuts === "boolean" ? { capCuts: v.capCuts } : {}),
           ...(Array.isArray(v.cuts) ? { cuts: readCuts(v.cuts) } : {}),
           ...(Array.isArray(v.planes) ? { planes: readPlanes({ planes: v.planes }) } : {}),
           ...(Array.isArray(v.boxes) ? { boxes: readBoxes(v.boxes) } : {}),
@@ -1134,8 +1139,15 @@ class AnatomicalRendering {
       const store = storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
       // Read again for another attribute (the groups' or their colours'); not for the groups shown or how coloured.
       const g = look?.by === "group" ? look.group : undefined;
-      const readFor = () => JSON.stringify([store, g ? [g.attribute, g.colours === "stored" ? (g.colorAttribute ?? null) : null] : null, budget]);
-      wanted.push({ key: "", store, readFor, budget, look });
+      const base = JSON.stringify([store, g ? [g.attribute, g.colours === "stored" ? (g.colorAttribute ?? null) : null] : null, budget]);
+      // A mesh store, once read and with the camera at rest: its chunks by distance across its levels, within the
+      // budget's vertices (two triangles a vertex), as a large segment's are. (Not points or lines: mixed levels
+      // would change their density, and so their size, across the view.)
+      const r = entry.parts.get("")?.read;
+      const eye = r?.kind === "meshes" ? this.eyeInStore(r, entry.placement) : undefined;
+      const chunks = r && eye ? lodChunks(r.levels, r.bounds.lower, r.bounds.upper, eye, budget / 2) : undefined;
+      const readFor = () => (chunks ? `lod ${chunks.length} ${hashText(base + chunks.join(","))}` : base);
+      wanted.push({ key: "", store, readFor, budget, look, chunks });
     }
     entry.wanted = wanted.map((w) => w.key);
     for (const k of [...entry.parts.keys()]) if (!entry.wanted.includes(k)) entry.parts.delete(k);
@@ -1148,7 +1160,7 @@ class AnatomicalRendering {
       const want = w.readFor(part);
       if (part.readKey === want || part.wantKey === want) continue;
       part.wantKey = want;
-      this.readPart(layer.name, entry, part, w.store, w.look, w.budget, meshes !== undefined, w.level, w.chunks);
+      this.readPart(layer.name, entry, part, w.store, w.look, w.budget, meshes !== undefined || w.chunks !== undefined, w.level, w.chunks);
     }
     this.statusUpdate?.();
   }
@@ -1333,7 +1345,7 @@ class AnatomicalRendering {
       // Segments picked as Neuroglancer's meshes are: under the mouse, and selected by a double-click.
       picks.push({ base: x.ids && layer ? (frame.registerPicks?.(x.name, x.ids) ?? 0) : 0, first: x.offset, count: x.objectCount });
       const { clips } = layer ? this.cropsFor(layer, frame) : { clips: [] };
-      return { clips, crop: null, material: this.surfaceOf(x.name) };
+      return { clips, crop: null, material: this.surfaceOf(x.name), cap: this.saved.looks[x.name]?.capCuts ?? true };
     });
     return { colours, key: JSON.stringify([layout.key, keyParts]), layers, exposure: this.saved.exposure, picks };
   }
@@ -2587,17 +2599,7 @@ class AnatomicalRendering {
     const name = `Still ${m.width} × ${m.height}, ${samples} samples (this browser)`;
     try {
       await this.ctx.jobs.run(name, async (job) => {
-        if (this.renderedLayers().some((l) => this.isVectors(l)) && this.saved.geometryBudget < GEO_MAX) {
-          this.stillBudget = Math.min(GEO_MAX, 4 * this.saved.geometryBudget);
-          this.update();
-          job.progress(undefined, "reading the geometry finer");
-          // (A frame first: the parts asked for again.)
-          await sleep(300);
-          while (!this.geometrySettled()) {
-            if (job.cancelled) throw new Error("cancelled");
-            await sleep(300);
-          }
-        }
+        await this.finerGeometry(job);
         // The camera now, at the still's shape (its height's view kept).
         const a = frame.width / frame.height / (m.width / m.height);
         const viewProjection = Float32Array.from(frame.viewProjection, (x, i) => (i % 4 === 0 ? x * a : x));
@@ -2616,6 +2618,86 @@ class AnatomicalRendering {
       });
     } catch (e) {
       if ((e as Error).message !== "cancelled") this.jobFailed("Still", e, () => void this.saveStillHere());
+    } finally {
+      this.stillRunning = false;
+      if (this.stillBudget !== undefined) {
+        this.stillBudget = undefined;
+        this.update();
+      }
+      this.panelUpdate?.();
+    }
+  }
+
+  /** For a still or a movie made here: the geometry read at four times its budget (at most what can be traced), once read. */
+  private async finerGeometry(job: JobControl): Promise<void> {
+    if (!this.renderedLayers().some((l) => this.isVectors(l)) || this.saved.geometryBudget >= GEO_MAX) return;
+    this.stillBudget = Math.min(GEO_MAX, 4 * this.saved.geometryBudget);
+    this.update();
+    job.progress(undefined, "reading the geometry finer");
+    // (A frame first: the parts asked for again.)
+    await sleep(300);
+    while (!this.geometrySettled()) {
+      if (job.cancelled) throw new Error("cancelled");
+      await sleep(300);
+    }
+  }
+
+  /**
+   * A movie made in this browser (the keyframes', or the view now turned as `rotation` says): each frame path-traced
+   * as a still is, at the Output card's size and samples, the geometry read finer for it; encoded as H.264 in an MP4
+   * (WebCodecs), as a job; saved as a download. The camera moves as the render computer's would (movie_camera.ts);
+   * the look is the view's now throughout (the keyframes' looks are not changed between, as the computer does).
+   */
+  private async movieHere(rotation?: Saved["rotation"]): Promise<void> {
+    if (this.lastFrame === undefined || !this.live.ready()) return this.ctx.ui.toast("Nothing is drawn here yet.", "error");
+    if (this.stillRunning) return this.ctx.ui.toast("A still or a movie is already rendering.", "error");
+    if (!canEncodeMp4()) return this.ctx.ui.toast("This browser cannot make movies (it has no WebCodecs video encoder); render them on a computer.", "error");
+    const m = movieSettings(this.saved.movie);
+    const aspect = m.width / m.height;
+    let views: MovieView[];
+    try {
+      if (rotation) {
+        const spec = this.currentSpec();
+        if (spec === undefined) return this.ctx.ui.toast("Nothing is drawn here yet.", "error");
+        views = rotationFrames(spec.inv_view_projection, spec.orbit_center, rotation.axis, rotation.degrees, rotation.step, aspect);
+      } else {
+        if (this.saved.keyframes.length < 2) return this.ctx.ui.toast("Add two keyframes or more first.", "error");
+        views = framesFor(this.saved.keyframes.map((k) => ({ time: k.time, inv: k.view.inv_view_projection, center: k.view.orbit_center })), m.fps, m.easing, aspect);
+      }
+    } catch (e) {
+      return this.ctx.ui.toast(`Movie: ${(e as Error).message}`, "error");
+    }
+    const tooLarge = stillProblem(m.width, m.height, m.samples);
+    if (tooLarge) return this.ctx.ui.toast(tooLarge, "error");
+    this.stillRunning = true;
+    this.panelUpdate?.();
+    const n = views.length;
+    const name = `Movie ${m.width} × ${m.height}, ${n} frames at ${m.samples} samples (this browser)`;
+    try {
+      await this.ctx.jobs.run(name, async (job) => {
+        await this.finerGeometry(job);
+        const canvas = document.createElement("canvas");
+        canvas.width = m.width;
+        canvas.height = m.height;
+        const c2 = canvas.getContext("2d")!;
+        const started = performance.now();
+        const blob = await encodeMp4(m.width, m.height, m.fps, n, async (i) => {
+          const image = await this.live.still({ ...views[i], width: m.width, height: m.height, samples: m.samples }, (f) => {
+            if (job.cancelled) this.live.cancelStill();
+            const done = (i + f) / n;
+            const left = i > 0 || f > 0.5 ? ` (about ${Math.ceil(((performance.now() - started) / done) * (1 - done) / 60000)} min left)` : "";
+            job.progress(done, `frame ${i + 1} of ${n}${left}`);
+          });
+          // Over black (a video has no transparency).
+          c2.fillStyle = "#000";
+          c2.fillRect(0, 0, m.width, m.height);
+          c2.drawImage(await createImageBitmap(new ImageData(image.rgba, image.width, image.height)), 0, 0);
+          return canvas;
+        }, () => job.cancelled);
+        downloadBlob(blob, rotation ? `rotation-${rotation.axis}-${rotation.degrees}.mp4` : "anatomical-rendering.mp4");
+      });
+    } catch (e) {
+      if ((e as Error).message !== "cancelled") this.jobFailed("Movie", e, () => void this.movieHere(rotation));
     } finally {
       this.stillRunning = false;
       if (this.stillBudget !== undefined) {
@@ -2772,6 +2854,7 @@ class AnatomicalRendering {
   }
 
   private async renderRotation(): Promise<void> {
+    if (this.saved.where === "browser") return this.movieHere(this.saved.rotation);
     const view = this.currentSpec();
     if (view === undefined) return;
     const r = this.saved.rotation;
@@ -2829,6 +2912,7 @@ class AnatomicalRendering {
    * as a job (its progress in the panel and in Activity) while the view stays live.
    */
   private renderMovie(extra?: Record<string, unknown>): void {
+    if (extra === undefined && this.saved.where === "browser") return void this.movieHere();
     const sid = this.session?.id;
     const service = this.service;
     if (sid === undefined || service === undefined) return this.ctx.ui.toast("Connect to a computer and switch Render on first.", "error");
@@ -3164,7 +3248,12 @@ class AnatomicalRendering {
       specular: surfaceSlider("specular", "Specular", 1),
       emission: surfaceSlider("emission", "Emission", 5),
     };
+    const capCuts = checkbox("Close cut objects", true, (v) => {
+      const l = this.edited();
+      if (l !== undefined) this.setLook(l, { capCuts: v });
+    }, { info: "Where a cut or crop goes through an object, a flat face in its colour closes it, so it looks solid; off, the cut leaves it open and its inside shows. Objects must be closed surfaces: one with holes shows the faces through them." });
     const surfacePart = el("div", { class: "stack" },
+      capCuts,
       field("Opacity", surfaceSliders.opacity, { info: "How much of the light the surfaces stop: below 1 they are see-through, blended over what is behind them. Lower takes longer to path-trace, as the light goes on through." }),
       field("Roughness", surfaceSliders.roughness, { info: "How broad their highlights are: low is polished, high is matte." }),
       field("Specular", surfaceSliders.specular, { info: "The share of the light reflected as a highlight rather than in their colour." }),
@@ -3494,16 +3583,19 @@ class AnatomicalRendering {
     const rotTurn = select([["360", "full turn"], ["180", "half turn"]], String(saved().rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v))), "Turn");
     const rotStep = bounded(saved().rotation.step, (v) => Math.min(90, Math.max(0.25, v)), (v) => this.save((x) => (x.rotation.step = v)), { step: "1", min: "0.25", max: "90", "aria-label": "Step (degrees)" });
     const movies = jobList("movie");
-    const movie = card("anatomical.movie", "Movie", { info: "Add keyframes as you move, set each one's time, then preview: a small, quick version plays in a window, and from there the movie renders in the background at the Output card's size and samples. Go to moves the view back to a keyframe; Replace puts the view now in its place." },
+    // On a computer a quick preview first; here the movie itself (no preview: each frame is the cost).
+    const movieButton = button("Preview movie…", () => this.renderMovie());
+    const rotationButton = button("Preview rotation…", () => void this.renderRotation());
+    const movie = card("anatomical.movie", "Movie", { info: "Add keyframes as you move, set each one's time, then preview: a small, quick version plays in a window, and from there the movie renders in the background at the Output card's size and samples. Go to moves the view back to a keyframe; Replace puts the view now in its place. In this browser there is no preview: Render movie path-traces every frame here, as a still is, and saves an MP4; the camera moves as on a computer, the look stays as it is now." },
       keyframes,
       el("div", { class: "row" },
         button("Add keyframe", () => this.addKeyframe()),
         field("fps", fps),
         field("Camera", easing)),
-      el("div", { class: "row" }, button("Preview movie…", () => this.renderMovie())),
+      el("div", { class: "row" }, movieButton),
       el("h4", { class: "section-title" }, "Rotation"),
       el("div", { class: "row" }, field("About", rotAxis), field("Turn", rotTurn), field("Step °", rotStep)),
-      el("div", { class: "row" }, button("Preview rotation…", () => void this.renderRotation())),
+      el("div", { class: "row" }, rotationButton),
       movies,
     );
 
@@ -3679,6 +3771,7 @@ class AnatomicalRendering {
       if (edited) {
         const m = this.surfaceOf(edited.name);
         for (const k of Object.keys(surfaceSliders) as (keyof SurfaceMaterial)[]) surfaceSliders[k].set(m[k]);
+        capCuts.set(this.saved.looks[edited.name]?.capCuts ?? true);
       }
       // Geometry drawn here has no preset: it is coloured as the layer colours it.
       presetRow.hidden = alone && this.saved.where === "browser";
@@ -3795,7 +3888,11 @@ class AnatomicalRendering {
       height.input.set(evenSide(s.movie.height));
       outSamples.input.set(clampInt(s.movie.samples, 1, LIMITS.maxSamples));
       still.disabled = this.stillRunning;
-      still.textContent = this.stillRunning ? "Rendering still…" : "Save still (PNG)";
+      still.textContent = this.stillRunning ? "Rendering…" : "Save still (PNG)";
+      const here = this.saved.where === "browser";
+      movieButton.textContent = here ? "Render movie (MP4)" : "Preview movie…";
+      rotationButton.textContent = here ? "Render rotation (MP4)" : "Preview rotation…";
+      movieButton.disabled = rotationButton.disabled = here && this.stillRunning;
       noFfmpeg.hidden = !onHost_ || this.serviceInfo?.ffmpeg !== false;
       keyframes.update(s.keyframes.length);
       keyframeTimes.forEach((t, i) => t.set(s.keyframes[i].time));

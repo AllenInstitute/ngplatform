@@ -12,7 +12,11 @@
  * The geometry is in physical millimetres; a ray is taken there by
  * uGeoFromWorld without being made unit length, so its t is the world
  * ray's. A hit is kept only where its layer's cuts and crop keep it, so a
- * cut opens a cell and the ray goes on to what is behind.
+ * cut opens a cell and the ray goes on to what is behind; or, where the
+ * layer's cuts are capped, a ray that meets a solid's inside having come
+ * into the kept part through a cut meets the cut instead, a flat face in
+ * the solid's colour (closed surfaces only: a mesh with holes shows caps
+ * through its holes).
  *
  * Each layer has its own material (SurfaceMaterial). A layer less than
  * opaque: a shadow ray passes each of its primitives with the chance it is
@@ -49,7 +53,7 @@ export interface LiveGeometryLook {
   /** Changes when the colours do. */
   key: string;
   /** Per layer (as the colours number them): its cuts (world planes), its crop (millimetres; null: none), its material. */
-  layers: { clips: number[][]; crop: [number[], number[]] | null; material: SurfaceMaterial }[];
+  layers: { clips: number[][]; crop: [number[], number[]] | null; material: SurfaceMaterial; cap?: boolean }[];
   exposure: number;
   /**
    * Per layer, this frame's pick IDs: the first (0: none) for its first object (`first`) and each of its `count`
@@ -84,6 +88,7 @@ uniform int uGeoNodeAt;
 uniform int uGeoObjAt;
 uniform mat4 uGeoFromWorld;
 uniform vec4 uGeoClips[${maxClips} * GEO_LAYERS];
+// Per layer: its cuts' count, + 256 where its cuts are capped.
 uniform int uGeoNClip[GEO_LAYERS];
 uniform vec3 uGeoCropLo[GEO_LAYERS];
 uniform vec3 uGeoCropHi[GEO_LAYERS];
@@ -95,6 +100,8 @@ float geoRough = 0.45, geoSpec = 0.15, geoEmit = 0.0, geoOpac = 1.0;
 bool geoSolid = false;
 // How far (world) a ray leaving a surface starts from it.
 uniform float uGeoEps;
+// Nodes visited by the traces so far (for measuring traversal's cost).
+int geoVisits = 0;
 ${GEO_PICK_GLSL}
 
 uvec4 geoFetch(int i) { return texelFetch(uGeo, ivec2(i & (GEO_W - 1), i >> GEO_SHIFT), 0); }
@@ -102,6 +109,8 @@ uvec4 geoFetch(int i) { return texelFetch(uGeo, ivec2(i & (GEO_W - 1), i >> GEO_
 vec4 geoVert(uint v) { return uintBitsToFloat(geoFetch(int(v))); }
 uvec4 geoPrim(int i) { return geoFetch(uGeoPrimAt + i); }
 vec4 geoObj(int o) { return uintBitsToFloat(geoFetch(uGeoObjAt + o)); }
+// The object at primitive prim.
+int geoObjectOf(int prim) { return int(geoPrim(prim).w & 0x3fffffffu); }
 
 // Möller-Trumbore: t along (o, d any length), and the barycentrics; -1 when none.
 float geoTri(vec3 a, vec3 b, vec3 c, vec3 o, vec3 d, out vec2 uv) {
@@ -174,18 +183,77 @@ float geoHash(int i, vec3 o, vec3 d) {
   h ^= h >> 16;
   return float(h >> 8) / 16777216.0;
 }
+// A round cone's signed distance at p (Quilez's sdRoundCone).
+float geoConeDist(vec3 p, vec3 a, float r1, vec3 b, float r2) {
+  vec3 ba = b - a;
+  float l2 = dot(ba, ba), rr = r1 - r2, a2 = l2 - rr * rr, il2 = 1.0 / l2;
+  vec3 pa = p - a;
+  float y = dot(pa, ba), z = y - l2;
+  vec3 xv = pa * l2 - ba * y;
+  float x2 = dot(xv, xv), y2 = y * y * l2, z2 = z * z * l2;
+  float k = sign(rr) * rr * rr * x2;
+  if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) * il2 - r2;
+  if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) * il2 - r1;
+  return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+}
 // Kept at world point w (geometry point p) for layer li: inside its crop, cut away by none of its cuts.
 bool geoKept(int li, vec3 w, vec3 p) {
   if (any(lessThan(p, uGeoCropLo[li])) || any(greaterThan(p, uGeoCropHi[li]))) return false;
   for (int i = 0; i < ${maxClips}; ++i) {
-    if (i >= uGeoNClip[li]) break;
+    if (i >= (uGeoNClip[li] & 255)) break;
     vec4 c = uGeoClips[li * ${maxClips} + i];
     if (dot(c.xyz, w) + c.w < 0.0) return false;
   }
   return true;
 }
+// Whether the ray (geometry d) leaves the solid primitive i bounds at geometry point p: met from inside (its
+// outward face away from the ray; meshes are wound outward, primitives.ts orientOutward).
+bool geoLeaves(int i, vec3 p, vec3 d) {
+  uvec4 q = geoPrim(i);
+  uint kind = q.w >> 30;
+  vec3 n;
+  if (kind == 0u) {
+    vec3 a = geoVert(q.x).xyz;
+    n = cross(geoVert(q.y).xyz - a, geoVert(q.z).xyz - a);
+  } else if (kind == 2u) {
+    n = p - geoVert(q.x).xyz;
+  } else {
+    vec4 a4 = geoVert(q.x), b4 = geoVert(q.y);
+    float e = 1e-3 * max(a4.w + b4.w, 1e-12);
+    n = vec3(geoConeDist(p + vec3(e, 0.0, 0.0), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3(e, 0.0, 0.0), a4.xyz, a4.w, b4.xyz, b4.w),
+             geoConeDist(p + vec3(0.0, e, 0.0), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3(0.0, e, 0.0), a4.xyz, a4.w, b4.xyz, b4.w),
+             geoConeDist(p + vec3(0.0, 0.0, e), a4.xyz, a4.w, b4.xyz, b4.w) - geoConeDist(p - vec3(0.0, 0.0, e), a4.xyz, a4.w, b4.xyz, b4.w));
+  }
+  return dot(n, d) > 0.0;
+}
+// Where the world ray (ow, dw; geometry o, d) enters layer li's kept part (its crop and cuts, convex): t (-1e30 when
+// it starts in it), and the face (a cut k: k; the crop's: ${maxClips} + 2 * axis, + 1 for its high side).
+float geoEnter(int li, vec3 ow, vec3 dw, vec3 o, vec3 d, out int face) {
+  float t = -1e30;
+  face = -1;
+  for (int i = 0; i < ${maxClips}; ++i) {
+    if (i >= (uGeoNClip[li] & 255)) break;
+    vec4 c = uGeoClips[li * ${maxClips} + i];
+    float s = dot(c.xyz, dw);
+    if (s <= 0.0) continue;
+    float ti = -(dot(c.xyz, ow) + c.w) / s;
+    if (ti > t) { t = ti; face = i; }
+  }
+  for (int a = 0; a < 3; ++a) {
+    float lo = uGeoCropLo[li][a], hi = uGeoCropHi[li][a];
+    if (d[a] > 0.0 && lo > -1e29) {
+      float ti = (lo - o[a]) / d[a];
+      if (ti > t) { t = ti; face = ${maxClips} + 2 * a; }
+    } else if (d[a] < 0.0 && hi < 1e29) {
+      float ti = (hi - o[a]) / d[a];
+      if (ti > t) { t = ti; face = ${maxClips} + 2 * a + 1; }
+    }
+  }
+  return t;
+}
 // The nearest kept surface the world ray (ow, dw) meets in (tmin, tmax): its t (-1: none), primitive and
-// barycentrics. anyHit: the first found (a shadow ray's). Through the wide nodes: a node's four children's boxes
+// barycentrics. Where the layer's cuts are capped and the surface met is the inside of a solid the ray entered the
+// kept part through a cut (or crop) to reach, the cut face instead: there, uv.x = -1 - the face (geoEnter's). anyHit: the first found (a shadow ray's). Through the wide nodes: a node's four children's boxes
 // from one fetch, a primitive tested where its box is met, the nodes met searched nearest first.
 float geoTrace(vec3 ow, vec3 dw, float tmin, float tmax, bool anyHit, out int prim, out vec2 uv) {
   prim = -1;
@@ -201,6 +269,7 @@ float geoTrace(vec3 ow, vec3 dw, float tmin, float tmax, bool anyHit, out int pr
   for (int it = 0; it < 65536; ++it) {
     if (sp == 0) break;
     int at = uGeoNodeAt + 4 * stack[--sp];
+    ++geoVisits;
     uvec4 h = geoFetch(at), ql = geoFetch(at + 1), qh = geoFetch(at + 2), ch = geoFetch(at + 3);
     vec3 org = uintBitsToFloat(h.xyz);
     vec3 sc = exp2(vec3(ivec3(h.w & 255u, (h.w >> 8) & 255u, (h.w >> 16) & 255u) - 127));
@@ -252,7 +321,17 @@ float geoTrace(vec3 ow, vec3 dw, float tmin, float tmax, bool anyHit, out int pr
       if (sp < 64) stack[sp++] = kn[j];
     }
   }
-  return prim < 0 ? -1.0 : best;
+  if (prim < 0) return -1.0;
+  if (!anyHit) {
+    int li = clamp(int(geoObj(geoObjectOf(prim)).a) - 1, 0, GEO_LAYERS - 1);
+    int face;
+    float te;
+    if (uGeoNClip[li] >= 256 && (te = geoEnter(li, ow, dw, o, d, face)) > tmin && te < best && geoLeaves(prim, o + d * best, d)) {
+      uv = vec2(-1.0 - float(face), 0.0);
+      return te;
+    }
+  }
+  return best;
 }
 float geoHit(vec3 ow, vec3 dw, float tmin, float tmax, out int prim, out vec2 uv) { return geoTrace(ow, dw, tmin, tmax, false, prim, uv); }
 bool geoAny(vec3 ow, vec3 dw, float tmin, float tmax) {
@@ -265,19 +344,6 @@ vec3 geoOct(uint p) {
   vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
   if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
   return normalize(n);
-}
-// A round cone's signed distance at p (Quilez's sdRoundCone).
-float geoConeDist(vec3 p, vec3 a, float r1, vec3 b, float r2) {
-  vec3 ba = b - a;
-  float l2 = dot(ba, ba), rr = r1 - r2, a2 = l2 - rr * rr, il2 = 1.0 / l2;
-  vec3 pa = p - a;
-  float y = dot(pa, ba), z = y - l2;
-  vec3 xv = pa * l2 - ba * y;
-  float x2 = dot(xv, xv), y2 = y * y * l2, z2 = z * z * l2;
-  float k = sign(rr) * rr * rr * x2;
-  if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) * il2 - r2;
-  if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) * il2 - r1;
-  return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
 }
 // The surface at a hit of the world ray (ow, dw) at t: its world normal (facing the ray) and colour; its layer's
 // material in geoRough, geoSpec and geoEmit.
@@ -293,7 +359,18 @@ void geoSurface(int prim, vec2 uv, vec3 ow, vec3 dw, float t, out vec3 nw, out v
   geoOpac = mat.w;
   vec3 p = (uGeoFromWorld * vec4(ow + dw * t, 1.0)).xyz;
   vec3 n;
-  if (kind == 0u) {
+  if (uv.x < -0.5) {
+    // A capped cut: the cut's plane (world), or the crop's face (geometry).
+    int face = int(-uv.x - 0.5);
+    int li = clamp(int(ob.a) - 1, 0, GEO_LAYERS - 1);
+    if (face < ${maxClips}) {
+      nw = normalize(uGeoClips[li * ${maxClips} + face].xyz);
+      if (dot(nw, dw) > 0.0) nw = -nw;
+      return;
+    }
+    n = vec3(0.0);
+    n[(face - ${maxClips}) / 2] = 1.0;
+  } else if (kind == 0u) {
     uvec4 a = geoFetch(int(q.x)), b = geoFetch(int(q.y)), c = geoFetch(int(q.z));
     if (a.w == 0xffffffffu || b.w == 0xffffffffu || c.w == 0xffffffffu) n = vec3(0.0);
     else n = geoOct(a.w) * (1.0 - uv.x - uv.y) + geoOct(b.w) * uv.x + geoOct(c.w) * uv.y;
@@ -312,8 +389,6 @@ void geoSurface(int prim, vec2 uv, vec3 ow, vec3 dw, float t, out vec3 nw, out v
   nw = normalize(transpose(mat3(uGeoFromWorld)) * n);
   if (dot(nw, dw) > 0.0) nw = -nw;
 }
-// The object at primitive prim.
-int geoObjectOf(int prim) { return int(geoPrim(prim).w & 0x3fffffffu); }
 // The surface's light toward -wo from the key light (wl), as brdfCos with the material of the surface last met.
 vec3 geoBrdfCos(vec3 n, vec3 wo, vec3 wl, vec3 albedo) {
   float cl = dot(n, wl);
@@ -405,7 +480,7 @@ export class GeometryTextures {
     gl.uniformMatrix4fv(u("uGeoFromWorld"), false, new Float32Array([0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => geoFromWorld[4 * r + c]))));
     const layers = Array.from({ length: GEO_LAYERS }, (_, i) => look.layers[i]);
     gl.uniform4fv(u("uGeoClips"), new Float32Array(layers.flatMap((l) => Array.from({ length: maxClips }, (_, i) => l?.clips[i] ?? [0, 0, 0, 0]).flat())));
-    gl.uniform1iv(u("uGeoNClip"), new Int32Array(layers.map((l) => Math.min(l?.clips.length ?? 0, maxClips))));
+    gl.uniform1iv(u("uGeoNClip"), new Int32Array(layers.map((l) => Math.min(l?.clips.length ?? 0, maxClips) + (l?.cap ? 256 : 0))));
     gl.uniform3fv(u("uGeoCropLo"), new Float32Array(layers.flatMap((l) => l?.crop?.[0] ?? [-1e30, -1e30, -1e30])));
     gl.uniform3fv(u("uGeoCropHi"), new Float32Array(layers.flatMap((l) => l?.crop?.[1] ?? [1e30, 1e30, 1e30])));
     gl.uniform4fv(u("uGeoMat"), new Float32Array(layers.flatMap((l) => {

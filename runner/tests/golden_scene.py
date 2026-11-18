@@ -1,9 +1,9 @@
 """The scene both path tracers draw for the golden comparison (plugins/anatomical-rendering/tests/golden.mts):
 an empty volume (48 mm a side, 1 mm voxels; Neuroglancer precomputed, raw chunks) and a Zarr Vectors mesh in it
-(a sphere and a torus, in mm, one level), and the render computer's picture and depth of it for a view.
+(a sphere and a torus, in mm, one level, one chunk), and the render computer's picture and depth of it for a view.
 
     python golden_scene.py write DIR             # the scene, in DIR/em and DIR/mesh.zv
-    python golden_scene.py render DIR VIEW OUT   # the render computer's depth (OUT.json) and picture (OUT.png) of
+    python golden_scene.py render DIR VIEW OUT   # the render computer's depth and luminance (OUT.json) and picture (OUT.png) of
                                                  # VIEW (a view spec, JSON), on this computer's CUDA GPU
 
 Needs the runner's render dependencies and the `zarr_vectors` package (zarr 3).
@@ -65,7 +65,10 @@ def write(root: Path) -> None:
             for x in range(0, SIZE, 16):
                 (em / "s0" / f"{x}-{x + 16}_{y}-{y + 16}_{z}-{z + 16}").write_bytes(bytes(16 ** 3))
     v, f, o = mesh()
-    schema = zv.Schema(bounds=([0.0] * 3, [float(SIZE)] * 3), kind="mesh", layout=zv.Layout(cells=2), axes=[zv.Axis(n, "millimeter") for n in "xyz"])
+    # One chunk: the browser's Zarr Vectors reader reads each chunk's own faces only, not those that cross chunks
+    # (links/0/<offsets> other than 0.0.0_0.0.0), so a mesh in several chunks comes with seams; this scene compares
+    # the tracers, not the readers.
+    schema = zv.Schema(bounds=([0.0] * 3, [float(SIZE)] * 3), kind="mesh", layout=zv.Layout(cells=1), axes=[zv.Axis(n, "millimeter") for n in "xyz"])
     ds = zv.create(str(root / "mesh.zv"), schema=schema)
     ds.add_mesh(v, f, object_ids=o)
 
@@ -100,7 +103,13 @@ def render(root: Path, view_path: Path, out: Path) -> None:
     h, dz = call("GET", f"/sessions/{s['id']}/depth", raw=True)
     w, hh = int(h["X-Width"]), int(h["X-Height"])
     depth = np.frombuffer(zlib.decompress(dz), np.float16).reshape(hh, w).astype(np.float32)
-    out.with_suffix(".json").write_text(json.dumps({"width": w, "height": hh, "depth": depth.ravel().round(6).tolist(), "objects": info.get("objects")}))
+    # The picture's luminance (Rec. 709 of the stored, tone-mapped values), at the picture's own size.
+    from PIL import Image
+    import io
+    pic = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"), np.float32) / 255.0
+    lum = pic @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+    out.with_suffix(".json").write_text(json.dumps({"width": w, "height": hh, "depth": depth.ravel().round(6).tolist(), "objects": info.get("objects"),
+                                                    "picture": {"width": pic.shape[1], "height": pic.shape[0], "lum": lum.ravel().round(4).tolist()}}))
     srv.shutdown()
 
 

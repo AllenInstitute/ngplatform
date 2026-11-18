@@ -41,9 +41,17 @@ describe("detail by distance", () => {
     expect(lodChunks(levels, lower, upper, [2, 2, 2], 1e9)!.every((k) => k.startsWith("0|"))).toBe(true);
   });
 
-  it("takes only levels whose chunks nest", () => {
+  it("covers the store where the levels do not nest, each chunk once", () => {
+    const odd = [{ chunkShape: [16, 16, 16], vertexCount: 4096 }, { chunkShape: [24, 24, 24], vertexCount: 1000 }];
     expect(nested(levels)).toBe(true);
-    expect(nested([{ chunkShape: [16, 16, 16], vertexCount: 1 }, { chunkShape: [24, 24, 24], vertexCount: 1 }])).toBe(false);
-    expect(lodChunks([{ chunkShape: [16, 16, 16], vertexCount: 1 }, { chunkShape: [24, 24, 24], vertexCount: 1 }], lower, upper, [0, 0, 0], 10)).toBeUndefined();
+    expect(nested(odd)).toBe(false);
+    const keys = lodChunks(odd, lower, upper, [2, 2, 2], 1600)!;
+    expect(new Set(keys).size).toBe(keys.length);
+    // Every point of the store in some chunk chosen; near the eye at the finer level.
+    const chosen = keys.map(parse);
+    const within = (p: number[]) => chosen.filter(({ level, c }) => c.every((v, a) => p[a] >= v * odd[level].chunkShape[a] && p[a] < (v + 1) * odd[level].chunkShape[a]));
+    for (let x = 0.5; x < 64; x += 3) for (let y = 0.5; y < 64; y += 3) for (let z = 0.5; z < 64; z += 3) expect(within([x, y, z]).length).toBeGreaterThan(0);
+    expect(within([2, 2, 2]).some(({ level }) => level === 0)).toBe(true);
+    expect(within([62, 62, 62]).every(({ level }) => level === 1)).toBe(true);
   });
 });

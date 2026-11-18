@@ -4,3 +4,13 @@ dist-*/
 public/examples/
 tests/e2e/screenshots/
 tests/e2e/ui-audit/
+
+# The app's build copied into the Python package by `npm run build:local` (for the wheel).
+runner/ngplatform_local/app/
+runner/build/
+runner/*.egg-info/
+dist-wheel/
+
+# Model files for local development (tools/medsam2/): `npm run dev` serves them at models/ (vite.config.ts
+# localModels); never built into the app, never committed.
+/models/

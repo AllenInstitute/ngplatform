@@ -45,6 +45,7 @@ import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, type QuickSelectMethod, type QuickSelectRequest, QuickSelectRegistry } from "./quick_select.js";
 import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
 import { SamModel, samMethod } from "./sam_model.js";
+import { MedSam2Model, medsam2Method } from "./medsam2_model.js";
 import { cropped, editsZarr, niftiBytes, niftiParts, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
 import { SaveWorker } from "./save_client.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
@@ -123,6 +124,7 @@ export class Editor implements LabelVolumes {
   readonly quickSelect = new QuickSelectRegistry();
   /** Quick select's model (AI (MobileSAM)): its files, the runtime, the last timings. */
   readonly sam = new SamModel();
+  readonly medsam2 = new MedSam2Model();
   /** Compresses and writes saves off the main thread. */
   private readonly saver = new SaveWorker();
   private readonly painter: Painter;
@@ -228,6 +230,8 @@ export class Editor implements LabelVolumes {
       this.quickSelect.onChanged(() => this.changed()),
       this.quickSelect.register(samMethod(this.sam)),
       this.sam.onChanged(() => this.changed()),
+      this.quickSelect.register(medsam2Method(this.medsam2)),
+      this.medsam2.onChanged(() => this.changed()),
     );
     const c = ctx.commands;
     c.register("segmentation.newLayer", () => ctx.ui.showPanel(SEGMENTATION_PANEL));
@@ -356,6 +360,7 @@ export class Editor implements LabelVolumes {
     this.painter.dispose();
     this.previewOverlay.dispose();
     this.sam.dispose();
+    this.medsam2.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
     clearTimeout(this.samTimer);
@@ -395,10 +400,12 @@ export class Editor implements LabelVolumes {
     clearTimeout(this.samTimer);
     this.samTimer = undefined;
     if (this.editing && this.tool === "quick") return;
-    if (!this.sam.started) return;
+    if (!this.sam.started && !this.medsam2.started) return;
     this.samTimer = setTimeout(() => {
       this.samTimer = undefined;
-      if (!(this.editing && this.tool === "quick")) this.sam.release();
+      if (this.editing && this.tool === "quick") return;
+      this.sam.release();
+      this.medsam2.release();
     }, SAM_RELEASE_WAIT);
   }
 
@@ -1601,7 +1608,27 @@ export class Editor implements LabelVolumes {
     const extras = this.quickExtras(session);
     let done = 0;
     try {
-      for (const dir of [-1, 1]) {
+      if (method.propagate !== undefined) {
+        // A method that tracks (MedSAM2): from the prompts that made the mask, else a box round it.
+        const q = this.quickPrompts;
+        const own = q !== undefined && q.session === session && q.method === method.id && q.axis === axis && q.index === base ? { box: q.box, points: q.points.map((x) => ({ ...x })) } : undefined;
+        const bounds = sectionBounds(p.mask, axis);
+        if (own === undefined && bounds === undefined) return;
+        let prompts = own;
+        if (prompts === undefined) {
+          const lo = [0, 0, 0] as Vec3;
+          const hi = [0, 0, 0] as Vec3;
+          lo[axis] = base;
+          hi[axis] = base + 1;
+          [lo[ua], lo[wa]] = bounds!.lo;
+          [hi[ua], hi[wa]] = bounds!.hi;
+          prompts = { box: { lo, hi }, points: [] };
+        }
+        const prompt: Prompt = prompts.box ? { kind: "box", lo: prompts.box.lo, hi: prompts.box.hi } : { kind: "point", at: prompts.points[0].at };
+        const tracked = await untilAborted(method.propagate({ prompt, axis, tolerance: this.tolerance, prompts, ...extras }, n, abort.signal), abort.signal);
+        if (abort.signal.aborted || this.pending !== p) return;
+        masks.push(...tracked);
+      } else for (const dir of [-1, 1]) {
         let before = p.mask;
         let count = p.voxels;
         for (let k = 1; k <= n; ++k) {

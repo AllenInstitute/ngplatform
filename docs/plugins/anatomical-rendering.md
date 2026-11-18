@@ -401,6 +401,7 @@ Layers):
 | Roughness | How broad the highlights are: low is polished, high is matte |
 | Specular | The share of light reflected as a highlight rather than in the surface's colour |
 | Emission | Light given off in the surface's own colour (the key light is 1) |
+| Close cut objects | On (the default): where a cut or crop goes through an object, a flat face in its colour closes it, so it looks solid. Off: the cut leaves it open and its inside shows. Only closed surfaces close properly; one with holes shows the face through them |
 
 A material change redraws at once; only Size builds the geometry again.
 
@@ -412,16 +413,27 @@ for (small cells finer, large ones as fine as fits). More is finer but
 takes longer to read and build, and needs about 55 MB of GPU memory a
 million.
 
-**Detail by distance.** A segment's mesh is read finer near the camera
-and coarser away from it, within its share of the budget: once the camera
-rests somewhere new, its chunks are chosen again across the store's levels
-(where their chunks nest), and the chunks it already holds are not read
-again.
+**Detail by distance.** A mesh is read finer near the camera and coarser
+away from it, within its share of the budget: once the camera rests
+somewhere new, its chunks are chosen again across the store's levels, and
+the chunks it already holds are not read again. This applies to each
+segment of a precomputed segmentation and to a Zarr Vectors mesh store
+with more than one level. Where a store's levels do not nest, a coarse
+chunk is replaced by every finer chunk it overlaps, so a thin sliver along
+the boundary can be drawn twice. Points and lines are read at one level,
+since mixing levels would change their density, and so their size, across
+the view.
 
-**Stills here.** Save still (Output card) in this browser path-traces the
-view at the output's size and twice its samples, the geometry read at four
-times its budget meanwhile, and saves a PNG, transparent where nothing is
-met. Movies and splats need a render computer.
+**Stills and movies here.** Save still (Output card) in this browser
+path-traces the view at the output's size and twice its samples, the
+geometry read at four times its budget meanwhile, and saves a PNG,
+transparent where nothing is met. Render movie and Render rotation (Movie
+card) path-trace every frame the same way, at the Output card's size and
+samples, and save an MP4 (H.264, over black). This needs a browser with
+WebCodecs, such as Chrome or Edge. There is no preview, since each frame
+costs as much as a still. The camera moves between keyframes as it does
+on a render computer, but the look stays as it is now: keyframes' looks
+are not blended. Splats need a render computer.
 
 **Choosing segments.** Each segment's mesh is built on its own, so
 choosing another reads and builds only that one, and switching one off

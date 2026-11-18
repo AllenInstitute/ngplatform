@@ -55,6 +55,7 @@ import type {
   InlineSegmentProperty,
   InlineSegmentPropertyMap,
 } from "neuroglancer/unstable/segmentation_display_state/property_map.js";
+import { asFormat09 } from "./format010.js";
 import type { TypedNumberArray } from "neuroglancer/unstable/util/array.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 
@@ -128,7 +129,7 @@ function openReader(
     async () => {
       const bytes = await access.read(`${path}/zarr.json`, {});
       if (bytes === undefined) return undefined;
-      const json = parseZarrJsonText(new TextDecoder().decode(bytes));
+      const json = asFormat09(parseZarrJsonText(new TextDecoder().decode(bytes)));
       if (json?.node_type !== "array") return undefined;
       return new ZarrArrayReader(
         parseZarrArrayMetadata(path, json),

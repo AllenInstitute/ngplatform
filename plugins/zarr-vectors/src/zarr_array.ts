@@ -69,6 +69,7 @@ import {
 } from "./dtype.js";
 import type { BudgetedCache, ByteBudget } from "./util.js";
 import { AsyncLru, DECODED_BUDGET, mapConcurrent } from "./util.js";
+import { asFormat09 } from "./format010.js";
 import type { ByteRangeRequest } from "neuroglancer/unstable/kvstore/index.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 
@@ -472,7 +473,7 @@ export async function openZarrArray(
 ): Promise<ZarrArray | undefined> {
   const bytes = await read(joinPath(path, "zarr.json"), { signal });
   if (bytes === undefined) return undefined;
-  const json = parseZarrJsonText(new TextDecoder().decode(bytes));
+  const json = asFormat09(parseZarrJsonText(new TextDecoder().decode(bytes)));
   if (json?.node_type !== "array") return undefined;
   return parseZarrArrayMetadata(path, json);
 }

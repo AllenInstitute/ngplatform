@@ -34,7 +34,7 @@ def tools_available() -> bool:
 class Runner:
     """A runner on a free port, with a temporary root and state folder."""
 
-    def __init__(self, state: Path | None = None, root: Path | None = None, max_running: int = 2, public_url: str | None = None, services=None):
+    def __init__(self, state: Path | None = None, root: Path | None = None, max_running: int = 2, public_url: str | None = None, services=None, app_dir: Path | None = None):
         self.tmp = tempfile.TemporaryDirectory(prefix="ngp-runner-")
         base = Path(self.tmp.name)
         self.state = state or base / "state"
@@ -42,11 +42,12 @@ class Runner:
         self.root.mkdir(parents=True, exist_ok=True)
         self.public_url = public_url
         self.services = services
+        self.app_dir = app_dir
         self.start(max_running)
 
     def start(self, max_running: int = 2) -> None:
         self.manager = JobManager(self.state, kinds_for(True), python=sys.executable, max_running=max_running, poll=0.05)
-        self.server = RunnerServer(0, TOKEN, Roots([self.root]), self.manager, python=sys.executable, tools=None, public_url=self.public_url, services=self.services)
+        self.server = RunnerServer(0, TOKEN, Roots([self.root]), self.manager, python=sys.executable, tools=None, public_url=self.public_url, services=self.services, app_dir=self.app_dir)
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
         self.thread.start()

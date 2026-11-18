@@ -64,6 +64,11 @@ with WebKnossos.
 | `sam.ts` | Around the model (pure): the crop round a prompt, the layer's window, the model's image, prompt coordinates, the mask back on the grid, the parts kept, masks of several sections put together |
 | `sam_model.ts` | The AI (MobileSAM) method: the model's files (pinned URLs, size, licence), kept in the browser, the worker it runs in, the embeddings kept by section |
 | `sam_worker.ts` | ONNX Runtime Web (loaded from jsDelivr at 1.30.0), WebGPU or WASM; the downloads and Cache Storage; the encoder and the decoder |
+| `model_files.ts` | A model's files downloaded with their progress and kept in Cache Storage (both workers) |
+| `medsam2.ts` | MedSAM2's tracking (pure): the bookkeeping of SAM 2's video predictor over its four graphs (memory bank, object pointers, mask choice), its image and prompt |
+| `medsam2_graphs.ts` | The four ONNX graphs behind the tracker's interface, on ONNX Runtime Web |
+| `medsam2_worker.ts` | MedSAM2's worker: its files (manifest.json), sessions, sections' features, the track |
+| `medsam2_model.ts` | The AI 3-D (MedSAM2) method: a section from a prompt, and `propagate` (Spread tracks) |
 | `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box; edits alone, the whole of a volume edited in place, edits read back |
 | `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload; edits let go from memory read back |
@@ -439,6 +444,61 @@ the tolerance leaves out); IoU 0.73. A box round the horn: IoU 0.84
 with Threshold's box (Otsu). The masks are in
 the run's screenshots (`sam_quick.mjs`, kept outside the repository).
 
+## AI 3-D quick select (MedSAM2)
+
+**AI 3-D (MedSAM2)** segments a section from a box or clicks, and tracks it
+through the volume with Spread. [MedSAM2](https://github.com/bowang-lab/MedSAM2)
+(Ma et al. 2025, Apache-2.0) is SAM 2.1 Hiera-tiny at 512 × 512 fine-tuned on
+medical images; it tracks an object through a scan as SAM 2 tracks one
+through a video.
+
+- **The model**: four ONNX graphs made by `tools/medsam2/` (its README has
+  the export and every check): the image encoder, the memory attention, the
+  heads (prompt encoder, mask decoder, object pointers) and the memory
+  encoder. With float16 weights, 86 MB; `manifest.json` lists them and a
+  version (their hash) the browser keeps them under. They load from
+  `medsam2Base()`: localStorage `ngplatform.medsam2.url`, else
+  `models/medsam2/` beside the app, which `npm run dev` serves from the
+  repository's git-ignored `models/` (vite.config.ts `localModels`; never
+  built into the app).
+- **The tracker** (`medsam2.ts`) is the bookkeeping of MedSAM2's PyTorch
+  video predictor: the prompted section conditioned on its features plus
+  `no_mem_embed` (one mask for a box, falling back to the best of three when
+  it is unstable; the best of three for one click); each tracked section
+  attends to the prompted one and the up to 6 before it in the direction of
+  travel, and to up to 16 object pointers with their signed distances; the
+  best of three masks; its memory encoded (bfloat16, as the predictor keeps
+  it). Each direction starts again from the prompt, as MedSAM2's 3-D
+  inference does.
+- **In the app**: the crop round the prompt (`cropFor`, twice the prompt,
+  at least the context), through the layer's window, at 512 × 512 with
+  ImageNet's normalisation; the 128 × 128 masks back on the grid
+  (`maskOnGrid`). Spread calls the method's `propagate` (the
+  `QuickSelectMethod` interface's, for methods that track): the same crop and
+  window in each section, a direction ending where the model's object score
+  falls to 0. The worker keeps the last 8 sections' features (3.5 MB each).
+
+**Checked** (tools/medsam2/README.md for the numbers):
+
+- Each graph against MedSAM2's PyTorch modules (within 2e-5), and in
+  headless Chrome on ONNX Runtime Web 1.30.0's WebAssembly backend (within
+  2e-6).
+- The tracker in Python against MedSAM2's own predictor on a 160-section
+  MRI from a box, forward and back: 1 voxel in 22,919 differs (fp32 graphs);
+  with float16 weights, Dice 0.9988.
+- This TypeScript tracker on the real graphs against the Python one: the
+  same masks to the pixel over 12 sections.
+- The whole method in headless Chrome (worker, ONNX Runtime from jsDelivr,
+  WebAssembly, one thread): a box and 5 sections tracked each way, against
+  the Python tracker given the same crop: 0 to 4 voxels differ a section.
+  Encoding 2.1 s and a step 1.5 s on one thread.
+- `tests/medsam2.test.ts`: the memory slots and pointer distances each step
+  takes, the mask choices, bfloat16, the prompt and the image (stand-in
+  graphs).
+
+Not done: SAM 2's filling of small holes (`fill_hole_area`), refining a
+tracked section with clicks, WebGPU timings, a home for the model files.
+
 ## Adding a quick select method
 
 ```ts
@@ -465,4 +525,7 @@ and `request.progress(text, fraction)` (shown on the tool bar and in the
 panel while it works). With `refines: true`, clicks add to the section's
 prompt rather than replacing it, and `request.prompts` holds them all
 (and the box), each marked wanted or not. Throwing an `Error` shows its
-message; `signal` is aborted by Escape.
+message; `signal` is aborted by Escape. A method that tracks through the
+volume (as MedSAM2 does) gives `propagate(request, count, signal)`: the
+masks of up to `count` sections each way from the request's prompts, which
+Spread then uses in place of prompting each section with a box.

@@ -6,10 +6,13 @@
  * the finer level's chunks inside it, while the vertices still fit; so
  * the near part of a cell comes at its finest and the far part coarse.
  *
- * Only for levels whose chunk grids nest (each a whole number of the
- * finer level's chunks a side, all from 0, as Luxar's keys are): a chunk
- * is then exactly its finer chunks, and a mix of levels covers the store
- * once, with nothing doubled.
+ * Where the levels' chunk grids nest (each a whole number of the finer
+ * level's chunks a side, all from 0, as Luxar's keys are; precomputed
+ * meshes' always do), a chunk is exactly its finer chunks, and a mix of
+ * levels covers the store once. Where they do not, a chunk is replaced by
+ * every finer chunk it overlaps (each taken once), so nothing is left
+ * uncovered; a finer chunk reaching past it doubles the coarse one's
+ * surface there, a sliver along the boundary.
  */
 import { chunkBox, chunkRange, chunksIn } from "../../luxar/view_math.js";
 import { keyOf } from "../../luxar/chunks.js";
@@ -32,11 +35,12 @@ export function nested(levels: readonly LodLevel[]): boolean {
 
 /**
  * The chunks (Luxar keys) of a store over `lower`..`upper` (store coordinates), finer near `eye`, within `budget`
- * vertices (each chunk taken as its level's count shared by the level's chunks); undefined when the levels do not
- * nest or their sizes are unknown.
+ * vertices (each chunk taken as its level's count shared by the level's chunks); undefined when there is one level
+ * or the levels' sizes are unknown.
  */
 export function lodChunks(levels: readonly LodLevel[], lower: number[], upper: number[], eye: number[], budget: number, maxChunks = 4096): string[] | undefined {
-  if (levels.length === 0 || !nested(levels) || levels.some((l) => l.vertexCount === undefined)) return undefined;
+  // One level: nothing to choose between (its chunks all).
+  if (levels.length < 2 || levels.some((l) => l.vertexCount === undefined)) return undefined;
   // The chunks within the store (an upper bound on a chunk's edge starts no chunk).
   const inside = (shape: number[]) => chunkRange(lower, upper.map((v, k) => v - 1e-9 * shape[k]), shape);
   const per = levels.map((l) => {
@@ -55,6 +59,8 @@ export function lodChunks(levels: readonly LodLevel[], lower: number[], upper: n
   };
   const open: C[] = chunksIn(inside(levels[coarsest].chunkShape), maxChunks).map((c) => ({ level: coarsest, c, size: sizeOf(coarsest, c) }));
   const done: C[] = [];
+  // Finer chunks taken (by another chunk's refinement too, where the levels do not nest).
+  const taken = new Set<string>();
   let total = open.length * per[coarsest];
   while (open.length > 0) {
     // The largest-looking first.
@@ -71,14 +77,17 @@ export function lodChunks(levels: readonly LodLevel[], lower: number[], upper: n
     const box = chunkBox(x.c, levels[x.level].chunkShape);
     // Inside the parent, and inside the store.
     const lo = box.lower.map((v, k) => Math.max(v, lower[k])), hi = box.upper.map((v, k) => Math.min(v, upper[k]) - 1e-9 * levels[finer].chunkShape[k]);
-    const kids = chunksIn(chunkRange(lo, hi, levels[finer].chunkShape), 4096);
+    const kids = chunksIn(chunkRange(lo, hi, levels[finer].chunkShape), 4096).filter((c) => !taken.has(keyOf(finer, c)));
     const more = kids.length * per[finer] - per[x.level];
     if (total + more > budget || open.length + done.length + kids.length > maxChunks) {
       done.push(x);
       continue;
     }
     total += more;
-    for (const c of kids) open.push({ level: finer, c, size: sizeOf(finer, c) });
+    for (const c of kids) {
+      taken.add(keyOf(finer, c));
+      open.push({ level: finer, c, size: sizeOf(finer, c) });
+    }
   }
   return done.map((x) => keyOf(x.level, x.c));
 }

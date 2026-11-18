@@ -15,6 +15,14 @@ at the bottom lists each computer's jobs, with **Convert a tractogram…** and
 
 The user guide's page is [docs/guide/local-jobs.md](../docs/guide/local-jobs.md).
 
+This folder is also the `ngplatform` Python package: `pip install ngplatform`
+gives the `ngplatform` command, which starts the runner with the app served
+beside it and opens the app in a window of its own, kept level with the
+deployed site (`ngplatform_local/`; the guide's page is
+[docs/guide/local-app.md](../docs/guide/local-app.md)). Started that way,
+the runner serves the app's files at `/app/` (no token: they are the public
+site's files) and reports its `runnerApi` in `/status`.
+
 ## Starting it
 
 The runner needs only Python's standard library (3.10 or later). Its jobs

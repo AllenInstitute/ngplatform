@@ -1,0 +1,1 @@
+{"zarr_format":3,"node_type":"group","attributes":{"zarr_vectors": {"kind": "object_index", "num_objects": 1, "num_present": 1, "sid_ndim": 3, "layout": "vlen_manifests_v2", "object_ids_sorted": true}, "zarr_conventions": [{"uuid": "66268a61-7833-4995-bbcb-233bb417dae5"}]}}

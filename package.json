@@ -18,7 +18,10 @@
     "lint": "node node_modules/eslint/bin/eslint.js .",
     "check:neuroglancer": "node scripts/neuroglancer_pin.mjs",
     "casts": "node scripts/neuroglancer_casts.mjs",
-    "e2e:golden": "vite-node plugins/anatomical-rendering/tests/golden.mts"
+    "e2e:golden": "vite-node plugins/anatomical-rendering/tests/golden.mts",
+    "e2e:gpu-timing": "vite-node plugins/anatomical-rendering/tests/gpu_timing.mts",
+    "build:local": "npm run build && node scripts/build_local.mjs",
+    "package:local": "npm run build:local && python3 -m build runner --wheel --outdir dist-wheel"
   },
   "dependencies": {
     "geotiff": "3.1.0-beta.0",

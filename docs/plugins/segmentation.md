@@ -125,6 +125,28 @@ where nothing is found or the size jumps. ++enter++ paints all the
 sections as one stroke, which one undo takes back. It works with
 Threshold too.
 
+**AI 3-D (MedSAM2)**, under **Method**, segments with
+[MedSAM2](https://github.com/bowang-lab/MedSAM2) (Apache-2.0), SAM 2 fine-tuned
+on CT, MRI and other medical images. Drag a box round an organ (or click it;
+++shift++ + click excludes) in a 2-D view: its section is segmented as with
+MobileSAM. Then **Track** (on the bar, or **Track sections each way** in the
+panel) follows it through the sections each way, as MedSAM2 follows an organ
+through a scan: each section is segmented from the memory of the ones before
+it, not from a box, until the object ends or the count (**Spread to
+sections**) is reached. ++enter++ paints it all as one stroke.
+
+- The model is four ONNX files (86 MB), downloaded on first use and kept
+  in this browser. They are not published yet: the app looks for them at
+  `models/medsam2/` beside itself (`npm run dev` serves the repository's
+  `models/` there), or at the address in the browser's localStorage key
+  `ngplatform.medsam2.url`. `tools/medsam2/` makes them.
+- Each section costs one encoding: about 0.7 s on the CPU with threads
+  (2 s on one), less with WebGPU. A track of 100 sections takes a minute or
+  two on the CPU.
+- What the model sees is a square of the section round the box (at least
+  **Context** voxels across, twice the box): a larger context shows more of
+  the anatomy, which MedSAM2 was trained on whole slices of.
+
 **Interpolate**: draw the active segment in two sections a few apart (in
 the same 2-D view), then press ++v++: each section between gets a shape
 between the two drawn. Check the result, as with any interpolation.

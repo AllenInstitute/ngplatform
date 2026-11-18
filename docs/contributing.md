@@ -105,7 +105,12 @@ To make one:
 
 1. On `main`, with the checks passing (tests, typecheck, lint, the e2e
    smoke test against a build), set the version in `package.json` (and
-   `package-lock.json`: `npm version 0.3.0 --no-git-tag-version`).
+   `package-lock.json`: `npm version 0.3.0 --no-git-tag-version`), and the
+   same in `runner/ngplatform_runner/__init__.py` (`__version__`: the Python
+   package's version; `tests/runner_api.test.ts` checks they agree). When the
+   app comes to need something new from the runner, raise `RUNNER_API` in
+   both `src/platform/runner_api.ts` and that file, so installed local apps
+   do not download a build their runner cannot serve.
 2. In `CHANGELOG.md`, turn *Unreleased* into `## 0.3.0 — <date>` and start
    a new, empty *Unreleased* above it.
 3. Commit (`Version 0.3.0`), tag (`git tag -a v0.3.0 -m "Version 0.3.0"`)

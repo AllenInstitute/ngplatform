@@ -11,7 +11,7 @@
  */
 import { captureName, evenBox, frameName, sweepFrames, trimBox, turntableFrames, unionBox, type Box, type CaptureFrame } from "../core/capture.js";
 import { GifEncoder } from "../core/gif.js";
-import { muxMp4, type Mp4Sample } from "../core/mp4.js";
+import { encodeMp4 as encodeFrames } from "../sdk/video.js";
 import { zipStore } from "../core/zip.js";
 import { checkbox, downloadBlob } from "../sdk/dom.js";
 import type { JobControl } from "../sdk/types.js";
@@ -406,50 +406,16 @@ async function recordWebm(kept: Kept[], frame: (k: Kept) => Promise<HTMLCanvasEl
   return new Blob(chunks, { type: "video/webm" });
 }
 
-/** H.264 through WebCodecs, in an MP4 written here (../core/mp4.ts). */
+/** H.264 through WebCodecs, in an MP4 written here (../sdk/video.ts). */
 async function encodeMp4(kept: Kept[], frame: (k: Kept) => Promise<HTMLCanvasElement>, fps: number, box: Box, control: JobControl, encoding: (i: number) => void): Promise<Blob> {
-  const { width, height } = box;
-  const area = width * height;
-  // Profile and level by size: High 4.0 to 1080p, 5.1 to 4K, 6.0 beyond.
-  const codecs = area <= 1920 * 1088 ? ["avc1.640028", "avc1.4d0028", "avc1.42e01f"] : area <= 4096 * 2304 ? ["avc1.640033", "avc1.4d0033"] : ["avc1.64003c"];
-  const Encoder = (globalThis as unknown as { VideoEncoder: typeof VideoEncoder }).VideoEncoder;
-  let config: VideoEncoderConfig | undefined;
-  for (const codec of codecs) {
-    const candidate: VideoEncoderConfig = { codec, width, height, framerate: fps, bitrate: Math.min(50e6, area * fps * 0.3), avc: { format: "avc" } } as VideoEncoderConfig;
-    if ((await Encoder.isConfigSupported(candidate)).supported) {
-      config = candidate;
-      break;
-    }
+  try {
+    return await encodeFrames(box.width, box.height, fps, kept.length, (i) => {
+      encoding(i);
+      return frame(kept[i]);
+    }, () => control.cancelled);
+  } catch (e) {
+    // This browser's encoder cannot take the size: the other formats can.
+    if (/cannot encode H\.264/.test((e as Error).message)) throw new Error(`${(e as Error).message.replace(/\.$/, "")}; choose WebM or GIF.`);
+    throw e;
   }
-  if (config === undefined) throw new Error(`This browser cannot encode H.264 at ${width} × ${height}; choose WebM or GIF.`);
-  const samples: Mp4Sample[] = [];
-  let avcC: Uint8Array | undefined;
-  let failure: Error | undefined;
-  const encoder = new Encoder({
-    output: (chunk, metadata) => {
-      const data = new Uint8Array(chunk.byteLength);
-      chunk.copyTo(data);
-      samples.push({ data, key: chunk.type === "key" });
-      const description = metadata?.decoderConfig?.description;
-      if (description !== undefined && avcC === undefined) avcC = new Uint8Array(description instanceof ArrayBuffer ? description : (description as ArrayBufferView).buffer.slice((description as ArrayBufferView).byteOffset, (description as ArrayBufferView).byteOffset + (description as ArrayBufferView).byteLength));
-    },
-    error: (e) => (failure = e as Error),
-  });
-  encoder.configure(config);
-  for (let i = 0; i < kept.length; ++i) {
-    if (control.cancelled || failure) break;
-    encoding(i);
-    const c = await frame(kept[i]);
-    const videoFrame = new VideoFrame(c, { timestamp: Math.round((i * 1e6) / fps), duration: Math.round(1e6 / fps) });
-    encoder.encode(videoFrame, { keyFrame: i % Math.max(1, Math.round(fps * 2)) === 0 });
-    videoFrame.close();
-    // Keep the encoder's queue short.
-    while (encoder.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 5));
-  }
-  await encoder.flush();
-  encoder.close();
-  if (failure) throw failure;
-  if (control.cancelled) throw new Error("cancelled");
-  if (avcC === undefined) throw new Error("The H.264 encoder gave no decoder configuration.");
-  return new Blob([muxMp4(samples, { width, height, fps, avcC }) as BlobPart], { type: "video/mp4" });
 }

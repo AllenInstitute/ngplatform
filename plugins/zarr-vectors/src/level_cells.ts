@@ -22,6 +22,7 @@
  */
 
 import type { ZarrVectorsGeometryDescription } from "./base.js";
+import { asFormat09 } from "./format010.js";
 import type { ElementType } from "./dtype.js";
 import {
   decodeFloat32,
@@ -102,7 +103,7 @@ export class LevelCells {
   async readJson(path: string): Promise<any | undefined> {
     const bytes = await this.access.read(`${this.levelPath}/${path}`, {});
     if (bytes === undefined) return undefined;
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return asFormat09(JSON.parse(new TextDecoder().decode(bytes)));
   }
 
   /** The reader of a level-relative array, or `undefined` if absent. */

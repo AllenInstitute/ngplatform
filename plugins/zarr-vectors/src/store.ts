@@ -36,6 +36,8 @@ import {
   KIND_CAPABILITIES,
   resolveGeometryKind,
 } from "./geometry_kind.js";
+import { volumeElement } from "./elements.js";
+import { asFormat09 } from "./format010.js";
 import { intraLinksPath } from "./links.js";
 import { mapConcurrent, warnOnce } from "./util.js";
 import type { ZarrArrayRead } from "./zarr_array.js";
@@ -50,7 +52,9 @@ import { joinBaseUrlAndPath } from "neuroglancer/unstable/kvstore/url.js";
 import { allSiPrefixes, supportedUnits } from "neuroglancer/unstable/util/si_units.js";
 
 /** Format versions this reader understands: 0.9.0 to 0.9.4. */
+/** The format versions this reader knows: 0.9.0 to 0.9.4, and 0.10.0 (0.9.4's data, its metadata moved: ./format010.ts). */
 const SUPPORTED = { major: 0, minor: 9, maxPatch: 4 };
+const NEWEST = { minor: 10, patch: 0 };
 
 /** Vertex attributes exposed without an `#attributes=` selection. */
 const DEFAULT_ATTRIBUTE_LIMIT = 8;
@@ -307,7 +311,7 @@ export async function readJson(
 ): Promise<any | undefined> {
   const bytes = await read(path, { signal });
   if (bytes === undefined) return undefined;
-  return JSON.parse(new TextDecoder().decode(bytes));
+  return asFormat09(JSON.parse(new TextDecoder().decode(bytes)));
 }
 
 /** An array's `zarr.json`, checked to be readable, or `undefined` if absent. */
@@ -374,12 +378,13 @@ function checkFormat(zv: any, warnings: string[]) {
     }
     if (
       major > SUPPORTED.major ||
-      minor > SUPPORTED.minor ||
-      patch > SUPPORTED.maxPatch
+      minor > NEWEST.minor ||
+      (minor === NEWEST.minor && patch > NEWEST.patch) ||
+      (minor === SUPPORTED.minor && patch > SUPPORTED.maxPatch)
     ) {
       warnings.push(
         `store zv_version ${raw} is newer than this viewer's ` +
-          `${SUPPORTED.major}.${SUPPORTED.minor}.${SUPPORTED.maxPatch} reader; ` +
+          `${SUPPORTED.major}.${NEWEST.minor}.${NEWEST.patch} reader; ` +
           "newer features may not render",
       );
     }
@@ -997,6 +1002,16 @@ export async function openZarrVectorsStore(
       : primitive === "triangles"
         ? 3
         : 2;
+  // A volume mesh (format 0.10): its records are solid cells, drawn as their boundary. One this reader does not
+  // know would be drawn as polygons, wrongly: refused.
+  const declaredElement = family?.attributes?.element;
+  const element = declaredElement === undefined || declaredElement === null ? undefined : volumeElement(declaredElement, linkWidth);
+  if (declaredElement !== undefined && declaredElement !== null && element === undefined) {
+    throw new Error(
+      `links/0 declares its records to be ${JSON.stringify(declaredElement)} cells of ${linkWidth} vertices, ` +
+        "which this viewer cannot draw (it knows tetra, pyramid, wedge and hexahedron)",
+    );
+  }
   const hasObjects = objectIndex !== undefined;
   if (hasObjects) {
     const required = zv.required_capabilities;
@@ -1094,6 +1109,7 @@ export async function openZarrVectorsStore(
       geometryKind: kind,
       linksConvention: convention,
       linkWidth,
+      ...(element !== undefined ? { element } : {}),
       skeletonLayout:
         convention === "implicit_sequential_with_branches"
           ? await skeletonLayout(access, root, levels[0].arrays, signal)

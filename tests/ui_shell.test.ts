@@ -106,14 +106,16 @@ describe("the top bar", () => {
     const share = byText("Share");
     expect(share.getAttribute("aria-haspopup")).toBe("menu");
     share.click();
-    expect(menuItems().map((b) => b.textContent)).toEqual([
+    expect(menuItems().map((b) => b.textContent?.trim())).toEqual([
       "Copy workspace link",
       "Save workspace as a file",
       "Copy scene as Neuroglancer link",
       "Copy scene as Neuroglancer JSON",
-      "Open in Neuroglancer ↗",
-      "Open in Neuroglancer with Zarr Vectors ↗",
+      "Open in Neuroglancer",
+      "Open in Neuroglancer with Zarr Vectors",
     ]);
+    // The two that open another tab marked so (an icon).
+    expect(menuItems().map((b) => b.querySelector("svg") !== null)).toEqual([false, false, false, false, true, true]);
     // The menu has the keyboard on its first item.
     expect(document.activeElement).toBe(menuItems()[0]);
     menuItems()[1].click();

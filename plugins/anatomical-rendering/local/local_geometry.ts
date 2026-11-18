@@ -55,7 +55,7 @@ export function geometryParams(s: Surfaces | undefined, look: Pick<LiveGeometryL
     f.set([m.roughness, m.specular, m.emission, m.opacity], G.MAT + 4 * li);
     f.set([...(l?.crop?.[0] ?? [-1e30, -1e30, -1e30]), ...(l?.crop?.[1] ?? [1e30, 1e30, 1e30])], G.CROP + 6 * li);
     const clips = (l?.clips ?? []).slice(0, GEO_CLIPS);
-    out[G.NCLIP + li] = clips.length;
+    out[G.NCLIP + li] = clips.length + (l?.cap ? 256 : 0);
     clips.forEach((c, i) => f.set(c.slice(0, 4), G.CLIPS + 4 * (GEO_CLIPS * li + i)));
   }
   return out;

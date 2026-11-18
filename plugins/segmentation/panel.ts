@@ -19,7 +19,8 @@ import { CowVolume } from "./cow_volume.js";
 import { iconButton } from "./icons.js";
 import { age, type KeptInfo, keptBytes } from "./keep.js";
 import { LABEL_MAX, type LabelType } from "./label_volume.js";
-import { MOBILE_SAM, MODEL_BYTES, ORT_VERSION, type Provider } from "./sam_model.js";
+import { MOBILE_SAM, MODEL_BYTES, ORT_VERSION, type Provider, type SamModel } from "./sam_model.js";
+import { MEDSAM2, type MedSam2Model, medsam2Base } from "./medsam2_model.js";
 import { niftiBytes } from "./save.js";
 import { groupOf, grouped } from "./segment_groups.js";
 import { segmentName } from "./segments.js";
@@ -614,6 +615,7 @@ export class Panel {
       e.spreadCount,
       e.canSpread(),
       [m.state, m.progress, m.kept, m.error, m.running, m.threads, m.encodeMs, m.decodeMs, m.provider],
+      [e.medsam2.state, e.medsam2.progress, e.medsam2.kept, e.medsam2.bytes, e.medsam2.error, e.medsam2.running, e.medsam2.threads, e.medsam2.encodeMs, e.medsam2.decodeMs, e.medsam2.provider],
     ];
   }
 
@@ -685,7 +687,8 @@ export class Panel {
           e.changed();
         }, "Method"), method.description ? { info: method.description } : undefined),
       );
-      if (method.id === MOBILE_SAM.id) options.append(this.model());
+      if (method.id === MOBILE_SAM.id) options.append(this.model(e.sam, { name: MOBILE_SAM.name, bytes: MODEL_BYTES, about: `${MOBILE_SAM.name} (${MOBILE_SAM.licence}): an image encoder and a prompt decoder from Hugging Face (${MOBILE_SAM.files}), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr. Click to include, Shift+click to exclude, or drag a box: each click refines the mask in its section; the first in a region computes the image's embedding, later ones are quick.` }));
+      else if (method.id === MEDSAM2.id) options.append(this.model(e.medsam2, { name: MEDSAM2.name, bytes: e.medsam2.bytes, about: `${MEDSAM2.name} (${MEDSAM2.licence}, ${MEDSAM2.home}): SAM 2.1 tiny fine-tuned on medical images, as four ONNX graphs (tools/medsam2/), from ${medsam2Base()} (localStorage ngplatform.medsam2.url sets another address), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr. Drag a box (or click; Shift+click excludes) in a 2-D view to segment its section; then Spread tracks it section by section, each step remembering the sections before, until the object ends or the count is reached. Each section costs one encoding (about half a second on the CPU, less on WebGPU).` }));
       else if (method.id === "threshold") {
         options.append(
           field("Tolerance", numberInput(e.tolerance, (v) => {
@@ -727,7 +730,7 @@ export class Panel {
           e.changed();
         }, { min: 1, max: 200, step: 1 }), { info: "Each way from the mask's section: each section's prompt is the box round the mask in the one before. Enter paints them all as one stroke." }),
       );
-      if (e.canSpread()) options.append(el("div", { class: "row sg-wide" }, el("span", { class: "spacer" }), button(`Spread to ${e.spreadCount} sections each way`, () => e.spread(), "Propose the mask in the next sections too (the method chosen, a box prompt in each)")));
+      if (e.canSpread()) options.append(el("div", { class: "row sg-wide" }, el("span", { class: "spacer" }), button(e.quickMethod().propagate ? `Track ${e.spreadCount} sections each way` : `Spread to ${e.spreadCount} sections each way`, () => e.spread(), e.quickMethod().propagate ? "Track the mask through the next sections (the model remembers the sections before each), until the object ends" : "Propose the mask in the next sections too (the method chosen, a box prompt in each)")));
     } else if (e.tool === "move") {
       return el("p", { class: "hint" }, "Pick a tool to draw.");
     }
@@ -735,9 +738,8 @@ export class Panel {
   }
 
   /** The model: kept in this browser or not (a progress bar while it comes), what it runs on, its last timings; its size and licence behind an info. */
-  private model(): HTMLElement {
+  private model(m: SamModel | MedSam2Model, meta: { name: string; bytes: number; about: string }): HTMLElement {
     const e = this.editor;
-    const m = e.sam;
     const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
     const box = el(
       "div",
@@ -745,11 +747,8 @@ export class Panel {
       el(
         "div",
         { class: "row" },
-        el("span", {}, `${MOBILE_SAM.name}, ${mb(MODEL_BYTES)}`),
-        info(
-          `${MOBILE_SAM.name} (${MOBILE_SAM.licence}): an image encoder and a prompt decoder from Hugging Face (${MOBILE_SAM.files}), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr. Click to include, Shift+click to exclude, or drag a box: each click refines the mask in its section; the first in a region computes the image's embedding, later ones are quick.`,
-          `About ${MOBILE_SAM.name}`,
-        ),
+        el("span", {}, `${meta.name}, ${mb(meta.bytes)}`),
+        info(meta.about, `About ${meta.name}`),
       ),
     );
     if (m.state === "loading" && m.progress) {
@@ -764,7 +763,7 @@ export class Panel {
         { class: "row" },
         el("span", { class: "faint" }, kept + running),
         el("span", { class: "spacer" }),
-        m.kept === 0 && m.state !== "loading" ? button("Download now", () => void m.load().catch(() => {}), `Download ${MOBILE_SAM.name} (${mb(MODEL_BYTES)}) now`) : null,
+        m.kept === 0 && m.state !== "loading" ? button("Download now", () => void m.load().catch(() => {}), `Download ${meta.name} (${mb(meta.bytes)}) now`) : null,
         m.kept > 0 && m.state !== "loading" ? button("Forget", () => void m.forget(), "Delete the model's files from this browser") : null,
       ),
     );

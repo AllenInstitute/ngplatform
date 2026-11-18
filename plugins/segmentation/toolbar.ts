@@ -134,7 +134,7 @@ export class Toolbar {
       const accept = iconButton("check", "Accept: paint the mask with the active segment (Enter)", () => e.acceptPreview());
       accept.classList.add("sg-accept");
       const spread = e.canSpread()
-        ? el("button", { type: "button", class: "sg-text", title: `Spread the mask to ${e.spreadCount} sections each way (each section's prompt is the box round the mask before it); Enter paints them as one stroke`, onclick: () => e.spread() }, `Spread ±${e.spreadCount}`)
+        ? el("button", { type: "button", class: "sg-text", title: e.quickMethod().propagate ? `Track the mask through up to ${e.spreadCount} sections each way, until the object ends; Enter paints them as one stroke` : `Spread the mask to ${e.spreadCount} sections each way (each section's prompt is the box round the mask before it); Enter paints them as one stroke`, onclick: () => e.spread() }, `${e.quickMethod().propagate ? "Track" : "Spread"} ±${e.spreadCount}`)
         : null;
       option = group(
         el("span", { class: "sg-value", title: "The voxels quick select proposes" }, `${e.pending.voxels.toLocaleString()} voxels`),

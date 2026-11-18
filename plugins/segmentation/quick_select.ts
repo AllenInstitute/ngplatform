@@ -61,6 +61,12 @@ export interface QuickSelectMethod {
   /** Clicks add to the prompt in the section (wanted, or not with Shift or Alt) rather than replacing it; the request's `prompts` holds them all. */
   refines?: boolean;
   run(request: QuickSelectRequest, signal: AbortSignal): Promise<Mask>;
+  /**
+   * For a method that tracks through the volume (a video model): the masks of up to `count` sections each way
+   * from the request's section, from its prompts (the section's own mask not among them). Spread uses it in
+   * place of prompting each section with a box.
+   */
+  propagate?(request: Omit<QuickSelectRequest, "image">, count: number, signal: AbortSignal): Promise<Mask[]>;
 }
 
 export interface QuickSelectService {

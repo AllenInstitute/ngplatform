@@ -515,6 +515,14 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 
 **Groups:** points and lines grouped by the layer's Vertex colour keep every group as an object; the frame's look hides and colours them. Choosing groups or their colours reads and builds nothing (ABC atlas: 34 classes, one shown, block unchanged).
 
+**2026-11-18, the next steps:**
+
+- **Capped cuts.** A ray that meets the inside of a solid (a back face, as meshes are wound outward by `orientOutward`) having entered its layer's kept part through a cut or a crop face meets the cut face there instead: `geoEnter` finds where the ray enters the kept part (convex: the cuts and the crop box), `geoLeaves` whether the hit is from inside. The cap carries the face in `uv.x` (−1 − face) for `geoSurface`'s normal. The same in GLSL and WGSL; the flag is bit 8 of the layer's cut count. Shadow rays ignore caps (a cap is lit through the cut, shadowed from behind by the solid's own surface, which is right). Not handled: a solid inside another (a nucleus in a cell), where the inner one's front face is met first, and overlapping spheres. `e2e:geometry` checks caps against a CPU reference on both tracers (9,212 of 9,216 rays; the rest at the faceted sphere's rim).
+- **Detail by distance** for Zarr Vectors mesh stores, and for levels that do not nest (a coarse chunk replaced by every finer chunk it overlaps, each once). Not for points and lines.
+- **Movies here.** `movie_camera.ts` ports the render computer's keyframe interpolation (checked against `frames_for`: relative difference 8e-7); each frame is a still; WebCodecs H.264 into the MP4 writer, now `@ngplatform/sdk/video`.
+- **Golden comparison, shading too.** Rank correlation of the two pictures' brightness over each object. The depth comparison had unprojected the column-major matrix as row-major; fixed, and it now allows one step of the computer's float16 depth.
+- **Three old test failures** were tests behind deliberate changes (the scale navigator on by default; the Share menu's external mark now an icon), updated.
+
 ## Risks
 
 | Risk | Effect | Answer |
@@ -537,9 +545,8 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 
 ## Open questions
 
-- **Cut faces:** should they be capped, so a cut cell shows a solid face,
-  or left open, so it shows a shell? Open is simpler and is the first
-  version.
+- **Cut faces:** answered 2026-11-18. Capped by default (Close cut
+  objects), open as an option. See the progress notes.
 - **Point size:** is the default 5 µm, or a size taken from a store
   attribute (cell volume, say) where one exists?
 - **Three-mesh-bvh** (MIT) was considered for the build and traversal. It

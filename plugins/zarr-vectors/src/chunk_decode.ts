@@ -43,6 +43,7 @@ import type {
 import { decodeFragments } from "./fragment_index.js";
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import type { LevelCells } from "./level_cells.js";
+import { boundaryTriangles } from "./elements.js";
 import { intraLinksPath } from "./links.js";
 import { warnOnce } from "./util.js";
 
@@ -55,6 +56,12 @@ export interface DecodedChunk {
   edges: Uint32Array;
   /** Vertex index triples (meshes). */
   faces: Uint32Array;
+  /**
+   * A volume mesh's cells within the chunk (`description.element`, its width a cell), as stored; `faces` are then
+   * their boundary within the chunk (the whole surface when the store is one chunk; the pipeline completes it
+   * with the cells that cross into neighbours).
+   */
+  cells?: Uint32Array;
   /** Unit tangent per vertex, for kinds that have one (not with `joinsPrevious`). */
   tangents: Float32Array | undefined;
   /**
@@ -451,6 +458,7 @@ export async function decodeChunk(
 
   let edges: Uint32Array = new Uint32Array(0);
   let faces: Uint32Array = new Uint32Array(0);
+  let volumeCells: Uint32Array | undefined;
   const joinsPrevious =
     options.walkFlags &&
     primitive === "lines" &&
@@ -460,6 +468,9 @@ export async function decodeChunk(
       : undefined;
   if (joinsPrevious !== undefined) {
     // Edges and tangents follow from the flags.
+  } else if (primitive === "triangles" && description.element !== undefined) {
+    volumeCells = records;
+    faces = Uint32Array.from(boundaryTriangles(records, description.element));
   } else if (primitive === "triangles") {
     faces = triangulate(records, linkWidth);
   } else if (primitive === "lines") {
@@ -571,6 +582,7 @@ export async function decodeChunk(
     fragments,
     edges,
     faces,
+    ...(volumeCells !== undefined ? { cells: volumeCells } : {}),
     tangents,
     joinsPrevious,
     attributes: decodedAttributes,

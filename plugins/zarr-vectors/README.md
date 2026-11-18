@@ -3,9 +3,10 @@
 ![Neurons from SWC files as a virtual Zarr Vectors store, in 2-D and 3-D](../../docs/images/plugins/zarr-vectors.png)
 
 A Neuroglancer plugin that reads [Zarr Vectors](https://github.com/AllenInstitute/zarr_vectors)
-stores (format 0.9.0 to 0.9.4, as written by zarr-vectors-py and
+stores (format 0.9.0 to 0.9.4 and 0.10.0, as written by zarr-vectors-py and
 zarr-vectors-tools) into a segmentation layer: point clouds, lines,
-streamlines, polylines, skeletons, graphs and meshes.
+streamlines, polylines, skeletons, graphs and meshes, volume meshes
+(tetrahedra and other solid cells) drawn as their surface.
 
 Format 0.9.4's dense object index (`dense_manifests_v1`: `manifest_spans` and
 `manifest_blocks`, `int64` or `int32`) is read alongside the vlen layouts
@@ -241,6 +242,26 @@ whose rows index another fragment, or whose count does not match the
 fragments, sends that chunk back to the whole-cell read with a warning.
 
 ## Format support
+
+**Format 0.10.0** moved the metadata onto the Zarr Vectors convention:
+every node's properties sit under its `zarr_vectors` attribute, told apart
+by `kind`, and the root's `multiscales` is the multiscales convention's
+`layout`. Its data is byte for byte that of 0.9.4. `format010.ts` puts each
+`zarr.json` of a 0.10 store back in 0.9's shape as it is parsed, so the rest
+of the reader knows one layout.
+
+**Volume meshes** (0.10, zarr-vectors-py's `element` on `links/0`): each
+record is one solid cell (`tetra`, `pyramid`, `wedge` or `hexahedron`, in
+VTK vertex order), drawn as the cells' boundary, the faces only one cell
+has, wound outward (`elements.ts`). A chunk's surface comes from its own
+cells and from every cell crossing into it (`linksTouching`). Each face is
+drawn by the lowest chunk among its corners, which holds every cell that
+can share it, so the surface is drawn once, with no faces inside the solid.
+The cells crossing chunks are found by listing `links/0`, as for any
+mesh's faces spanning chunks: on a server that cannot list, each chunk
+shows only its own cells' surface. Only the surface is drawn: values on
+the cells (link attributes) are not shown yet. An unknown `element` is
+refused, as it would otherwise be drawn as polygons.
 
 Read through each array's own `zarr.json` (`zarr_array.ts`):
 

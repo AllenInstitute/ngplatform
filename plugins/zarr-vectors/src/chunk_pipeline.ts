@@ -46,7 +46,8 @@ import type { DrawChunkData, PackObjectValues } from "./dense_pack.js";
 import { packForDrawing } from "./dense_pack.js";
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import { LevelCells } from "./level_cells.js";
-import { CrossChunkLinks } from "./links.js";
+import { boundaryTriangles, ELEMENT_WIDTH } from "./elements.js";
+import { type CrossChunkLinkEndpoint, CrossChunkLinks } from "./links.js";
 import {
   BLOCKS_PATH,
   readAllDenseManifests,
@@ -451,10 +452,12 @@ export class LevelPipeline {
     // In "linked" skeletons a cross-chunk link replaces its child's implied
     // parent, so the child's chunk needs the links it does not own.
     const linked = description.skeletonLayout === "linked";
+    // A volume mesh's surface here needs every cell with a corner here, wherever the cell is stored.
+    const element = description.element;
     const linksPromise =
       this.links === undefined || (options.bridges === false && !linked)
         ? Promise.resolve([])
-        : linked
+        : linked || element !== undefined
           ? this.links.linksTouching(chunk)
           : this.links.linksOwnedBy(chunk);
     linksPromise.catch(() => {});
@@ -474,7 +477,7 @@ export class LevelPipeline {
     const { mode, segmentIds: table } = description.hasObjects
       ? await this.idMode()
       : { mode: "direct" as const, segmentIds: undefined };
-    const [decoded, links] = await Promise.all([
+    const [decodedHere, links] = await Promise.all([
       decodeChunk(this.cells, description, chunkKey, signal, {
         relinkedChildren,
         // A mesh's faces draw its outline on cross-sections.
@@ -487,7 +490,8 @@ export class LevelPipeline {
       }),
       linksPromise,
     ]);
-    if (decoded === undefined) return undefined;
+    if (decodedHere === undefined) return undefined;
+    let decoded: DecodedChunk = decodedHere;
 
     let { segmentIds } = decoded;
     if (segmentIds === undefined) {
@@ -538,35 +542,53 @@ export class LevelPipeline {
     // Faces with corners in other chunks: those corners as ghosts (one per
     // vertex), placed where the neighbour has them, carrying a local
     // corner's segment and values; ghosts are written as -1 - index.
-    const crossFaces: number[] = [];
+    let crossFaces: number[] = [];
     const cornerGhosts = new Map<string, number>();
-    for (const { endpoints } of links) {
-      if (endpoints.length !== 3) continue;
-      const local = endpoints.find((e) => isLocal(e.chunkCoords));
-      if (local === undefined || local.vertexIndex >= decoded.numVertices) {
-        continue;
-      }
-      for (const e of endpoints) {
-        if (isLocal(e.chunkCoords)) {
-          crossFaces.push(e.vertexIndex);
-          continue;
-        }
+    // A record's corners: local vertices as they are, the others as ghosts (one per vertex, -1 - index), each
+    // carrying the segment and values of a local corner (`host`).
+    const cornersOf = (endpoints: readonly CrossChunkLinkEndpoint[], host: number) =>
+      endpoints.map((e) => {
+        if (isLocal(e.chunkCoords)) return e.vertexIndex;
         const chunkKey = e.chunkCoords.join(".");
         const key = `${chunkKey}:${e.vertexIndex}`;
         let g = cornerGhosts.get(key);
         if (g === undefined) {
           g = ghosts.length;
           cornerGhosts.set(key, g);
-          ghosts.push({
-            host: local.vertexIndex,
-            chunkKey,
-            vertex: e.vertexIndex,
-            hostIsPredecessor: true,
-            corner: true,
-          });
+          ghosts.push({ host, chunkKey, vertex: e.vertexIndex, hostIsPredecessor: true, corner: true });
         }
-        crossFaces.push(-1 - g);
+        return -1 - g;
+      });
+    // Each record (a face or a cell) with a local corner, as its corners.
+    const crossRecords = (width: number) => {
+      const out: number[] = [];
+      for (const { endpoints } of links) {
+        if (endpoints.length !== width) continue;
+        const local = endpoints.find((e) => isLocal(e.chunkCoords));
+        if (local === undefined || local.vertexIndex >= decoded.numVertices) continue;
+        out.push(...cornersOf(endpoints, local.vertexIndex));
       }
+      return out;
+    };
+    if (element === undefined) {
+      crossFaces = crossRecords(3);
+    } else {
+      // A volume mesh: the boundary of the chunk's cells and of those reaching into it, each face drawn by the
+      // lowest chunk among its corners, which holds every cell that shares it (two cells share a face only
+      // where their corners are), so it is drawn once, and only where no cell is on its other side.
+      const across = crossRecords(ELEMENT_WIDTH[element]);
+      const cells = decoded.cells === undefined ? across : [...decoded.cells, ...across];
+      const ghostAt = (c: number) => ghosts[-1 - c];
+      const chunkOf = (c: number): readonly number[] => (c >= 0 ? chunk : ghostAt(c).chunkKey.split(".").map(Number));
+      const keyOf = (c: number) => (c >= 0 ? `${chunkKey}:${c}` : `${ghostAt(c).chunkKey}:${ghostAt(c).vertex}`);
+      const lower = (a: readonly number[], b: readonly number[]) => {
+        for (let d = 0; d < a.length; ++d) if (a[d] !== b[d]) return a[d] < b[d];
+        return false;
+      };
+      // This chunk is the lowest among the face's corners: one of them is here, none lower.
+      const drawnHere = (corners: readonly number[]) => corners.some((c) => c >= 0) && !corners.some((c) => lower(chunkOf(c), chunk));
+      crossFaces = boundaryTriangles(cells, element, keyOf, drawnHere);
+      decoded = { ...decoded, faces: new Uint32Array(0) };
     }
     for (const { endpoints } of links) {
       if (endpoints.length !== 2) continue;

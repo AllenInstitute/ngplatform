@@ -43,6 +43,7 @@ nav:
       - Loading and exporting data: guide/data.md
       - Signing in: guide/signing-in.md
       - Jobs on this computer: guide/local-jobs.md
+      - ngplatform on your computer: guide/local-app.md
       - Coming from Freeview: guide/from-freeview.md
       - Coming from Neuroglancer: guide/from-neuroglancer.md
   - Plugins:

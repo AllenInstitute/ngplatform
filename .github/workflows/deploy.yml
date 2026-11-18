@@ -107,6 +107,23 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "Deploy ${REF} (${sha}, version ${VERSION}) at the site root"
           git push origin gh-pages
+      # The local app (`pip install ngplatform`, then `ngplatform`): a wheel carrying this very build, so it
+      # starts level with the site it was deployed with; installed copies then follow the site by its
+      # build.json and files.json (runner/ngplatform_local/app_source.py).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Local app wheel
+        working-directory: ngplatform
+        run: |
+          node scripts/build_local.mjs
+          python -m pip install --quiet build
+          python -m build runner --wheel --outdir dist-wheel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ngplatform-wheel-${{ steps.pin.outputs.version }}-${{ github.run_number }}
+          path: ngplatform/dist-wheel/*.whl
+          retention-days: 90
       # The build's source maps, to read a stack saved from Activity against.
       - uses: actions/upload-artifact@v4
         with:

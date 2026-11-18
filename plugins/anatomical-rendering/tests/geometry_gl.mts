@@ -14,7 +14,7 @@
 import { createRequire } from "node:module";
 import { geoData, geoLayout, geometryGlsl } from "../geometry/live_geometry.ts";
 import { CONE, SPHERE, TRIANGLE } from "../geometry/lbvh.ts";
-import { NO_NORMAL, type Primitives } from "../geometry/primitives.ts";
+import { NO_NORMAL, orientOutward, type Primitives } from "../geometry/primitives.ts";
 import { buildBlock, packSurfaces, surfaceHit } from "../geometry/surfaces.ts";
 import { geometryBuffer, geometryParams } from "../local/local_geometry.ts";
 
@@ -80,7 +80,10 @@ function indexed(from: number, to: number): Primitives {
       index.push(at, at, at);
     }
   }
-  return { vertices: new Float32Array(v), index: new Uint32Array(index), objects: new Int32Array(objects.slice(from, to)), kinds: new Int32Array(kinds.slice(from, to)) };
+  const out = { vertices: new Float32Array(v), index: new Uint32Array(index), objects: new Int32Array(objects.slice(from, to)), kinds: new Int32Array(kinds.slice(from, to)) };
+  // Wound outward, as meshes are (the sphere of triangles; the others' volumes are none).
+  orientOutward(out.vertices, out.index, out.objects, to - from);
+  return out;
 }
 const half = n >> 1;
 const s = packSurfaces([{ block: buildBlock(indexed(0, half), 4), objectBase: 0 }, { block: buildBlock(indexed(half, n), 4), objectBase: 0 }], 4);
@@ -90,6 +93,11 @@ const colours = new Float32Array([1, 0, 0, 1, 0, 1, 0, 2, 0, 0, 1, 1, 1, 1, 1, 0
 // Layer 1 cut: keep x <= 0.55 (the plane -x + 0.55 >= 0), in world coordinates.
 // World is geometry scaled by 2 (geoFromWorld halves), so the cut is at world x 1.1.
 const clip = [-1, 0, 0, 1.1];
+// Capped cuts: layers 0 and 1 cut to world z >= 0.1 (the spheres' fronts away), closed; the cones (which overlap
+// the sphere of triangles: a solid inside another is not closed) hidden.
+const capClip = [0, 0, 1, -0.1];
+const capColours = new Float32Array(colours);
+capColours[4 * 2 + 3] = 0;
 const W = 256;
 
 // ----------------------------------------------------------------- the CPU's answer
@@ -119,6 +127,50 @@ function expected(px: number, py: number, layers = [1, 2]): { t: number; prim: n
   return hit < 0 ? { t: -1, prim: -1 } : { t: best, prim: hit };
 }
 
+/** With capped cuts: the cut's t where the ray crosses it inside a solid (the sphere of triangles, a sphere), else the nearest kept hit. */
+function expectedCap(px: number, py: number): number {
+  const { o, d } = ray(px, py);
+  const te = (0.1 - o[2]) / d[2];
+  const p = o.map((v, a) => v + d[a] * te);
+  // World: geometry doubled. The sphere of triangles (object 0) and the shown spheres (object 1).
+  let inside = Math.hypot(p[0] + 0.8, p[1], p[2]) < 1.2 * 0.995;
+  for (let i = 0; i < s.n && !inside; ++i) {
+    if (s.prims[4 * i + 3] >>> 30 !== SPHERE || objectOf(i) !== 1) continue;
+    const c = s.vertices.subarray(4 * s.prims[4 * i], 4 * s.prims[4 * i] + 4);
+    inside = Math.hypot(p[0] - 2 * c[0], p[1] - 2 * c[1], p[2] - 2 * c[2]) < 2 * c[3];
+  }
+  if (inside) return te;
+  const og = o.map((v) => v / 2) as [number, number, number], dg = d.map((v) => v / 2) as [number, number, number];
+  let best = 1e30;
+  for (let i = 0; i < s.n; ++i) {
+    const t = surfaceHit(s, i, og, dg);
+    if (!(t > 0 && t < best)) continue;
+    if (capColours[4 * objectOf(i) + 3] < 0.5) continue;
+    if (o[2] + d[2] * t < 0.1) continue;
+    best = t;
+  }
+  return best < 1e30 ? best : -1;
+}
+function reportCap(name: string, out: number[]): void {
+  let agree = 0, caps = 0;
+  for (let py = 0; py < SIZE; ++py)
+    for (let px = 0; px < SIZE; ++px) {
+      const g = out[4 * (py * SIZE + px)];
+      const want = expectedCap(px, py);
+      const { o, d } = ray(px, py);
+      if (want > 0 && Math.abs(want - (0.1 - o[2]) / d[2]) < 1e-9) caps++;
+      if ((g > 0) === want > 0 && (want < 0 || Math.abs(g - want) < 1e-3 * Math.max(1, want))) agree++;
+    }
+  const total = SIZE * SIZE;
+  for (const [ok, what] of [
+    [caps > total * 0.05, `the cut crosses solids at ${caps} of ${total} rays`],
+    [agree / total > 0.99, `capped cuts as the CPU: ${agree} of ${total}`],
+  ] as [boolean, string][]) {
+    console.log(`${ok ? "ok  " : "FAIL"} ${name}: ${what}`);
+    if (!ok) failed++;
+  }
+}
+
 // ----------------------------------------------------------------- the GPU's
 const fs = `#version 300 es
 precision highp float;
@@ -139,17 +191,19 @@ void main() {
 }`;
 const layout = geoLayout(s, W);
 const data = Array.from(geoData(s, W));
+const capData = data.slice();
 // The objects' colours and layers, as float bits.
 data.splice(4 * layout.objAt, colours.length, ...new Uint32Array(colours.buffer));
+capData.splice(4 * layout.objAt, capColours.length, ...new Uint32Array(capColours.buffer));
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROME ?? (require("node:fs").existsSync("/usr/bin/google-chrome") ? "/usr/bin/google-chrome" : undefined),
   args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--no-sandbox"],
 });
 const page = await browser.newPage();
-interface Args { fs: string; data: number[]; rows: number; primAt: number; nodeAt: number; objAt: number; root: number; n: number; W: number; SIZE: number; clip: number[] }
-const result: { error?: string | null; out?: number[]; seen?: number[]; solid?: number[] } = await page.evaluate(
-  ({ fs, data, rows, primAt, nodeAt, objAt, root, n, W, SIZE, clip }: Args) => {
+interface Args { fs: string; data: number[]; capData: number[]; rows: number; primAt: number; nodeAt: number; objAt: number; root: number; n: number; W: number; SIZE: number; clip: number[]; capClip: number[] }
+const result: { error?: string | null; out?: number[]; seen?: number[]; solid?: number[]; capped?: number[] } = await page.evaluate(
+  ({ fs, data, capData, rows, primAt, nodeAt, objAt, root, n, W, SIZE, clip, capClip }: Args) => {
     const gl = document.createElement("canvas").getContext("webgl2")!;
     if (!gl.getExtension("EXT_color_buffer_float")) return { error: "no float targets" };
     const sh = (type: number, src: string) => {
@@ -208,9 +262,19 @@ const result: { error?: string | null; out?: number[]; seen?: number[]; solid?: 
       return Array.from(out);
     };
     // All opaque; then layer 0 clear and layer 1 half opaque.
-    return { out: render([1, 1, 1, 1]), seen: render([0, 0.5, 1, 1]), solid: render([0, 0.5, 1, 1], true) };
+    const out = render([1, 1, 1, 1]), seen = render([0, 0.5, 1, 1]), solid = render([0, 0.5, 1, 1], true);
+    // Capped cuts on layers 0 and 1.
+    tex(0, gl.RGBA32UI, gl.RGBA_INTEGER, gl.UNSIGNED_INT, rows, new Uint32Array(capData));
+    clips.fill(0);
+    clips.set(capClip, 0);
+    clips.set(capClip, 4 * 6);
+    gl.uniform4fv(u("uGeoClips"), clips);
+    gl.uniform1iv(u("uGeoNClip"), [257, 257, 0, 0]);
+    gl.activeTexture(gl.TEXTURE0 + 7);
+    const capped = render([1, 1, 1, 1]);
+    return { out, seen, solid, capped };
   },
-  { fs, data, rows: layout.rows, primAt: layout.primAt, nodeAt: layout.nodeAt, objAt: layout.objAt, root: s.root, n: s.n, W, SIZE, clip },
+  { fs, data, capData, rows: layout.rows, primAt: layout.primAt, nodeAt: layout.nodeAt, objAt: layout.objAt, root: s.root, n: s.n, W, SIZE, clip, capClip },
 );
 await browser.close();
 if (result.error !== undefined || result.out === undefined) {
@@ -283,6 +347,7 @@ function report(name: string, out: number[], seen: number[], solid: number[]): v
   }
 }
 report("WebGL", result.out!, result.seen!, result.solid!);
+reportCap("WebGL", result.capped!);
 
 // ----------------------------------------------------------------- the WebGPU tracer's WGSL
 const wgsl = require("node:fs").readFileSync(new URL("../local/geometry.wgsl", import.meta.url), "utf8") as string;
@@ -300,14 +365,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let a = geoAny(vec3f(x, y, -6.0), d, 0.0, 1e30);
   res[gid.y * ${SIZE}u + gid.x] = vec4f(h.t, f32(h.prim), select(0.0, 1.0, a), 0.0);
 }`;
-const look = (opacity: number[]) => ({
-  layers: opacity.map((a, i) => ({ clips: i === 1 ? [clip] : [], crop: null, material: { roughness: 0.5, specular: 0.1, emission: 0, opacity: a } })),
+const look = (opacity: number[], cap = false) => ({
+  layers: opacity.map((a, i) => ({ clips: cap ? (i < 2 ? [capClip] : []) : i === 1 ? [clip] : [], crop: null, cap, material: { roughness: 0.5, specular: 0.1, emission: 0, opacity: a } })),
 });
 // World to geometry: halve. The numbers at the buffer's start, as the tracer writes them each view.
 const half2 = [0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1];
-const buffers = [[1, 1, 1, 1], [0, 0.5, 1, 1], [0, 0.5, 1, 1]].map((o) => {
-  const b = geometryBuffer(s, colours);
-  b.set(geometryParams(s, look(o), half2, 1e-6));
+const buffers = [[1, 1, 1, 1], [0, 0.5, 1, 1], [0, 0.5, 1, 1], [1, 1, 1, 1]].map((o, k) => {
+  const b = geometryBuffer(s, k === 3 ? capColours : colours);
+  b.set(geometryParams(s, look(o, k === 3), half2, 1e-6));
   return Array.from(b);
 });
 const gpuBrowser = await chromium.launch({
@@ -321,7 +386,7 @@ require("node:fs").writeFileSync(blank, "<!doctype html><title>webgpu</title>");
 await gpuPage.goto(`file://${blank}`);
 interface GpuArgs { cs: string; buffers: number[][]; SIZE: number }
 // The third: met as solid.
-const solidFlags = [0, 0, 1];
+const solidFlags = [0, 0, 1, 0];
 const gpu: { error?: string; outs?: number[][] } = await gpuPage.evaluate(async ({ cs, buffers, SIZE, solidFlags }: GpuArgs & { solidFlags: number[] }) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nav = navigator as any;
@@ -372,4 +437,5 @@ if (gpu.error !== undefined || gpu.outs === undefined) {
   process.exit(1);
 }
 report("WebGPU", gpu.outs[0], gpu.outs[1], gpu.outs[2]);
+reportCap("WebGPU", gpu.outs[3]);
 process.exit(failed ? 1 : 0);
