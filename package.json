@@ -17,7 +17,8 @@
     "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors",
     "lint": "node node_modules/eslint/bin/eslint.js .",
     "check:neuroglancer": "node scripts/neuroglancer_pin.mjs",
-    "casts": "node scripts/neuroglancer_casts.mjs"
+    "casts": "node scripts/neuroglancer_casts.mjs",
+    "e2e:golden": "vite-node plugins/anatomical-rendering/tests/golden.mts"
   },
   "dependencies": {
     "geotiff": "3.1.0-beta.0",

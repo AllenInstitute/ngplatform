@@ -18,7 +18,7 @@ function chunk(vertices: number[][], slots: number[], ids: number[], segments: [
 }
 
 const read = (kind: GeometryRead["kind"], chunks: BuiltChunk[], extra: Partial<GeometryRead> = {}): GeometryRead => ({
-  kind, chunks, mm: [1, 1, 1], level: 0, count: chunks.reduce((n, c) => n + (kind === "lines" ? c.segmentCount : c.vertexCount), 0), lower: [0, 0, 0], upper: [8, 8, 8], perVertex: false, radii: false, levels: [{ vertexCount: 4 }], ...extra,
+  kind, chunks, mm: [1, 1, 1], level: 0, count: chunks.reduce((n, c) => n + (kind === "lines" ? c.segmentCount : c.vertexCount), 0), lower: [0, 0, 0], upper: [8, 8, 8], perVertex: false, radii: false, levels: [{ vertexCount: 4, chunkShape: [8, 8, 8] }], bounds: { lower: [0, 0, 0], upper: [8, 8, 8] }, ...extra,
 });
 
 describe("points and lines to trace", () => {
@@ -34,12 +34,14 @@ describe("points and lines to trace", () => {
     expect(Array.from(g.colours!)).toEqual([1, 0, 0, 0, 0, 1]);
   });
 
-  it("leaves out the groups not shown, and colours the rest as the layer does", () => {
+  it("keeps every group as an object, shown or not, so the look of a frame chooses and colours them", () => {
     const c = chunk([[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0]], [0, 1, 2], [3, 5, 3]);
     const look = { by: "group", group: { tier: "class", attribute: "class_index", colours: "palette", shown: [3] } } as never;
     const g = layerGeometry(read("points", [c], { perVertex: true }), ID, look, 1, () => undefined);
-    expect(g.prims.objects.length).toBe(2);
-    expect(g.objectCount).toBe(1);
+    expect(g.prims.objects.length).toBe(3);
+    expect(g.objectCount).toBe(2);
+    expect(g.groups).toEqual([{ group: 3 }, { group: 5 }]);
+    expect(Array.from(g.prims.objects)).toEqual([0, 1, 0]);
   });
 
   it("makes lines tubes between their vertices: a sixth of a segment in radius, or the store's radii", () => {

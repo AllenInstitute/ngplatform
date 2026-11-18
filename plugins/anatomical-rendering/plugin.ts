@@ -21,8 +21,10 @@ import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX
 import { placementMm } from "../luxar/view_math.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { allocateLevels, GEOMETRY_BUDGET, type GeometryRead, readGeometry } from "./points.js";
+import { allocateLevels, GEOMETRY_BUDGET, type GeometryRead, groupColours, readGeometry } from "./points.js";
 import { layerGeometry } from "./geometry/from_read.js";
+import { lodChunks } from "./geometry/lod.js";
+import type { BuiltChunk } from "../luxar/chunk_build.js";
 import { type Block, buildBlockAsync, packSurfaces } from "./geometry/surfaces.js";
 import { DEFAULT_SURFACE, GEO_LAYERS, GEO_MAX, geoBytes, type SurfaceMaterial } from "./geometry/live_geometry.js";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
@@ -1086,8 +1088,10 @@ class AnatomicalRendering {
   /** Geometry layers read in this browser, by layer: their parts (a segment's mesh each, or the layer whole). */
   private readonly points = new Map<string, PointsEntry>();
   /** The surfaces traced now: each layer's objects (from `offset`), their segments or colours. */
-  private surfaceLayout: { key: string; layers: { name: string; offset: number; objectCount: number; ids?: bigint[]; colours?: Float32Array; serials: number[] }[] } | undefined;
+  private surfaceLayout: { key: string; layers: { name: string; offset: number; objectCount: number; ids?: bigint[]; colours?: Float32Array; groups?: { group: number; stored?: number }[]; serials: number[] }[] } | undefined;
   private surfacesWanted = "";
+  /** A still made in this browser reads the geometry at this budget meanwhile (as a render computer's stills read finer). */
+  private stillBudget: number | undefined;
   /** Parts are read one at a time (a reader each, one after another). */
   private reading: Promise<void> = Promise.resolve();
 
@@ -1098,7 +1102,8 @@ class AnatomicalRendering {
    */
   private ensurePoints(layer: LayerInfo, layers: number): void {
     const look = this.lookOf(layer);
-    const budget = this.saved.geometryBudget / Math.max(1, Math.min(layers, GEO_LAYERS));
+    // (A still made here reads finer: stillBudget.)
+    const budget = (this.stillBudget ?? this.saved.geometryBudget) / Math.max(1, Math.min(layers, GEO_LAYERS));
     let entry = this.points.get(layer.name);
     if (entry === undefined) {
       entry = { parts: new Map(), wanted: [], text: "Object: reading the geometry" };
@@ -1108,7 +1113,7 @@ class AnatomicalRendering {
     entry.look = look;
     const meshes = parseMeshStoreUrl(this.meshStoreOf(layer) ?? "");
     // Each part: its store, and what it is read for (a mesh's level within its share; a store's colours and budget).
-    const wanted: { key: string; store: string; readFor: (part: Part) => string; budget: number; look: ColourByLook | undefined; level?: number }[] = [];
+    const wanted: { key: string; store: string; readFor: (part: Part) => string; budget: number; look: ColourByLook | undefined; level?: number; chunks?: string[] }[] = [];
     if (meshes !== undefined) {
       // At first an equal share each; once every segment's levels are known, levels shared out between them
       // (allocateLevels, two triangles a vertex), the segments that can come finer read again.
@@ -1116,14 +1121,20 @@ class AnatomicalRendering {
       const known = meshes.ids.map((id) => entry!.parts.get(String(id))?.read);
       const levels = known.every((r) => r !== undefined) ? allocateLevels(known as GeometryRead[], budget / 2) : undefined;
       meshes.ids.forEach((id, i) => {
-        // A mesh's key: the level it reads (its key once read: the level it read).
+        // A mesh's key: the level it reads (its key once read: the level it read); with its levels shared out and
+        // the camera at rest, its chunks by distance within that level's vertices (geometry/lod.ts).
         const level = levels?.[i];
-        const readFor = () => (level !== undefined ? String(level) : (known[i] ? String(known[i]!.level) : `share ${share}`));
-        wanted.push({ key: String(id), store: meshStoreUrl(meshes.volume, [id]), readFor, budget: share, look: undefined, level });
+        const r = known[i];
+        const eye = r && level !== undefined ? this.eyeInStore(r, entry!.placement) : undefined;
+        const chunks = r && eye && level !== undefined ? lodChunks(r.levels, r.bounds.lower, r.bounds.upper, eye, r.levels[level].vertexCount ?? Infinity) : undefined;
+        const readFor = () => (chunks ? `lod ${chunks.length} ${hashText(chunks.join(","))}` : level !== undefined ? String(level) : r ? String(r.level) : `share ${share}`);
+        wanted.push({ key: String(id), store: meshStoreUrl(meshes.volume, [id]), readFor, budget: share, look: undefined, level, chunks });
       });
     } else {
       const store = storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
-      const readFor = () => JSON.stringify([store, look?.by === "group" ? look.group : null, budget]);
+      // Read again for another attribute (the groups' or their colours'); not for the groups shown or how coloured.
+      const g = look?.by === "group" ? look.group : undefined;
+      const readFor = () => JSON.stringify([store, g ? [g.attribute, g.colours === "stored" ? (g.colorAttribute ?? null) : null] : null, budget]);
       wanted.push({ key: "", store, readFor, budget, look });
     }
     entry.wanted = wanted.map((w) => w.key);
@@ -1137,13 +1148,13 @@ class AnatomicalRendering {
       const want = w.readFor(part);
       if (part.readKey === want || part.wantKey === want) continue;
       part.wantKey = want;
-      this.readPart(layer.name, entry, part, w.store, w.look, w.budget, meshes !== undefined, w.level);
+      this.readPart(layer.name, entry, part, w.store, w.look, w.budget, meshes !== undefined, w.level, w.chunks);
     }
     this.statusUpdate?.();
   }
 
   /** Reads one part (after the parts before it), unless it is no longer wanted by then. */
-  private readPart(name: string, entry: PointsEntry, part: Part, store: string, look: ColourByLook | undefined, budget: number, mesh: boolean, level?: number): void {
+  private readPart(name: string, entry: PointsEntry, part: Part, store: string, look: ColourByLook | undefined, budget: number, mesh: boolean, level?: number, chunks?: string[]): void {
     const key = part.wantKey;
     const stale = () => this.points.get(name) !== entry || ![...entry.parts.values()].includes(part) || part.wantKey !== key;
     this.problem = "";
@@ -1155,11 +1166,13 @@ class AnatomicalRendering {
         this.statusUpdate?.();
       };
       try {
-        const read = await readGeometry(store, look, budget, say, stale, level);
+        // A mesh's chunks kept from read to read: another choice of them reads only those it lacks.
+        if (mesh) part.cache ??= new Map();
+        const read = await readGeometry(store, look, budget, say, stale, level, chunks && part.cache ? { keys: chunks, cache: part.cache } : undefined);
         if (stale()) return;
         part.read = read;
         // A mesh's key is the level it read; a store's, what it was read for.
-        part.readKey = mesh ? String(read.level) : key;
+        part.readKey = mesh && !key.startsWith("lod ") ? String(read.level) : key;
         part.wantKey = part.readKey;
         part.failed = false;
         const done = [...entry.parts.values()].filter((p) => p.read).length;
@@ -1173,6 +1186,30 @@ class AnatomicalRendering {
         this.statusUpdate?.();
       }
     });
+  }
+
+  /** The camera where geometry was last chosen by distance (world); a rest far enough from it chooses again. */
+  private lodEye: number[] | undefined;
+
+  /** The camera at rest (`frame`) far enough from where meshes' chunks were chosen: choose them again. */
+  private lodCheck(frame: Frame3d): void {
+    const e = Array.from({ length: 4 }, (_, r) => frame.invViewProjection[8 + r]);
+    if (Math.abs(e[3]) < 1e-12) return;
+    const eye = [e[0] / e[3], e[1] / e[3], e[2] / e[3]];
+    const at = Math.hypot(...eye.map((v, k) => v - frame.position[k]));
+    if (this.lodEye !== undefined && Math.hypot(...eye.map((v, k) => v - this.lodEye![k])) < 0.2 * at) return;
+    if (![...this.points.values()].some((p) => p.wanted.length > 1 || [...p.parts.values()].some((x) => x.read?.kind === "meshes"))) return;
+    this.lodEye = eye;
+    this.update();
+  }
+
+  /** The camera (lodEye) in a read's store coordinates, as its layer places it. */
+  private eyeInStore(read: GeometryRead, placement: ArrayLike<number> | undefined): number[] | undefined {
+    const eye = this.lodEye;
+    const wfp = this.lastSpec?.world_from_physical;
+    if (eye === undefined) return undefined;
+    const fromWorld = invert(mul(wfp ? rowMajor(wfp) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], toMmOf(read, placement)));
+    return [0, 1, 2].map((r) => fromWorld[4 * r] * eye[0] + fromWorld[4 * r + 1] * eye[1] + fromWorld[4 * r + 2] * eye[2] + fromWorld[4 * r + 3]);
   }
 
   /** A geometry layer's kind, as read. */
@@ -1225,16 +1262,19 @@ class AnatomicalRendering {
       const offset = base;
       const ids: bigint[] = [];
       const colours: number[] = [];
-      let byId = true;
+      const groups: { group: number; stored?: number }[] = [];
+      let byId = true, byGroup = true;
       for (const p of parts) {
         const d = p.done!;
         placed.push({ block: d.block, objectBase: base });
         base += d.block.objectCount;
         if (d.ids) ids.push(...d.ids);
         else byId = false;
+        if (d.groups) groups.push(...d.groups);
+        else byGroup = false;
         if (d.colours) colours.push(...d.colours);
       }
-      return { name: l.name, offset, objectCount: base - offset, ...(byId ? { ids } : { colours: new Float32Array(colours) }), serials: parts.map((p) => p.done!.serial) };
+      return { name: l.name, offset, objectCount: base - offset, ...(byId ? { ids } : { colours: new Float32Array(colours) }), ...(byGroup && !byId ? { groups } : {}), serials: parts.map((p) => p.done!.serial) };
     });
     const started = performance.now();
     const s = packSurfaces(placed, base);
@@ -1257,7 +1297,7 @@ class AnatomicalRendering {
       (block) => {
         if (part.building !== key) return;
         part.building = undefined;
-        part.done = { key, block, serial: ++geometrySerial, ...(g.ids ? { ids: g.ids } : {}), ...(g.colours ? { colours: g.colours } : {}) };
+        part.done = { key, block, serial: ++geometrySerial, ...(g.ids ? { ids: g.ids } : {}), ...(g.colours ? { colours: g.colours } : {}), ...(g.groups ? { groups: g.groups } : {}) };
         this.update();
       },
       (e: Error) => {
@@ -1280,12 +1320,16 @@ class AnatomicalRendering {
     const picks: { base: number; first: number; count: number }[] = [];
     const layers = layout.layers.map((x, li) => {
       const layer = this.ctx.viewer.layers().find((l) => l.name === x.name);
+      // Grouped points and lines: their groups as the layer's Vertex colour has them now (those not shown hidden).
+      const look = x.groups && layer ? groupColours(this.lookOf(layer)) : undefined;
       for (let i = 0; i < x.objectCount; ++i) {
-        // A mesh's segments as the layer colours them now; points' and lines' as they were coloured.
-        const c = x.ids ? (this.ctx.viewer.segmentColour(x.name, x.ids[i]) ?? [0.8, 0.8, 0.8]) : x.colours!.subarray(3 * i, 3 * i + 3);
-        colours.set([c[0], c[1], c[2], layer ? li + 1 : 0], 4 * (x.offset + i));
+        // A mesh's segments as the layer colours them now; points' and lines' groups likewise; else as coloured.
+        const g = x.groups?.[i];
+        const c = x.ids ? (this.ctx.viewer.segmentColour(x.name, x.ids[i]) ?? [0.8, 0.8, 0.8]) : look && g ? look.colour(g.group, g.stored) : x.colours!.subarray(3 * i, 3 * i + 3);
+        const shown = layer !== undefined && (look === undefined || g === undefined || look.shows(g.group));
+        colours.set([c[0], c[1], c[2], shown ? li + 1 : 0], 4 * (x.offset + i));
       }
-      keyParts.push(x.ids ? Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + x.objectCount))) : [x.serials, layer !== undefined]);
+      keyParts.push(x.ids || x.groups ? Array.from(colours.subarray(4 * x.offset, 4 * (x.offset + x.objectCount))) : [x.serials, layer !== undefined]);
       // Segments picked as Neuroglancer's meshes are: under the mouse, and selected by a double-click.
       picks.push({ base: x.ids && layer ? (frame.registerPicks?.(x.name, x.ids) ?? 0) : 0, first: x.offset, count: x.objectCount });
       const { clips } = layer ? this.cropsFor(layer, frame) : { clips: [] };
@@ -2197,6 +2241,8 @@ class AnatomicalRendering {
       this.save((x) => (x.planes = x.planes.map((p) => (p.normal.every((v) => v === 0) ? { ...planeFromView(frame.invViewProjection, frame.position, p.name), on: p.on, offset: p.offset } : p))));
     }
     const local = this.saved.where === "browser" ? this.local : undefined;
+    // Meshes' detail by distance: chosen again where the camera comes to rest far from where it was chosen.
+    if (this.saved.where === "browser" && !frame.moving) this.lodCheck(frame);
     // The scene's surfaces in WebGPU's picture too, as this frame draws them (no picks: that is not a drawing); its
     // picture made again only when they change.
     if (local?.ready) local.setSurfaces(this.live.heldSurfaces, this.surfacesLook({ ...frame, registerPicks: undefined }));
@@ -2512,6 +2558,74 @@ class AnatomicalRendering {
     });
   }
 
+  /** Every geometry part wanted is read and built as asked, and the surfaces packed from them. */
+  private geometrySettled(): boolean {
+    for (const e of this.points.values()) {
+      for (const k of e.wanted) {
+        const p = e.parts.get(k);
+        if (p === undefined || p.failed) continue;
+        if (p.wantKey !== p.readKey || p.building !== undefined || p.done === undefined) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * A still of the view made in this browser: the geometry read at four times its budget (at most what can be
+   * traced), then the view path-traced at the output's size and twice its samples, as a job; saved as a PNG.
+   */
+  private async saveStillHere(): Promise<void> {
+    const frame = this.lastFrame;
+    if (frame === undefined || !this.live.ready()) return this.ctx.ui.toast("Nothing is drawn here yet.", "error");
+    if (this.stillRunning) return this.ctx.ui.toast("A still is already rendering.", "error");
+    const m = movieSettings(this.saved.movie);
+    const samples = Math.min(LIMITS.maxSamples, m.samples * 2);
+    const tooLarge = stillProblem(m.width, m.height, samples);
+    if (tooLarge) return this.ctx.ui.toast(tooLarge, "error");
+    this.stillRunning = true;
+    this.panelUpdate?.();
+    const name = `Still ${m.width} × ${m.height}, ${samples} samples (this browser)`;
+    try {
+      await this.ctx.jobs.run(name, async (job) => {
+        if (this.renderedLayers().some((l) => this.isVectors(l)) && this.saved.geometryBudget < GEO_MAX) {
+          this.stillBudget = Math.min(GEO_MAX, 4 * this.saved.geometryBudget);
+          this.update();
+          job.progress(undefined, "reading the geometry finer");
+          // (A frame first: the parts asked for again.)
+          await sleep(300);
+          while (!this.geometrySettled()) {
+            if (job.cancelled) throw new Error("cancelled");
+            await sleep(300);
+          }
+        }
+        // The camera now, at the still's shape (its height's view kept).
+        const a = frame.width / frame.height / (m.width / m.height);
+        const viewProjection = Float32Array.from(frame.viewProjection, (x, i) => (i % 4 === 0 ? x * a : x));
+        const invViewProjection = Float32Array.from(frame.invViewProjection, (x, i) => (i < 4 ? x / a : x));
+        const image = await this.live.still({ invViewProjection, viewProjection, width: m.width, height: m.height, samples }, (f) => {
+          if (job.cancelled) this.live.cancelStill();
+          job.progress(f, f < 0.2 ? "holding the light" : "path-tracing");
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        canvas.getContext("2d")!.putImageData(new ImageData(image.rgba, image.width, image.height), 0, 0);
+        const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
+        if (blob === null) throw new Error("the picture could not be saved");
+        downloadBlob(blob, "anatomical-rendering.png");
+      });
+    } catch (e) {
+      if ((e as Error).message !== "cancelled") this.jobFailed("Still", e, () => void this.saveStillHere());
+    } finally {
+      this.stillRunning = false;
+      if (this.stillBudget !== undefined) {
+        this.stillBudget = undefined;
+        this.update();
+      }
+      this.panelUpdate?.();
+    }
+  }
+
   /** The view now, full size, for a still, a rotation or a keyframe. */
   private currentSpec(): ViewSpec | undefined {
     const f = this.lastFrame;
@@ -2520,6 +2634,7 @@ class AnatomicalRendering {
 
   /** The view now at the output's size and twice its samples, as a job on the host (progress and cancel in the panel and in Activity); saved as a download. */
   private async saveStill(): Promise<void> {
+    if (this.saved.where === "browser") return this.saveStillHere();
     const sid = this.session?.status === "ready" ? this.session.id : undefined;
     const service = this.opened?.service;
     const view = this.currentSpec();
@@ -3349,7 +3464,7 @@ class AnatomicalRendering {
         }),
       { class: "list" });
     const stills = jobList("still");
-    const output = card("anatomical.output", "Output", { info: "The size and samples of stills and movies. A still is path-traced on the computer to twice the samples, as a job: its progress here and in Activity, and it downloads when done." },
+    const output = card("anatomical.output", "Output", { info: "The size and samples of stills and movies. A still is path-traced to twice the samples, as a job: its progress here and in Activity, and it downloads when done. On a computer, by its renderer; in this browser, by this browser's, the geometry read at four times its budget for it (Quality › Geometry)." },
       el("div", { class: "row" }, width.field, height.field, outSamples.field),
       el("div", { class: "row" }, still),
       onHost(noFfmpeg),
@@ -3764,12 +3879,21 @@ interface Part {
   wantKey: string;
   read?: GeometryRead;
   failed?: boolean;
+  /** A mesh's chunks read, kept for its next choice of them (detail by distance). */
+  cache?: Map<string, BuiltChunk | null>;
   /** The block being built (its key), and the last built: its primitives' objects' segments or colours. */
   building?: string;
-  done?: { key: string; block: Block; serial: number; ids?: bigint[]; colours?: Float32Array };
+  done?: { key: string; block: Block; serial: number; ids?: bigint[]; colours?: Float32Array; groups?: { group: number; stored?: number }[] };
 }
 
 let geometrySerial = 0;
+
+/** A short hash of a text (a choice of chunks, as a key). */
+function hashText(t: string): string {
+  let h = 5381;
+  for (let i = 0; i < t.length; ++i) h = (Math.imul(h, 33) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
 
 /** A saved surface material's fields that are numbers in range. */
 function readSurface(v: Record<string, unknown>): Partial<SurfaceMaterial> {

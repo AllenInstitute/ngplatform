@@ -1094,7 +1094,7 @@ export class LiveVolume {
    * The view at rest, path-traced: the samples' sums (colour, coverage) and each pixel's depth and
    * count, read and filled in turn; the camera and look they are of, and since when it has been still.
    */
-  private traced: { samples: number; pass: number; rows: number; last: number } | undefined;
+  private traced: Traced | undefined;
   private traceKey = "";
   private stillSince = 0;
   private settle: ReturnType<typeof setTimeout> | undefined;
@@ -1405,9 +1405,113 @@ export class LiveVolume {
     }
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
+    // A still asked for: path-traced into its own textures once the light is held (the view's frames go on).
+    if (this.stillJob !== undefined) this.stillSome(gl, scene);
     const tracing = this.traced !== undefined && this.traced.samples < max;
-    if (this.canBake && (this.held.pass < LIGHT_PASSES || tracing)) requestAnimationFrame(() => this.onRedraw?.());
+    if (this.canBake && (this.held.pass < LIGHT_PASSES || tracing || this.stillJob !== undefined)) requestAnimationFrame(() => this.onRedraw?.());
     return true;
+  }
+
+  /** The still being path-traced: its camera and size, its textures (as the view's), and who waits for it. */
+  private stillJob: {
+    view: StillView;
+    target: { sumRead: WebGLTexture; sumFill: WebGLTexture; auxRead: WebGLTexture; auxFill: WebGLTexture; traced?: Traced };
+    progress: (fraction: number) => void;
+    resolve: (image: StillImage) => void;
+    reject: (e: Error) => void;
+  } | undefined;
+
+  /**
+   * A still of the view: path-traced at its own size to `samples`, with the light held as the view's (after the
+   * frames draw it). Resolves to its pixels (RGBA, top row first; alpha: how much of the pixel met something).
+   */
+  still(view: StillView, progress: (fraction: number) => void = () => {}): Promise<StillImage> {
+    const gl = this.gl;
+    if (gl === undefined || !this.canBake) return Promise.reject(new Error("this browser cannot path-trace here"));
+    this.stillJob?.reject(new Error("another still"));
+    this.dropStill();
+    // Read texel by texel, as the view's (float textures filtered are incomplete where they cannot be).
+    const tex = () => {
+      const t = this.texture(gl, gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, view.width, view.height, 0, gl.RGBA, gl.FLOAT, null);
+      return t;
+    };
+    return new Promise((resolve, reject) => {
+      this.stillJob = { view, target: { sumRead: tex(), sumFill: tex(), auxRead: tex(), auxFill: tex() }, progress, resolve, reject };
+      this.onRedraw?.();
+    });
+  }
+
+  /** Stops the still being path-traced (its promise refused). */
+  cancelStill(): void {
+    this.stillJob?.reject(new Error("cancelled"));
+    this.dropStill();
+  }
+
+  private dropStill(): void {
+    const j = this.stillJob;
+    this.stillJob = undefined;
+    if (j && this.gl) for (const t of [j.target.sumRead, j.target.sumFill, j.target.auxRead, j.target.auxFill]) this.gl.deleteTexture(t);
+  }
+
+  /** Some passes of the still (about 30 ms of the GPU's a frame), once the light is held; read back when done. */
+  private stillSome(gl: WebGL2RenderingContext, scene: Scene): void {
+    const j = this.stillJob!;
+    if (this.held!.pass < LIGHT_PASSES) {
+      j.progress(0.2 * (this.held!.pass / LIGHT_PASSES));
+      return;
+    }
+    const v = j.view;
+    // The view's textures set aside while the still's take their place.
+    const own = { sumRead: this.sumRead, sumFill: this.sumFill, auxRead: this.auxRead, auxFill: this.auxFill, size: this.traceSize, traced: this.traced };
+    const t = j.target;
+    [this.sumRead, this.sumFill, this.auxRead, this.auxFill, this.traceSize, this.traced] = [t.sumRead, t.sumFill, t.auxRead, t.auxFill, [v.width, v.height], t.traced];
+    const started = performance.now();
+    try {
+      do {
+        this.traceSome(gl, scene, { invViewProjection: v.invViewProjection, viewProjection: v.viewProjection } as Frame3d, v.width, v.height, v.samples, 4);
+        gl.finish();
+      } while ((this.traced?.samples ?? 0) < v.samples && performance.now() - started < 30);
+    } finally {
+      [t.sumRead, t.sumFill, t.auxRead, t.auxFill, t.traced] = [this.sumRead!, this.sumFill!, this.auxRead!, this.auxFill!, this.traced];
+      [this.sumRead, this.sumFill, this.auxRead, this.auxFill, this.traceSize, this.traced] = [own.sumRead, own.sumFill, own.auxRead, own.auxFill, own.size, own.traced];
+    }
+    const done = t.traced?.samples ?? 0;
+    j.progress(0.2 + 0.8 * Math.min(1, done / v.samples));
+    if (done < v.samples) return;
+    const image = this.readStill(gl, t.sumRead, t.auxRead, v, scene.primary.exposure);
+    this.dropStill();
+    j.resolve(image);
+  }
+
+  /** The still's sums as pixels: each the mean of the samples that met something, tone-mapped; alpha its share of them. */
+  private readStill(gl: WebGL2RenderingContext, sum: WebGLTexture, aux: WebGLTexture, v: StillView, exposure: number): StillImage {
+    const read = (t: WebGLTexture) => {
+      const out = new Float32Array(v.width * v.height * 4);
+      const was = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.traceFb!);
+      // The texture alone (the trace's second output may be it, and a texture in two places does not read).
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, null, 0);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      gl.readPixels(0, 0, v.width, v.height, gl.RGBA, gl.FLOAT, out);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, was);
+      return out;
+    };
+    const s = read(sum), a = read(aux);
+    const rgba = new Uint8ClampedArray(v.width * v.height * 4);
+    for (let y = 0; y < v.height; ++y) {
+      for (let x = 0; x < v.width; ++x) {
+        const i = 4 * (y * v.width + x), o = 4 * ((v.height - 1 - y) * v.width + x);
+        const hits = s[i + 3], count = a[i + 1];
+        if (hits <= 0 || count <= 0) continue;
+        for (let c = 0; c < 3; ++c) rgba[o + c] = Math.round(255 * toneOf((s[i + c] / hits) * exposure));
+        rgba[o + 3] = Math.round(255 * Math.min(1, hits / count));
+      }
+    }
+    return { width: v.width, height: v.height, rgba };
   }
 
   /**
@@ -1572,7 +1676,7 @@ export class LiveVolume {
    * sums read into the ones filled, which then change places. Every `rows`-th row is traced in a pass:
    * more rows a pass while frames come quickly, fewer while they are slow.
    */
-  private traceSome(gl: WebGL2RenderingContext, s: Scene, frame: Frame3d, w: number, h: number, max: number): void {
+  private traceSome(gl: WebGL2RenderingContext, s: Scene, frame: Frame3d, w: number, h: number, max: number, fixedRows?: number): void {
     const geoW = s.geo?.geoW ?? 0;
     const p = this.program(gl, `trace ${s.n} ${geoW}`, () => TRACE_FS(s.n, geoW), true);
     if (p === undefined) return;
@@ -1594,12 +1698,12 @@ export class LiveVolume {
         gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
         gl.clearBufferfv(gl.COLOR, 1, [0, 0, 0, 0]);
       });
-      this.traced = { samples: 0, pass: 0, rows: 2, last: 0 };
+      this.traced = { samples: 0, pass: 0, rows: fixedRows ?? 2, last: 0 };
     }
     const t = this.traced;
     if (t.samples >= max) return;
     const now = performance.now();
-    if (t.last > 0) {
+    if (t.last > 0 && fixedRows === undefined) {
       const dt = now - t.last;
       if (dt > 45 && t.rows < 8) t.rows *= 2;
       else if (dt < 22 && t.rows > 1) t.rows /= 2;
@@ -1683,6 +1787,7 @@ export class LiveVolume {
 
   /** Lets the levels and their GPU resources go. */
   close(): void {
+    this.cancelStill();
     for (const url of [...this.vols.keys()]) this.drop(url);
     this.geoTex.dispose(this.gl);
     if (this.empty && this.gl) for (const t of [this.empty.vol.tex, this.empty.vol.occ]) if (t) this.gl.deleteTexture(t);
@@ -1745,4 +1850,34 @@ function link(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram 
     throw new Error(log ?? "link");
   }
   return p;
+}
+
+/** The view's path-tracing progress: samples (fractions while rows are traced in turn), passes, rows a pass, the last pass's time. */
+interface Traced {
+  samples: number;
+  pass: number;
+  rows: number;
+  last: number;
+}
+
+/** A still's camera (column-major, as Frame3d's), size and samples. */
+export interface StillView {
+  invViewProjection: Float32Array;
+  viewProjection: Float32Array;
+  width: number;
+  height: number;
+  samples: number;
+}
+
+/** A still's pixels: RGBA, the top row first. */
+export interface StillImage {
+  width: number;
+  height: number;
+  rgba: Uint8ClampedArray;
+}
+
+/** TONE's tone map and sRGB, for one channel. */
+function toneOf(x: number): number {
+  const c = Math.min(1, Math.max(0, (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)));
+  return c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
 }

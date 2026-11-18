@@ -376,9 +376,10 @@ on, and Neuroglancer's own drawing of it is hidden meanwhile:
   vertices: the store's radii where it has a `radius` attribute, else a
   sixth of a segment's length.
 
-Points and lines are coloured as the layer colours them: by group (the
-groups not shown left out), else by object. Those colours are fixed when
-the geometry is made: a change of groups reads the layer again.
+Points and lines are coloured as the layer colours them: by group, else by
+object. Every group is kept in the geometry, so choosing which show, or
+their colours, takes effect at once without reading the layer again;
+choosing another attribute to group by reads it again.
 
 **How it is drawn.** The geometry is read at the finest level within its
 share of the budget (below), built into a BVH in the background (about a
@@ -410,6 +411,17 @@ read one by one, each at the finest level the layer's share leaves room
 for (small cells finer, large ones as fine as fits). More is finer but
 takes longer to read and build, and needs about 55 MB of GPU memory a
 million.
+
+**Detail by distance.** A segment's mesh is read finer near the camera
+and coarser away from it, within its share of the budget: once the camera
+rests somewhere new, its chunks are chosen again across the store's levels
+(where their chunks nest), and the chunks it already holds are not read
+again.
+
+**Stills here.** Save still (Output card) in this browser path-traces the
+view at the output's size and twice its samples, the geometry read at four
+times its budget meanwhile, and saves a PNG, transparent where nothing is
+met. Movies and splats need a render computer.
 
 **Choosing segments.** Each segment's mesh is built on its own, so
 choosing another reads and builds only that one, and switching one off

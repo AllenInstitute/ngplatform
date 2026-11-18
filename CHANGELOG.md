@@ -65,6 +65,10 @@ The production polish: the work of an audit of every panel and plugin
 - Quality › Geometry sets how many triangles, spheres and tubes this browser reads and traces (2 million unless set, up to 8 million), shared by the geometry layers on; the ABC atlas's finer level can now be read.
 - The voxel grid that stood in for points and meshes in this browser is gone; geometry layers no longer take a share of the images' voxels.
 - Geometry in this browser takes half the GPU memory (about 55 MB a million triangles, spheres or tubes): vertices shared between triangles and tubes, and a 4-wide BVH with 8-bit boxes.
+- **Save still** works in this browser too: the view path-traced at the Output card's size and twice its samples, the geometry read at four times its budget for it, saved as a PNG (transparent where nothing is met). Movies still need a render computer.
+- A large segment's mesh is read finer near the camera and coarser away from it, within the same budget: its chunks chosen across the store's levels once the camera rests somewhere new.
+- Choosing which groups of a points or lines layer show, or their colours, takes effect at once: every group is kept in the geometry, and nothing is read or built again.
+- `npm run e2e:golden` draws one scene (a volume and a mesh) in this browser and on the render computer's CUDA, and compares their depths pixel by pixel.
 - With WebGPU, an image with geometry layers (EM and its cells, say) gets its path-traced picture at rest from the WebGPU tracer, with the surfaces in it.
 - Surfaces less than opaque are drawn whole: blended front to back while the view moves (they showed as a dither of specks), and path-traced at their opacity without rays dropping through them by chance.
 - A segmentation's segments are read and built one by one: choosing another reads only it, switching one off takes it out at once, and the levels are shared out so small cells come finer. Hovering a traced cell shows its segment, and a double-click selects it, as with Neuroglancer's own meshes.

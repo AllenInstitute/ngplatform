@@ -183,15 +183,18 @@ export interface GeometryRead {
   byObject?: ObjectGroups;
   /** Lines: each vertex's value is its radius (store units). */
   radii: boolean;
-  /** The store's levels' vertex counts (finest first): which level another budget would read. */
-  levels: { vertexCount: number | undefined }[];
+  /** The store's levels' vertex counts and chunk shapes (finest first): which level another budget would read, which chunks by distance. */
+  levels: { vertexCount: number | undefined; chunkShape: number[] }[];
+  /** The store's bounds (store coordinates), its chunks' grid's extent. */
+  bounds: { lower: number[]; upper: number[] };
 }
 
 /**
  * Reads a store's geometry for the path tracer: level `at`, else the finest within `budget` primitives (a mesh's
- * taken as two triangles a vertex), grouped as `look` colours it.
+ * taken as two triangles a vertex), grouped as `look` colours it; or the chunks `chunks.keys` (of any levels: detail
+ * by distance), those in its cache not read again, and it left holding these alone.
  */
-export async function readGeometry(storeUrl: string, look: ColourByLook | undefined, budget: number, say: (text: string) => void, stale: () => boolean, at?: number): Promise<GeometryRead> {
+export async function readGeometry(storeUrl: string, look: ColourByLook | undefined, budget: number, say: (text: string) => void, stale: () => boolean, at?: number, chunks?: { keys: string[]; cache: Map<string, BuiltChunk | null> }): Promise<GeometryRead> {
   const g = look?.by === "group" ? look.group : undefined;
   // The group's index and colour attributes read with the points (a taxonomy's tier: a cell's class).
   const client = new StoreClient(storeUrl, { attributes: g !== undefined ? [g.attribute, ...(g.colorAttribute ? [g.colorAttribute] : [])] : [] });
@@ -206,29 +209,39 @@ export async function readGeometry(storeUrl: string, look: ColourByLook | undefi
     client.setScalar(g !== undefined && perVertex ? `group:${g.attribute}${g.colours === "stored" && g.colorAttribute ? `:${g.colorAttribute}` : ""}` : radius ? `attribute:${radius.id}` : "object");
     const objects = g !== undefined && !perVertex ? objectGroups(storeUrl, g.attribute, g.colours === "stored" ? g.colorAttribute : undefined) : undefined;
     // A level asked for (where it exists), else the finest within the budget.
-    const level = at !== undefined && at < info.levels.length ? at : pointsLevelIndex(info, meshes ? budget / 2 : budget);
+    // A level asked for (where it exists), else the finest within the budget; or the chunks asked for (the finest of them its level).
+    const level = chunks !== undefined && chunks.keys.length > 0 ? Math.min(...chunks.keys.map((k) => Number(k.split("|")[0]))) : at !== undefined && at < info.levels.length ? at : pointsLevelIndex(info, meshes ? budget / 2 : budget);
     const shape = info.levels[level].chunkShape;
-    const keys = chunksIn(chunkRange(info.bounds.lower, info.bounds.upper, shape)).map((c) => keyOf(level, c));
-    client.want("anatomical-rendering", keys);
+    const keys = chunks?.keys ?? chunksIn(chunkRange(info.bounds.lower, info.bounds.upper, shape)).map((c) => keyOf(level, c));
+    const cache = chunks?.cache;
+    const need = keys.filter((k) => !cache?.has(k));
+    client.want("anatomical-rendering", need);
     await new Promise<void>((resolve, reject) => {
       const check = () => {
         if (stale()) return reject(new Error("stale"));
-        const done = keys.filter((k) => client.has(k)).length;
-        say(`reading the geometry: ${done} of ${keys.length} pieces`);
-        if (done === keys.length) resolve();
+        const done = need.filter((k) => client.has(k)).length;
+        say(`reading the geometry: ${done} of ${need.length} pieces`);
+        if (done === need.length) resolve();
         else if (client.error !== undefined && client.pending === 0) reject(new Error(client.error));
       };
       client.onChunk = check;
       check();
     });
-    const chunks = keys.map((k) => client.get(k)).filter((c): c is BuiltChunk => !!c);
-    if (chunks.length === 0) throw new Error("the store has no geometry");
-    const { lower, upper } = vertexBounds(chunks);
+    if (cache) {
+      for (const k of need) cache.set(k, client.get(k) ?? null);
+      for (const k of [...cache.keys()]) if (!keys.includes(k)) cache.delete(k);
+    }
+    const built = keys.map((k) => (cache ? cache.get(k) : client.get(k))).filter((c): c is BuiltChunk => !!c);
+    if (built.length === 0) throw new Error("the store has no geometry");
+    const { lower, upper } = vertexBounds(built);
     const kind = meshes ? "meshes" : lines ? "lines" : "points";
-    const count = chunks.reduce((n, c) => n + (meshes ? c.triangleCount : lines ? c.segmentCount : c.pointCount || c.vertexCount), 0);
+    const count = built.reduce((n, c) => n + (meshes ? c.triangleCount : lines ? c.segmentCount : c.pointCount || c.vertexCount), 0);
     const byObject = await objects;
     if (g !== undefined && !perVertex && byObject === undefined) say(`no ${g.attribute} column: one colour`);
-    return { kind, chunks, mm: mmPerUnit(info), level, count, lower, upper, perVertex, byObject, radii: radius !== undefined, levels: info.levels.map((l) => ({ vertexCount: l.vertexCount })) };
+    return {
+      kind, chunks: built, mm: mmPerUnit(info), level, count, lower, upper, perVertex, byObject, radii: radius !== undefined,
+      levels: info.levels.map((l) => ({ vertexCount: l.vertexCount, chunkShape: [...l.chunkShape] })), bounds: { lower: [...info.bounds.lower], upper: [...info.bounds.upper] },
+    };
   } finally {
     client.dispose();
   }

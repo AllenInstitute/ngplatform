@@ -505,6 +505,16 @@ Step 2's two limits, the paused path tracer and the held light ignoring surfaces
 - The path tracer's camera ray meets them as solid too: each adds its light at its opacity (its shadow ray now and then, weighted), then the path goes on through as often as it is clear (not a bounce) or bounces off it. Bounces and shadow rays still pass by chance (cheaper: no traversal begun again).
 - Measured (four MICrONS cells, 0.5 M triangles, SwiftShader, 90 s): opaque, 17 samples; opacity 0.15, 10 samples, drawn as faint continuous branches (before: 17 samples of specks).
 
+2026-11-17: after step 7: the CUDA comparison, stills here, detail by distance, groups without a rebuild.
+
+**Against the render computer** (`npm run e2e:golden`, the "done when" of steps 3 and 7): `runner/tests/golden_scene.py` writes an empty volume and a Zarr Vectors mesh (a sphere and a torus); the app draws them in this browser (the WebGPU tracer's picture at rest), and the same view spec is rendered by the render computer's CUDA. Their depths, as world points: the outline the same at 135,936 of 136,068 pixels; where both meet the mesh, 98.8% within 0.05 mm (median 0.07 µm; the rest at grazing edges). Shading is not compared: the two shade by design apart. Needs `NGP_RENDER_PYTHON` (the runner's render dependencies and `zarr_vectors`, zarr 3: Python 3.11 or later).
+
+**Stills here:** Save still in this browser path-traces the view (the live object's tracer, into textures of its own at the output's size, after the light is held), the geometry read at four times its budget meanwhile. MICrONS cells: 2.6 M triangles, 320 × 240 at 16 samples, about 3 minutes on SwiftShader. Movies and splats remain the render computer's.
+
+**Detail by distance** (`geometry/lod.ts`): a mesh segment's chunks chosen across its store's levels, finer near the camera, within the vertices its level share allows, where the levels' chunk grids nest (MICrONS: 2,048 to 16,384 a side, doubling); chosen again when the camera comes to rest a fifth of its distance away. Chunks read are kept, so a new choice reads only those it lacks; the segment's block is built again.
+
+**Groups:** points and lines grouped by the layer's Vertex colour keep every group as an object; the frame's look hides and colours them. Choosing groups or their colours reads and builds nothing (ABC atlas: 34 classes, one shown, block unchanged).
+
 ## Risks
 
 | Risk | Effect | Answer |

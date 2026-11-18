@@ -2,12 +2,14 @@
  * A layer's geometry, as read (points.ts readGeometry), as primitives to
  * trace: a mesh's triangles, points as spheres, lines as tubes. A mesh's
  * objects take their segments' colours as the frame draws them; points'
- * and lines' are coloured once, as the layer colours them (by group, else
- * by object).
+ * and lines' grouped by the layer's Vertex colour are an object a group
+ * (every group, shown or not), coloured and hidden as the frame's look
+ * says, so choosing groups or their colours builds nothing again; else
+ * coloured once, by object.
  */
 import type { BuiltChunk } from "../../luxar/chunk_build.js";
 import { type ColourByLook, groupPalette } from "@ngplatform/sdk/colour_by";
-import { chunkPoints, type GeometryRead, groupColours } from "../points.js";
+import { chunkPoints, type GeometryRead, type GroupColours, groupColours } from "../points.js";
 import { type IndexedPoint, linePrimitives, lineRadius, meshPrimitives, pointPrimitives, pointRadius, type Primitives } from "./primitives.js";
 
 /** A layer's primitives and their objects' colours: by segment (`ids`, coloured each frame), else fixed (`colours`, rgb). */
@@ -16,8 +18,10 @@ export interface LayerGeometry {
   objectCount: number;
   /** A mesh's objects: segment ids, coloured as the layer colours them now. */
   ids?: bigint[];
-  /** Points' and lines' objects: their colours, 3 floats each. */
+  /** Points' and lines' objects: their colours, 3 floats each (grouped: as the look built with colours them). */
   colours?: Float32Array;
+  /** Grouped points' and lines' objects: each one's group (-1: none) and stored colour, for the look of the frame. */
+  groups?: { group: number; stored?: number }[];
   /** Spheres' and tubes' radius (mm; a vertex's own where the store has radii). */
   radius?: number;
   /** What it is, for the readout. */
@@ -28,6 +32,7 @@ export interface LayerGeometry {
 class Palette {
   private readonly index = new Map<string | number | bigint, number>();
   readonly rgb: number[] = [];
+  readonly groups: { group: number; stored?: number }[] = [];
   of(key: string | number | bigint, colour: () => [number, number, number]): number {
     let i = this.index.get(key);
     if (i === undefined) {
@@ -35,6 +40,13 @@ class Palette {
       this.index.set(key, i);
       this.rgb.push(...colour());
     }
+    return i;
+  }
+  /** A group's object: every group, shown or not (the frame's look hides those not shown). */
+  group(group: number, stored: number | undefined, colours: GroupColours): number {
+    const n = this.index.size;
+    const i = this.of(`g${group}`, () => colours.colour(group, stored));
+    if (i === n) this.groups.push({ group, ...(stored !== undefined ? { stored } : {}) });
     return i;
   }
   get size(): number {
@@ -74,12 +86,12 @@ export function layerGeometry(read: GeometryRead, toMm: readonly number[], look:
         return;
       }
       for (const p of chunkPoints(read.chunks, read.perVertex, read.byObject)) {
-        yield { x: p.x, y: p.y, z: p.z, index: groups.shows(p.group) ? palette.of(`g${p.group}`, () => groups.colour(p.group, p.stored)) : -1 };
+        yield { x: p.x, y: p.y, z: p.z, index: palette.group(p.group, p.stored, groups) };
       }
     };
     const radius = size * pointRadius(read.count, lo, hi);
     const prims = pointPrimitives(points(), toMm, radius);
-    return { prims, objectCount: palette.size, colours: new Float32Array(palette.rgb), radius, text: `${prims.objects.length.toLocaleString()} points as spheres (${radiusText(radius)})` };
+    return { prims, objectCount: palette.size, colours: new Float32Array(palette.rgb), ...(grouped ? { groups: palette.groups } : {}), radius, text: `${prims.objects.length.toLocaleString()} points as spheres (${radiusText(radius)})` };
   }
 
   // Lines: a segment's object (or group) its first vertex's.
@@ -88,12 +100,12 @@ export function layerGeometry(read: GeometryRead, toMm: readonly number[], look:
     if (read.perVertex) {
       const g = c.objectIds[2 * slot];
       const group = g === 0xffffffff ? -1 : g;
-      return groups.shows(group) ? palette.of(`g${group}`, () => groups.colour(group, c.slotColours?.[slot])) : -1;
+      return palette.group(group, c.slotColours?.[slot], groups);
     }
     const id = idOf(c, slot);
     if (read.byObject !== undefined) {
       const o = read.byObject(id);
-      return groups.shows(o.group) ? palette.of(`g${o.group}`, () => groups.colour(o.group, o.stored)) : -1;
+      return palette.group(o.group, o.stored, groups);
     }
     return bySegment(id);
   };
@@ -112,7 +124,7 @@ export function layerGeometry(read: GeometryRead, toMm: readonly number[], look:
   } : undefined;
   const prims = linePrimitives(read.chunks, toMm, radius, objectOf, radiusAt);
   return {
-    prims, objectCount: palette.size, colours: new Float32Array(palette.rgb), radius,
+    prims, objectCount: palette.size, colours: new Float32Array(palette.rgb), ...(grouped ? { groups: palette.groups } : {}), radius,
     text: `${prims.objects.length.toLocaleString()} segments as tubes (${read.radii ? "the store's radii" : radiusText(radius)})`,
   };
 }
