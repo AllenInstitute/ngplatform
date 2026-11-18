@@ -1,0 +1,10 @@
+{
+  "version": "0.2.0",
+  "commit": "1413757aca69",
+  "date": "2026-11-18T16:37:42.834Z",
+  "neuroglancer": {
+    "commit": "2a12b947feca",
+    "pin": "2a12b947feca"
+  },
+  "runnerApi": 1
+}
