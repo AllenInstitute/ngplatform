@@ -18,9 +18,9 @@ Or paste it: ++ctrl+v++ anywhere on the window but a text field. A data
 URL that says what it is (a format prefix such as `zarr://`, a `gs://` or
 `s3://` bucket, or a path ending in `.zarr`, `.n5`, `.nii.gz`, `.trk` and
 the like) is added to the scene at once; another web address is asked
-about first. A pasted Neuroglancer link or state asks whether to open it
-(it replaces the workspace; Undo brings it back) or open it as a new
-scene.
+about first. A pasted Neuroglancer link or state asks whether to open it beside
+the open scenes (the default) or in their place (Undo brings them
+back).
 
 `gs://` and `s3://` buckets are read directly. Private Google Cloud buckets
 are read with a sign-in from **Settings › Sign-in** (`gs+google://` with a

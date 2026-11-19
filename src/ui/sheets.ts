@@ -110,7 +110,8 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
     "aria-label": "Link, state or data URL",
     spellcheck: "false",
   });
-  const asSceneLabel = checkbox("As a new scene", false, () => describe());
+  // Beside the scenes open by default: opening something new does not close what is open.
+  const asSceneLabel = checkbox("Beside the open scenes", true, () => describe());
   const asScene = asSceneLabel.input;
   asScene.id = "open-as-scene";
   const detected = h("span", { class: "detected" });
@@ -138,12 +139,13 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
       if (parsed.kind === "state") {
         const n = layerCount(parsed.state.ng);
         const scenes = (parsed.state.app.platform as { scenes?: unknown[] } | undefined)?.scenes?.length ?? 0;
-        asSceneLabel.hidden = scenes > 1;
-        detected.textContent = `Neuroglancer state, ${n} layer${n === 1 ? "" : "s"}${scenes > 1 ? `, ${scenes} scenes` : ""}. ${asScene.checked && scenes <= 1 ? "Opens as a new scene." : "Replaces the workspace."}`;
+        asSceneLabel.hidden = false;
+        const what = scenes > 1 ? "Its scenes open" : "Opens as a new scene";
+        detected.textContent = `Neuroglancer state, ${n} layer${n === 1 ? "" : "s"}${scenes > 1 ? `, ${scenes} scenes` : ""}. ${asScene.checked ? `${what} beside the open ones.` : "Replaces the workspace: the scenes open are closed."}`;
         openButton.textContent = "Open";
       } else if (parsed.kind === "remote") {
         asSceneLabel.hidden = false;
-        detected.textContent = "A state stored at a URL. It will be fetched and opened.";
+        detected.textContent = `A state stored at a URL. It will be fetched and opened${asScene.checked ? " beside the open scenes" : ", replacing the workspace"}.`;
         openButton.textContent = "Fetch and open";
       } else {
         detected.textContent = `A data source. Adds the dataset “${parsed.name}” to this scene.`;

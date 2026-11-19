@@ -112,6 +112,61 @@ describe("WorkspaceStore", () => {
     expect(engine.layers().map((l) => l.name)).toEqual(["t"]);
   });
 
+  it("opens a workspace of several scenes beside the open ones, with their plugins' state and datasets", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "img", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
+    const incoming = {
+      ng: { layers: [{ name: "t", source: TRACTS }] },
+      app: {
+        "org.x": { version: 1, data: { b: 2 } },
+        platform: {
+          version: 1,
+          activeScene: "a2",
+          datasets: [{ id: "d-1", key: TRACTS, name: "img", source: TRACTS, kind: "auto" }],
+          scenes: [
+            { id: "a1", name: "Scene 1", ng: { layers: [{ name: "img", source: IMAGE }] }, app: { "org.x": { version: 1, data: { b: 1 } } } },
+            { id: "a2", name: "Tracts" },
+          ],
+        },
+      },
+    };
+    store.openBeside(incoming, "unused", "a link");
+    const scenes = store.state().scenes;
+    expect(scenes).toHaveLength(3);
+    expect(scenes[0].name).toBe("Scene 1");
+    expect(scenes[1].name).not.toBe("Scene 1");
+    expect(scenes[2].name).toBe("Tracts");
+    expect(engine.layers().map((l) => l.name)).toEqual(["t"]);
+    expect(store.rawSlice("org.x")).toEqual({ b: 2 });
+    // The tracts are a dataset of their own, named apart from this workspace's "img".
+    expect(new Set(store.datasets().map((d) => d.name)).size).toBe(store.datasets().length);
+    // The scene that was open is still there, as it was.
+    store.switchScene(scenes[0].id);
+    expect(engine.layers().map((l) => l.name)).toEqual(["img"]);
+    store.switchScene(scenes[1].id);
+    expect(store.rawSlice("org.x")).toEqual({ b: 1 });
+  });
+
+  it("undoes opening beside in one step", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "img", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
+    store.openBeside({ ng: { layers: [{ name: "t", source: TRACTS }] }, app: {} }, "From link", "a link");
+    expect(store.state().scenes).toHaveLength(2);
+    store.undo();
+    expect(store.state().scenes).toHaveLength(1);
+    expect(engine.layers().map((l) => l.name)).toEqual(["img"]);
+  });
+
+  it("opens beside an empty workspace in its place, the scene named", () => {
+    const { store, engine } = setup();
+    store.open({ ng: {}, app: {} }, "test");
+    store.openBeside({ ng: { layers: [{ name: "t", source: TRACTS }] }, app: {} }, "An example", "an example");
+    expect(store.state().scenes.map((s) => s.name)).toEqual(["An example"]);
+    expect(engine.layers().map((l) => l.name)).toEqual(["t"]);
+  });
+
   it("keeps plugin slices in the workspace, undoably", () => {
     const { store } = setup();
     store.open({ ng: {}, app: {} }, "test");

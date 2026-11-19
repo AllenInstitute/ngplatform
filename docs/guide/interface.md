@@ -64,7 +64,7 @@ and cannot export MP4: see
 
 | Control | What it does |
 |---|---|
-| **Open** | Open a file or a folder on your computer, a link or a Neuroglancer state, datasets of the other scenes, or one of two examples: the SRB 2026a template or MICrONS (a new empty scene: **New empty scene** in the palette). Opening replaces the workspace. The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
+| **Open** | Open a file or a folder on your computer, a link or a Neuroglancer state, datasets of the other scenes, or one of two examples: the SRB 2026a template or MICrONS (a new empty scene: **New empty scene** in the palette). What you open goes beside the scenes already open, as new scenes (into an empty workspace, in its place); clear **Beside the open scenes** to replace them instead (Undo brings them back). The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
 | **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in Neuroglancer (Google's, or this site's with Zarr Vectors). It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
 | **Neuroglancer** | Open this scene in Google's Neuroglancer, in a new tab (as **Share › Open in Neuroglancer**). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |

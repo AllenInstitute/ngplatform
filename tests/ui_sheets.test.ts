@@ -167,7 +167,7 @@ describe("Open", () => {
     paste("zarr://http://127.0.0.1:9/brain.ome.zarr");
     key(input(), "Enter", { ctrlKey: true });
     await vi.waitFor(() => expect(sheetIsOpen()).toBe(false));
-    expect(openText).toHaveBeenCalledWith("zarr://http://127.0.0.1:9/brain.ome.zarr", "pasted text", false);
+    expect(openText).toHaveBeenCalledWith("zarr://http://127.0.0.1:9/brain.ome.zarr", "pasted text", true); // Beside the open scenes, by default.
   });
 
   it("opens an example from its button", () => {

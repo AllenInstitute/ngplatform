@@ -107,6 +107,37 @@ function uint32Column(
   };
 }
 
+/** A raw one-chunk float32 column, as files for an overlay. */
+function float32Column(
+  path: string,
+  name: string,
+  values: number[],
+): Record<string, Uint8Array | string> {
+  return {
+    [`${path}/zarr.json`]: JSON.stringify({
+      zarr_format: 3,
+      node_type: "array",
+      shape: [values.length],
+      data_type: "float32",
+      chunk_grid: {
+        name: "regular",
+        configuration: { chunk_shape: [values.length] },
+      },
+      chunk_key_encoding: { name: "default" },
+      codecs: [{ name: "bytes", configuration: { endian: "little" } }],
+      fill_value: "NaN",
+      attributes: { zv_array: "object_attribute", name, dtype: "float32", shape: [values.length], fill_sentinel_meaning: "absent" },
+    }),
+    [`${path}/c/0`]: new Uint8Array(Float32Array.from(values).buffer),
+  };
+}
+
+/**
+ * props_types with a column "Length" beside its "length": names that differ only in case cannot both be
+ * directories in a repository cloned on a case-insensitive file system (macOS, Windows), so it is added here.
+ */
+const PROPS_WITH_LENGTH = float32Column("0/object_attributes/Length", "Length", [1, 1, 1, 1, 1, 1]);
+
 async function properties(
   store: ZarrVectorsStoreAccess,
   chain?: string[],
@@ -142,7 +173,7 @@ function query(map: InlineSegmentPropertyMap, text: string) {
 }
 
 describe("object attributes as segment properties", async () => {
-  const { map, warnings } = await properties(access("props_types"));
+  const { map, warnings } = await properties(access("props_types", PROPS_WITH_LENGTH));
 
   it("reads every column without warnings", () => {
     expect(warnings).toEqual([]);

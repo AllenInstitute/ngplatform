@@ -384,3 +384,51 @@ export function moveScene(p: PlatformState, id: string, toIndex: number): Platfo
   scenes.splice(Math.max(0, Math.min(toIndex, scenes.length)), 0, scene);
   return { ...p, scenes };
 }
+
+/**
+ * Adds a workspace opened beside this one: its scenes (one, for a state without scenes, named `name`) after the
+ * active scene, with their plugins' state, the first of them (its active one) made active; its datasets beside
+ * these (those with the same key are the same dataset). The scenes open stay as they are. `incoming` is the
+ * opened workspace's `ng` (its active scene) and `app` (its plugins' slices and `platform`).
+ */
+export function appendWorkspace(
+  p: PlatformState,
+  currentNg: Json,
+  currentApp: Json,
+  incoming: { ng: Json; app: Json },
+  name: string,
+  makeId: IdMaker = randomId,
+): { platform: PlatformState; ng: Json; app: Json; id: string } {
+  const { [PLATFORM_KEY]: rawPlatform, ...incomingApp } = incoming.app;
+  const theirs = readPlatform(rawPlatform === undefined ? {} : { [PLATFORM_KEY]: rawPlatform }, makeId);
+  const single = rawPlatform === undefined || theirs.scenes.length === 1;
+  const taken = p.scenes.map((s) => s.name);
+  let activeId = "";
+  const added: SceneRecord[] = theirs.scenes.map((s) => {
+    const id = makeId("s-");
+    const sceneName = uniqueName(single ? (rawPlatform === undefined ? name : s.name) : s.name, taken);
+    taken.push(sceneName);
+    const { ng: _ng, app: _app, ...rest } = s;
+    if (s.id === theirs.activeScene) {
+      activeId = id;
+      return { ...rest, id, name: sceneName };
+    }
+    return { ...rest, id, name: sceneName, ng: s.ng ?? {}, app: s.app ?? {} };
+  });
+  const index = p.scenes.findIndex((s) => s.id === p.activeScene);
+  const scenes = p.scenes.map((s) => (s.id === p.activeScene ? { ...s, ng: currentNg, app: currentApp } : s));
+  scenes.splice(index + 1, 0, ...added);
+  const keys = new Set(p.datasets.map((d) => d.key));
+  const datasets = [...p.datasets];
+  for (const d of theirs.datasets) {
+    if (keys.has(d.key)) continue;
+    keys.add(d.key);
+    datasets.push({ ...d, id: makeId("d-"), name: uniqueName(d.name, datasets.map((x) => x.name)) });
+  }
+  return { platform: { ...p, scenes, activeScene: activeId, datasets }, ng: incoming.ng, app: incomingApp, id: activeId };
+}
+
+/** Whether a workspace holds nothing yet: one scene, of no kind, without layers. */
+export function isEmptyWorkspace(p: PlatformState, activeNg: Json): boolean {
+  return p.scenes.length === 1 && p.scenes[0].kind === undefined && layersOf(activeNg).length === 0;
+}

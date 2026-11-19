@@ -120,7 +120,8 @@ def props_fixture():
              tail_absent, None, None),
             ("with_inf", np.array([1, np.inf, 3, 2, 1, 2], "float32"), None, None, None),
             ("vec", np.arange(30, dtype="float32").reshape(6, 5), None, None, None),
-            ("Length", np.full(6, 1, "float32"), None, None, None),
+            # "Length" beside this "length" is added in objects.spec.ts: names differing only in case cannot
+            # both be directories where the repository is cloned on a case-insensitive file system.
             ("length", np.full(6, 2, "float32"), None, None, None),
             ("label", np.arange(6, dtype="float32"), None, None, None),
             ("bad-name", np.arange(6, dtype="uint8"), None, None, None),
@@ -269,16 +270,6 @@ def main():
             "rgb": [rng.random((len(p), 3)).astype("float32") for p in polys]
         },
     )
-
-    # A pyramid built over a compressed level 0: coarse levels come out raw.
-    write_polylines(
-        fresh("pyr_zstd"),
-        polys,
-        chunk_shape=chunk_shape,
-        compressor="zstd",
-        object_attributes={"length": object_attributes["length"]},
-    )
-    build_pyramid(path("pyr_zstd"), factors=[(2, 2)])
 
     points = (rng.random((60, 3)) * 30).astype("float32")
     point_ids = np.repeat(np.array([7, 42, 1000], dtype="int64"), 20)

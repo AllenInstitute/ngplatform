@@ -94,8 +94,8 @@ Dapi channel · **1-99%**.
   scene at once when it plainly is one (a format prefix, a bucket, or a
   path ending in `.zarr`, `.n5`, `.nii.gz`, `.trk` and the like); another
   web address is asked about first; a pasted Neuroglancer link or state
-  asks whether to open it (it replaces the workspace) or open it as a new
-  scene (`pasteAction` in `src/core/state_io.ts`).
+  asks whether to open it beside the open scenes (the default) or in their
+  place (`pasteAction` in `src/core/state_io.ts`; `WorkspaceStore.openBeside`).
 - The Display tab (once Render) shows the shader's controls (contrast, colour) above the
   shader's code, so the contrast is in view without scrolling.
 - Picking another view of a dataset in the Layers tab's header keeps the

@@ -16,6 +16,9 @@ import {
   activeScene,
   addDataset as addDatasetRecord,
   addScene,
+  appendWorkspace,
+  isEmptyWorkspace,
+  randomId,
   type DatasetRecord,
   datasetKey,
   datasetOfLayer,
@@ -296,13 +299,32 @@ export class WorkspaceStore {
     );
   }
 
+  /**
+   * Opens a workspace beside this one: its scenes (a state without scenes as one, named `name`) after the active
+   * scene, with their plugins' state, and its datasets; the scenes open stay. Into a workspace that holds nothing
+   * yet it opens as `open` does, so no blank scene is left beside it.
+   */
+  openBeside(state: WorkspaceState, name: string, from: string): void {
+    if (isEmptyWorkspace(this.platform, this.ng())) {
+      if (state.app[PLATFORM_KEY] !== undefined) return this.open(state, from);
+      const id = randomId("s-");
+      const platform: PlatformState = { version: 1, scenes: [{ id, name }], activeScene: id, datasets: [] };
+      return this.open({ ...state, app: { ...state.app, [PLATFORM_KEY]: platform } }, from);
+    }
+    this.opened++;
+    const { platform, ng, app } = appendWorkspace(this.platform, this.ng(), this.app, { ng: this.withRules(state.ng), app: state.app }, name);
+    const added = platform.scenes.length - this.platform.scenes.length;
+    this.nextLabel = "Opened";
+    this.changePlatform(platform, ng, app);
+    this.options.log(
+      added > 1 ? `Opened ${added} scenes from ${from}, beside the others.` : `Opened ${from} as the scene “${activeScene(this.platform).name}”.`,
+      "ok",
+    );
+  }
+
   /** Opens a Neuroglancer state as a new scene beside the current ones. */
   openAsScene(ng: Json, name: string, from: string): void {
-    const { platform, ng: _empty } = addScene(this.platform, this.ng(), { name });
-    this.platform = platform;
-    this.engine.setState(ng);
-    this.settle();
-    this.options.log(`Opened ${from} as the scene “${activeScene(this.platform).name}”.`, "ok");
+    this.openBeside({ ng, app: {} }, name, from);
   }
 
   undo(): boolean {

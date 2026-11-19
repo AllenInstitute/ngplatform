@@ -1185,10 +1185,10 @@ export class Shell {
     };
     if (action.kind === "open") {
       const { text } = action;
-      offer("Open the pasted link? It replaces this workspace (Undo brings it back).", [
+      offer("Open the pasted link beside the open scenes, or in their place (Undo brings them back)?", [
         { label: "Not now" },
-        { label: "As a new scene", run: () => void this.openText(text, "the pasted link", true) },
-        { label: "Open", primary: true, run: () => void this.openText(text, "the pasted link", false) },
+        { label: "Replace", run: () => void this.openText(text, "the pasted link", false) },
+        { label: "Open beside", primary: true, run: () => void this.openText(text, "the pasted link", true) },
       ]);
       return;
     }
@@ -1456,8 +1456,8 @@ export class Shell {
     if (example === undefined) throw new CommandError(`no example ${id}`);
     this.switchOnForTab(example.plugins ?? []);
     const state = example.state();
-    // The views' defaults where the example says nothing (src/core/view_defaults.ts).
-    this.wb.store.open({ ...state, ng: withViewDefaults(state.ng) }, `the example “${example.title}”`);
+    // The views' defaults where the example says nothing (src/core/view_defaults.ts); beside the scenes open.
+    this.wb.store.openBeside({ ...state, ng: withViewDefaults(state.ng) }, example.title, `the example “${example.title}”`);
   }
 
   /** Opens whatever was pasted or linked; returns whether it worked. */
@@ -1471,8 +1471,7 @@ export class Shell {
       }
       const parsed = parseInput(text, this.wb.parseFragment);
       if (parsed.kind === "state") {
-        const hasScenes = (parsed.state.app.platform as { scenes?: unknown[] } | undefined)?.scenes !== undefined;
-        if (asScene && !hasScenes) store.openAsScene(parsed.state.ng, "Opened scene", from);
+        if (asScene) store.openBeside(parsed.state, "Opened scene", from);
         else store.open(parsed.state, from, { resume });
       } else if (parsed.kind === "remote") {
         this.setStatus("busy", "Fetching state");
@@ -1484,7 +1483,7 @@ export class Shell {
         }
         const again = parseInput(JSON.stringify(json), this.wb.parseFragment);
         if (again.kind !== "state") throw new InputError("That URL did not hold a state.");
-        if (asScene) store.openAsScene(again.state.ng, layerNameFor(parsed.url), parsed.url);
+        if (asScene) store.openBeside(again.state, layerNameFor(parsed.url), parsed.url);
         else store.open(again.state, parsed.url);
       } else {
         store.addDataset({ source: parsed.url, name: parsed.name });
