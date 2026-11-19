@@ -15,6 +15,7 @@
  * pixel by pixel as the camera rests.
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
+import { drawColourBlended } from "./blend.js";
 
 /** How long a frame of the same view takes to fade in over the one before it. */
 export const FADE_MS = 250;
@@ -30,6 +31,11 @@ uniform sampler2D uPrevAlpha;
 uniform float uPrevHasAlpha;
 uniform float uMix;
 uniform float uSplit;
+// The colour output blended by the picture's alpha (blend.ts); 0: each pixel the picture's where at least half its
+// paths met something, opaque.
+uniform float uBlend;
+bool unseen(vec4 c) { return c.a < (uBlend > 0.5 ? 0.004 : 0.5); }
+vec4 shown(vec4 c) { return uBlend > 0.5 ? c : vec4(c.rgb / max(c.a, 1e-3), 1.0); }
 // The pixels the picture takes from the live image as it comes in over it (live.ts draws the others).
 bool liveHere() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) < uSplit; }
 vec4 premul(sampler2D col, sampler2D al, float hasAlpha, vec2 uv) {
@@ -62,11 +68,11 @@ void main() {
   vec2 uv = (gl_FragCoord.xy - uViewport.xy) / uViewport.zw;
   uv.y = 1.0 - uv.y;
   vec4 c = picture(uv);
-  if (c.a < 0.5) discard;
+  if (unseen(c)) discard;
   float d = uHasDepth > 0.5 ? texture(uDepth, uv).r : 0.5;
   d = clamp(d, 0.0, 0.99999);
   gl_FragDepth = d;
-  out_color = vec4(c.rgb / max(c.a, 1e-3), 1.0);
+  out_color = shown(c);
   out_z = vec4(1.0 - d);
   out_pickId = vec4(0.0);
 }`;
@@ -116,8 +122,8 @@ layout(location = ${o.pick}) out highp vec4 out_pickId;
 void main() {
   if (vValid < 0.999 || liveHere()) discard;
   vec4 c = picture(vUv);
-  if (c.a < 0.5) discard;
-  out_color = vec4(c.rgb / max(c.a, 1e-3), 1.0);
+  if (unseen(c)) discard;
+  out_color = shown(c);
   out_z = vec4(1.0 - gl_FragCoord.z);
   out_pickId = vec4(0.0);
 }`;
@@ -321,12 +327,14 @@ export class PictureDrawer implements Drawer3d {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.alpha!);
     gl.uniform1i(gl.getUniformLocation(program, "uAlpha"), 2);
+    gl.uniform1f(gl.getUniformLocation(program, "uBlend"), 1);
     gl.bindVertexArray(this.vao!);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    drawColourBlended(gl, frame.outputs.color, () => gl.drawArrays(gl.TRIANGLES, 0, 3), true);
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
     this.fadeOn();
   }
+
 
   /** The picture before (units 4 and 5) and how far the new one has faded in over it. */
   private bindMix(gl: WebGL2RenderingContext, program: WebGLProgram): void {
@@ -412,9 +420,10 @@ export class PictureDrawer implements Drawer3d {
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.dist!);
     gl.uniform1i(u("uDist"), 3);
+    gl.uniform1f(u("uBlend"), 1);
     gl.bindVertexArray(this.vao!);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.grid!.buffer);
-    gl.drawElements(gl.TRIANGLES, this.grid!.count, gl.UNSIGNED_INT, 0);
+    drawColourBlended(gl, frame.outputs.color, () => gl.drawElements(gl.TRIANGLES, this.grid!.count, gl.UNSIGNED_INT, 0), true);
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
     return true;

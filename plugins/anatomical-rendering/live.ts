@@ -30,6 +30,7 @@ import type { ViewSpec } from "./client.js";
 import { brickBounds, cameraAxes, invert, type Level8, type LevelPreset, levelTable, mul, readLevel, rowMajor, TF_SIZE } from "./local/local.js";
 import { bindPicks, GEO_PICK_GLSL, GeometryTextures, geometryGlsl, geoWidth, type LiveGeometryLook } from "./geometry/live_geometry.js";
 import type { Surfaces } from "./geometry/surfaces.js";
+import { drawColourBlended } from "./blend.js";
 
 /** The voxels of the level read for the object by default (Quality › Object); this browser's path tracer shares its own. */
 export const LIVE_VOXELS = 64e6;
@@ -841,6 +842,9 @@ float firstHit(vec3 ow, vec3 dw, out float obj) {
   {
     int p_;
     vec2 c_;
+    // The camera's ray meets a surface less than opaque as solid (as the trace's first step does): by the layer's
+    // chance instead, the same pixels missed it in every pass, and were left out (a fixed speckle).
+    geoSolid = true;
     float h = geoHit(ow, dw, 0.0, 1e30, p_, c_);
     if (h > 0.0) {
       tsurf = h;
@@ -963,11 +967,14 @@ void main() {
     vec3 g = grad(k, v);
     float gm = length(g);
     if (uInset[k] > 0.0 && gm > 1e-6) {
-      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
+      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface. Only
+      // where the collision lies in a surface's partial volume (under 0.3 of the opacity of the tissue beneath it),
+      // as pathtrace.wgsl does: everywhere, every point beside a thin bright line took the line's colour, and lines
+      // and edges spread out to both sides as the path-traced picture came in.
       vec3 d = g * (uInset[k] / gm);
       vec4 ca = tf(k, tex(k, v + d));
       vec4 cb = tf(k, tex(k, v - d));
-      albedo = (ca.a >= cb.a ? ca : cb).rgb * uAlbedo[k];
+      if (tf(k, tex(k, v)).a < 0.3 * max(ca.a, cb.a)) albedo = (ca.a >= cb.a ? ca : cb).rgb * uAlbedo[k];
     }
     float psurf = uShadeMix[k] * (1.0 - exp(-uGradScale[k] * gm));
     vec3 wo = -dir;
@@ -1476,10 +1483,9 @@ export class LiveVolume {
       gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
       gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
       // Surfaces less than opaque over nothing: the colour output blended by how much they cover, where it can be alone.
-      const blend = surf !== undefined ? this.colourBlend(gl, frame.outputs.color) : undefined;
       gl.bindVertexArray(this.vao!);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      blend?.();
+      if (surf !== undefined) drawColourBlended(gl, frame.outputs.color, () => gl.drawArrays(gl.TRIANGLES, 0, 3), false);
+      else gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     const composite = traced > 0 ? this.program(gl, `composite ${JSON.stringify(frame.outputs)}`, () => COMPOSITE_FS(frame.outputs), true) : undefined;
     if (composite !== undefined) {
@@ -1489,9 +1495,9 @@ export class LiveVolume {
       gl.uniform4f(u("uViewport"), vp[0], vp[1], vp[2], vp[3]);
       gl.uniform1f(u("uExposure"), primary.exposure);
       gl.uniform2f(u("uBand"), split * (1 - traced), split);
-      // The colour output blended by coverage (the depth and pick outputs not), where the GPU can blend it alone.
-      const unblend = this.colourBlend(gl, frame.outputs.color);
-      gl.uniform1f(u("uMinCover"), unblend !== undefined ? 0.02 : 0.5);
+      // The colour output blended by coverage (the depth and pick outputs not): blend.ts, in two passes where the
+      // GPU cannot blend one output alone, so a pixel partly covered is never cut at half its paths (speckle).
+      gl.uniform1f(u("uMinCover"), 0.02);
       gl.activeTexture(gl.TEXTURE0 + UNIT.sum);
       gl.bindTexture(gl.TEXTURE_2D, this.sumRead!);
       gl.uniform1i(u("uSum"), UNIT.sum);
@@ -1500,8 +1506,7 @@ export class LiveVolume {
       gl.uniform1i(u("uAux"), UNIT.aux);
       bindPicks(gl, p, look.geometry ?? { colours: new Float32Array(), key: "", layers: [], exposure: 1 });
       gl.bindVertexArray(this.vao!);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      unblend?.();
+      drawColourBlended(gl, frame.outputs.color, () => gl.drawArrays(gl.TRIANGLES, 0, 3), false);
     }
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
@@ -1618,14 +1623,6 @@ export class LiveVolume {
    * Blends colour output `color` alone by its alpha (the depth and pick outputs not), where the GPU can
    * (OES_draw_buffers_indexed) and nothing blends already: what undoes it; undefined where it cannot.
    */
-  private colourBlend(gl: WebGL2RenderingContext, color: number): (() => void) | undefined {
-    const ext = gl.getExtension("OES_draw_buffers_indexed") as { enableiOES(t: number, i: number): void; disableiOES(t: number, i: number): void; blendFuncSeparateiOES(i: number, a: number, b: number, c: number, d: number): void; blendEquationiOES(i: number, m: number): void } | null;
-    if (ext === null || gl.isEnabled(gl.BLEND)) return undefined;
-    ext.enableiOES(gl.BLEND, color);
-    ext.blendEquationiOES(color, gl.FUNC_ADD);
-    ext.blendFuncSeparateiOES(color, gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
-    return () => ext.disableiOES(gl.BLEND, color);
-  }
 
   /** An image's level on the GPU (once), and its clear bricks under its table (again when the table changes). */
   private upload(gl: WebGL2RenderingContext, v: Vol, table: Float32Array, tfKey: string): void {

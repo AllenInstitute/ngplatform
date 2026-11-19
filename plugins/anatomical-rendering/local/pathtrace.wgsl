@@ -303,7 +303,9 @@ fn trace(@builtin(global_invocation_id) gid: vec3u) {
     }
     if (tc < 0.0) {
       if (bounce == 0u) {
-        L = pv(P_BG) * P[P_BG + 3u];
+        // Added to what surfaces less than opaque in front gave on the way (not in place of it, which left them
+        // their light times their opacity twice over).
+        L += thr * pv(P_BG) * P[P_BG + 3u];
         alpha = P[P_BG + 3u];
       } else {
         L += thr * envlight(dw);
@@ -383,6 +385,8 @@ fn firsthit(@builtin(global_invocation_id) gid: vec3u) {
   let iv = boxhit(ov, dv);
   var out = 1.0;
   // A surface nearer than where the volume turns opaque: its depth.
+  // Met as solid by the camera's ray, as in trace (by chance, the same pixels would miss it every pass).
+  geoSolid = true;
   let sh = geoTrace(ray.o, ray.d, 0.0, 1e30, false);
   let tsurf = select(1e30, sh.t, sh.t > 0.0);
   if (sh.t > 0.0) {
