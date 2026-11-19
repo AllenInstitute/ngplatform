@@ -46,12 +46,13 @@ import { type Mask, type Prompt, type QuickSelectMethod, type QuickSelectRequest
 import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
 import { SamModel, samMethod } from "./sam_model.js";
 import { MedSam2Model, medsam2Method } from "./medsam2_model.js";
+import { SamMed3dModel, sammed3dMethod } from "./sammed3d_model.js";
 import { cropped, editsZarr, niftiBytes, niftiParts, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
 import { SaveWorker } from "./save_client.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { LIST_MAX, nextSegment, type SegmentRow, segmentRows, type SegmentsState, visibility, withVisibility } from "./segments.js";
 import { PALETTE_SEGMENTS, type Reference, Session } from "./session.js";
-import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
+import { brushes, cycle, draws, selects, stepRadius, type Tool, TOOLS } from "./tools.js";
 
 /** How long the model's worker stays after Quick select is left (ms). */
 export const SAM_RELEASE_WAIT = 30_000;
@@ -125,6 +126,7 @@ export class Editor implements LabelVolumes {
   /** Quick select's model (AI (MobileSAM)): its files, the runtime, the last timings. */
   readonly sam = new SamModel();
   readonly medsam2 = new MedSam2Model();
+  readonly sammed3d = new SamMed3dModel();
   /** Compresses and writes saves off the main thread. */
   private readonly saver = new SaveWorker();
   private readonly painter: Painter;
@@ -152,6 +154,8 @@ export class Editor implements LabelVolumes {
   fillBy: "image" | "label" = "label";
   reach = 32;
   method = "threshold";
+  /** The model the AI segment tool uses (3-D at once by default). */
+  aiMethod = "sammed3d";
   tolerance = 0.1;
   /** Quick select shows its mask first (Enter paints it, Escape drops it), or paints at once. */
   quickMode: "preview" | "paint" = "preview";
@@ -207,7 +211,7 @@ export class Editor implements LabelVolumes {
       drag: (p) => this.drag(p),
       up: () => this.up(),
       ring: (p) => this.ring(p),
-      boxDrag: () => this.tool === "quick",
+      boxDrag: () => selects(this.tool),
       pathDrag: () => this.tool === "lasso",
       wheel: (notches) => {
         if (!brushes(this.tool)) return false;
@@ -232,6 +236,8 @@ export class Editor implements LabelVolumes {
       this.sam.onChanged(() => this.changed()),
       this.quickSelect.register(medsam2Method(this.medsam2)),
       this.medsam2.onChanged(() => this.changed()),
+      this.quickSelect.register(sammed3dMethod(this.sammed3d)),
+      this.sammed3d.onChanged(() => this.changed()),
     );
     const c = ctx.commands;
     c.register("segmentation.newLayer", () => ctx.ui.showPanel(SEGMENTATION_PANEL));
@@ -361,6 +367,7 @@ export class Editor implements LabelVolumes {
     this.previewOverlay.dispose();
     this.sam.dispose();
     this.medsam2.dispose();
+    this.sammed3d.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
     clearTimeout(this.samTimer);
@@ -399,13 +406,14 @@ export class Editor implements LabelVolumes {
   private releaseSamLater(): void {
     clearTimeout(this.samTimer);
     this.samTimer = undefined;
-    if (this.editing && this.tool === "quick") return;
-    if (!this.sam.started && !this.medsam2.started) return;
+    if (this.editing && selects(this.tool)) return;
+    if (!this.sam.started && !this.medsam2.started && !this.sammed3d.started) return;
     this.samTimer = setTimeout(() => {
       this.samTimer = undefined;
-      if (this.editing && this.tool === "quick") return;
+      if (this.editing && selects(this.tool)) return;
       this.sam.release();
       this.medsam2.release();
+      this.sammed3d.release();
     }, SAM_RELEASE_WAIT);
   }
 
@@ -1228,6 +1236,7 @@ export class Editor implements LabelVolumes {
         break;
       }
       case "quick":
+      case "ai":
         // Shift or Alt: a click on what is not wanted (for a method that refines).
         this.quickStart = { voxel, axis: normal ? dominant(normal) : undefined, negative: e?.shiftKey === true || e?.altKey === true };
         this.quickEnd = voxel;
@@ -1288,7 +1297,7 @@ export class Editor implements LabelVolumes {
       if (Math.hypot(where.voxel[u] - lu, where.voxel[w] - lw) >= 0.25) lasso.points.push([where.voxel[u], where.voxel[w]]);
       return;
     }
-    if (this.tool === "quick") {
+    if (selects(this.tool)) {
       const where = this.locate(p);
       if (where) this.quickEnd = where.voxel;
       return;
@@ -1310,7 +1319,7 @@ export class Editor implements LabelVolumes {
       this.enqueue(() => this.fillLasso(lasso));
       return;
     }
-    if (this.tool === "quick" && this.quickStart !== undefined) {
+    if (selects(this.tool) && this.quickStart !== undefined) {
       const start = this.quickStart;
       const end = this.quickEnd ?? start.voxel;
       this.quickStart = undefined;
@@ -1446,15 +1455,31 @@ export class Editor implements LabelVolumes {
 
   /** The method chosen (the first if it has gone). */
   quickMethod(): QuickSelectMethod {
-    return this.quickSelect.methods().find((m) => m.id === this.method) ?? this.quickSelect.methods()[0];
+    const list = this.quickMethods();
+    const want = this.tool === "ai" ? this.aiMethod : this.method;
+    return list.find((m) => m.id === want) ?? list[0] ?? this.quickSelect.methods()[0];
+  }
+
+  /** The methods the tool offers: the models for AI segment, the others (Threshold, and plugins') for Quick select. */
+  quickMethods(): QuickSelectMethod[] {
+    const ai = this.tool === "ai";
+    return this.quickSelect.methods().filter((m) => (m.ai === true) === ai);
+  }
+
+  /** Chooses the tool's method. */
+  chooseMethod(id: string): void {
+    if (this.tool === "ai") this.aiMethod = id;
+    else this.method = id;
+    this.changed();
   }
 
   /** What a method may know of the volume's image beyond the block it is handed. */
-  private quickExtras(session: Session): Pick<QuickSelectRequest, "read" | "source" | "context" | "progress"> {
+  private quickExtras(session: Session): Pick<QuickSelectRequest, "read" | "source" | "context" | "progress" | "grid"> {
     const r = session.reference;
     const affine = session.referenceAffine();
     return {
       read: (lo, hi, signal) => session.imageBox(lo, hi, signal),
+      grid: r === undefined ? undefined : { levels: session.referenceLevels(), labelToRas: session.volume.voxelToRas, read: (level, gridToLabel, size, signal) => session.imageGrid(level, gridToLabel, size, signal) },
       source:
         r === undefined
           ? undefined
@@ -1507,7 +1532,8 @@ export class Editor implements LabelVolumes {
       const axis = start.axis;
       const index = a[axis];
       const q = this.quickPrompts;
-      const same = q !== undefined && q.session === session && q.method === method.id && q.axis === axis && q.index === index;
+      // A 3-D method's clicks add up whichever section they are in.
+      const same = q !== undefined && q.session === session && q.method === method.id && (method.volumetric === true || (q.axis === axis && q.index === index));
       if (prompt.kind === "box") this.quickPrompts = { session, method: method.id, axis, index, box: { lo, hi }, points: [] };
       else if (same) q.points.push({ at: a, positive: !start.negative });
       else if (start.negative) {

@@ -25,7 +25,8 @@ import { niftiBytes } from "./save.js";
 import { groupOf, grouped } from "./segment_groups.js";
 import { segmentName } from "./segments.js";
 import type { Session } from "./session.js";
-import { brushes, TOOLS } from "./tools.js";
+import { brushes, selects, TOOLS } from "./tools.js";
+import { SAMMED3D, type SamMed3dModel, sammed3dBase } from "./sammed3d_model.js";
 
 /** Past this many items (rows and group heads) the segment list draws only those in view. */
 export const VIRTUAL_MIN = 200;
@@ -616,16 +617,22 @@ export class Panel {
       e.canSpread(),
       [m.state, m.progress, m.kept, m.error, m.running, m.threads, m.encodeMs, m.decodeMs, m.provider],
       [e.medsam2.state, e.medsam2.progress, e.medsam2.kept, e.medsam2.bytes, e.medsam2.error, e.medsam2.running, e.medsam2.threads, e.medsam2.encodeMs, e.medsam2.decodeMs, e.medsam2.provider],
+      [e.sammed3d.state, e.sammed3d.progress, e.sammed3d.kept, e.sammed3d.bytes, e.sammed3d.error, e.sammed3d.running, e.sammed3d.threads, e.sammed3d.encodeMs, e.sammed3d.decodeMs, e.sammed3d.provider],
+      e.tool, e.aiMethod,
     ];
   }
 
   private toolRow(): HTMLElement {
     const e = this.editor;
-    const tools = el("div", { class: "segmented" });
-    for (const t of TOOLS) {
-      tools.append(el("button", { type: "button", title: `${t.hint} (${t.key})`, "aria-pressed": String(e.editing && e.tool === t.id), onclick: () => e.setTool(t.id) }, t.title));
-    }
-    return tools;
+    // Drawing by hand, and segmenting with a model: two rows.
+    const row = (group: "draw" | "ai", label: string) => {
+      const tools = el("div", { class: "segmented" });
+      for (const t of TOOLS.filter((x) => x.group === group)) {
+        tools.append(el("button", { type: "button", title: `${t.hint} (${t.key})`, "aria-pressed": String(e.editing && e.tool === t.id), onclick: () => e.setTool(t.id) }, t.title));
+      }
+      return el("div", { class: "stack" }, el("span", { class: "faint" }, label), tools);
+    };
+    return el("div", { class: "stack" }, row("draw", "Draw"), row("ai", "AI segmentation"));
   }
 
   private toolOptions(): HTMLElement | null {
@@ -678,17 +685,15 @@ export class Panel {
           }, { min: 1, max: 256, step: 1 }), { info: "The fill stays in a box this far round the click." }),
         );
       }
-    } else if (e.tool === "quick") {
-      const methods = e.quickSelect.methods();
+    } else if (selects(e.tool)) {
+      const methods = e.quickMethods();
       const method = e.quickMethod();
       options.append(
-        field("Method", select(methods.map((m) => [m.id, m.title]), method.id, (v) => {
-          e.method = v;
-          e.changed();
-        }, "Method"), method.description ? { info: method.description } : undefined),
+        field(e.tool === "ai" ? "Model" : "Method", select(methods.map((m) => [m.id, m.title]), method.id, (v) => e.chooseMethod(v), e.tool === "ai" ? "Model" : "Method"), method.description ? { info: method.description } : undefined),
       );
       if (method.id === MOBILE_SAM.id) options.append(this.model(e.sam, { name: MOBILE_SAM.name, bytes: MODEL_BYTES, about: `${MOBILE_SAM.name} (${MOBILE_SAM.licence}): an image encoder and a prompt decoder from Hugging Face (${MOBILE_SAM.files}), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr. Click to include, Shift+click to exclude, or drag a box: each click refines the mask in its section; the first in a region computes the image's embedding, later ones are quick.` }));
       else if (method.id === MEDSAM2.id) options.append(this.model(e.medsam2, { name: MEDSAM2.name, bytes: e.medsam2.bytes, about: `${MEDSAM2.name} (${MEDSAM2.licence}, ${MEDSAM2.home}): SAM 2.1 tiny fine-tuned on medical images, as four ONNX graphs (tools/medsam2/), from ${medsam2Base()} (localStorage ngplatform.medsam2.url sets another address), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr. Drag a box (or click; Shift+click excludes) in a 2-D view to segment its section; then Spread tracks it section by section, each step remembering the sections before, until the object ends or the count is reached. Each section costs one encoding (about half a second on the CPU, less on WebGPU).` }));
+      else if (method.id === SAMMED3D.id) options.append(this.model(e.sammed3d, { name: SAMMED3D.name, bytes: e.sammed3d.bytes, about: `${SAMMED3D.name}-turbo (${SAMMED3D.licence}, ${SAMMED3D.home}): a 3-D Segment Anything trained on CT and MRI, as two ONNX graphs (tools/sammed3d/), from ${sammed3dBase()} (localStorage ngplatform.sammed3d.url sets another address), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr. Click on a structure (or drag a box round it) in a 2-D view: it is segmented in 3-D in a 19 cm cube round the click, at 1.5 mm, read from the image's nearest level. Click again in any section to refine it (Shift+click: not wanted); the cube's features are kept, so a click after the first takes the decoder alone. The mask is put on the label volume's grid: a label volume much finer than 1.5 mm makes large masks; one of 0.5–1 mm suits it.` }));
       else if (method.id === "threshold") {
         options.append(
           field("Tolerance", numberInput(e.tolerance, (v) => {
@@ -738,7 +743,7 @@ export class Panel {
   }
 
   /** The model: kept in this browser or not (a progress bar while it comes), what it runs on, its last timings; its size and licence behind an info. */
-  private model(m: SamModel | MedSam2Model, meta: { name: string; bytes: number; about: string }): HTMLElement {
+  private model(m: SamModel | MedSam2Model | SamMed3dModel, meta: { name: string; bytes: number; about: string }): HTMLElement {
     const e = this.editor;
     const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
     const box = el(

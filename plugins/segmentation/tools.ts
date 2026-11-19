@@ -5,10 +5,12 @@
  * brush's size steps.
  */
 
-export type Tool = "move" | "brush" | "erase" | "lasso" | "fill" | "pick" | "quick";
+export type Tool = "move" | "brush" | "erase" | "lasso" | "fill" | "pick" | "quick" | "ai";
 
 export interface ToolInfo {
   id: Tool;
+  /** Drawing by hand (and threshold selection), or segmenting with a model. */
+  group: "draw" | "ai";
   title: string;
   /** The key that picks it (while a label volume is edited). */
   key: string;
@@ -16,14 +18,18 @@ export interface ToolInfo {
 }
 
 export const TOOLS: ToolInfo[] = [
-  { id: "move", title: "Move", key: "M", hint: "Move the views: the left button drags, the wheel steps through sections, as Neuroglancer does" },
-  { id: "brush", title: "Brush", key: "B", hint: "Paint the active segment; Alt+wheel or [ and ] change the size" },
-  { id: "erase", title: "Erase", key: "E", hint: "Paint 0; Alt+wheel or [ and ] change the size" },
-  { id: "lasso", title: "Lasso", key: "L", hint: "Draw a closed outline in a 2-D view: inside it is painted with the active segment (or erased), in that section" },
-  { id: "fill", title: "Fill", key: "F", hint: "Fill the region clicked with the active segment, in its section (2-D) or a box round it (3-D)" },
-  { id: "pick", title: "Pick segment", key: "I", hint: "The segment clicked becomes the active one" },
-  { id: "quick", title: "Quick select", key: "Q", hint: "Drag a box round a structure in a 2-D view, or click it" },
+  { id: "move", group: "draw", title: "Move", key: "M", hint: "Move the views: the left button drags, the wheel steps through sections, as Neuroglancer does" },
+  { id: "brush", group: "draw", title: "Brush", key: "B", hint: "Paint the active segment; Alt+wheel or [ and ] change the size" },
+  { id: "erase", group: "draw", title: "Erase", key: "E", hint: "Paint 0; Alt+wheel or [ and ] change the size" },
+  { id: "lasso", group: "draw", title: "Lasso", key: "L", hint: "Draw a closed outline in a 2-D view: inside it is painted with the active segment (or erased), in that section" },
+  { id: "fill", group: "draw", title: "Fill", key: "F", hint: "Fill the region clicked with the active segment, in its section (2-D) or a box round it (3-D)" },
+  { id: "pick", group: "draw", title: "Pick segment", key: "I", hint: "The segment clicked becomes the active one" },
+  { id: "quick", group: "draw", title: "Quick select", key: "Q", hint: "Drag a box round a structure in a 2-D view, or click it: by threshold" },
+  { id: "ai", group: "ai", title: "AI segment", key: "A", hint: "Segment with a model: a box or clicks in a 2-D view; a section, a section tracked through the volume, or 3-D at once" },
 ];
+
+/** Whether a tool proposes a mask from a box or clicks (quick select, or a model's). */
+export const selects = (tool: Tool): boolean => tool === "quick" || tool === "ai";
 
 /** Whether a tool takes the left button in the views. */
 export const draws = (tool: Tool): boolean => tool !== "move";

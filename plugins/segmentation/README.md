@@ -69,6 +69,10 @@ with WebKnossos.
 | `medsam2_graphs.ts` | The four ONNX graphs behind the tracker's interface, on ONNX Runtime Web |
 | `medsam2_worker.ts` | MedSAM2's worker: its files (manifest.json), sessions, sections' features, the track |
 | `medsam2_model.ts` | The AI 3-D (MedSAM2) method: a section from a prompt, and `propagate` (Spread tracks) |
+| `hosted_model.ts` | A model whose files are served from an address and run in a worker of its own (MedSAM2's, SAM-Med3D's): its state, download, calls |
+| `sammed3d.ts` | SAM-Med3D's cube, image, points and mask back on the label grid (pure) |
+| `sammed3d_worker.ts` | SAM-Med3D's worker: its files, the cubes' embeddings, the decoder with the last mask fed back |
+| `sammed3d_model.ts` | The AI 3-D (SAM-Med3D) method: where the prompts put the cube (`cubePrompts`), a 3-D mask from them |
 | `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box; edits alone, the whole of a volume edited in place, edits read back |
 | `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload; edits let go from memory read back |
@@ -499,6 +503,63 @@ through a video.
 Not done: SAM 2's filling of small holes (`fill_hole_area`), refining a
 tracked section with clicks, WebGPU timings, a home for the model files.
 
+## AI 3-D segmentation (SAM-Med3D)
+
+**AI 3-D (SAM-Med3D)**, the AI segment tool's default model, segments in
+3-D at once. [SAM-Med3D](https://github.com/uni-medical/SAM-Med3D)-turbo
+(Wang et al., Apache-2.0) is a ViT-B Segment Anything on 128³ crops of CT
+and MRI at 1.5 mm, with point prompts and the last mask fed back.
+
+- **The model**: two ONNX graphs made by `tools/sammed3d/` (its README has
+  the export, the checks and the measurements): the encoder (a cube to its
+  embedding) and the decoder (points, labels and the last 32³ logits to
+  new ones). 202 MB with float16 weights; `manifest.json` as MedSAM2's.
+  They load from `sammed3dBase()`: localStorage `ngplatform.sammed3d.url`,
+  else `models/sammed3d/` beside the app (`npm run dev` only).
+- **The cube** (`sammed3d.ts`): 128 voxels a side in the world's axes (RAS,
+  as the model's training canonicalised them), read through the session's
+  `imageGrid` (`QuickSelectRequest.grid`: any level of the image, any grid)
+  from the coarsest level no coarser than its spacing, nearest; NaN as 0;
+  z-normalised over the values above 0 (torchio's `ZNormalization` with
+  `x > 0`), x slowest as the tensor is. Points are cube voxel coordinates.
+  The 32³ logits are taken to 128³ trilinearly (align_corners false), above
+  0 selected, and put on the label grid nearest, within the box round
+  them; more than 256 M label voxels in that box is refused.
+- **Where the cube goes** (`cubePrompts`): the model was trained on crops
+  centred on the structure, and does well only within about a tenth of the
+  cube of that (tools/sammed3d/README.md: a kidney Dice 0.92 centred, 0.08
+  20 mm off; its IoU output does not tell them apart). So a box centres it
+  (its middle on its slice; its extent sets the spacing, the model's 1.5 mm
+  or coarser so the box fills at most 80 %), with the clicks as the points,
+  else the box's middle; without a box the first click wanted centres it.
+- **Refining**: the method is `volumetric` (clicks in any section add to
+  the prompt), and the worker keeps the last two cubes' embeddings and each
+  one's last logits; a click on the same cube runs the decoder alone with
+  them fed back, as SAM-Med3D's inference does click by click.
+
+**Checked**:
+
+- The graphs against the model in PyTorch (encoder within 2.5e-6, decoder
+  within 1e-6 for 1, 2 and 5 points).
+- The app's image against the official pipeline's on the same grid
+  (correlation 0.96–0.98; Dice within 0.02 of the official).
+- The app's path in Python (`tools/sammed3d/quality.py`, fp16 graphs) on
+  AMOS amos_0013: mean Dice 0.652 over 15 organs from a box on each organ's
+  middle slice with a click, 0.714 for the official pipeline (crop centred
+  on the true 3-D box), 0.422 from a click alone at each organ's innermost
+  voxel.
+- The whole method in headless Chrome (`SamMed3dModel.segment`, its
+  worker, ONNX Runtime from jsDelivr, WebAssembly on one thread, the
+  files from `models/sammed3d/`), on a kidney's cube from that scan: the
+  same voxels as Python's ONNX run, 0 of 38,289 differing, and after a
+  refining click 0 of 39,082. Encoding 17 s, a click 0.1 s.
+- `tests/sammed3d.test.ts`: the cube's geometry on a flipped anisotropic
+  grid, the level read, the image's layout and normalisation, the
+  upsampling, the mask on the label grid, the budget, where the prompts put
+  the cube.
+
+Not done: WebGPU and threaded timings, a home for the model files.
+
 ## Adding a quick select method
 
 ```ts
@@ -528,4 +589,9 @@ prompt rather than replacing it, and `request.prompts` holds them all
 message; `signal` is aborted by Escape. A method that tracks through the
 volume (as MedSAM2 does) gives `propagate(request, count, signal)`: the
 masks of up to `count` sections each way from the request's prompts, which
-Spread then uses in place of prompting each section with a box.
+Spread then uses in place of prompting each section with a box. A method
+with `ai: true` is listed under the AI segment tool rather than Quick
+select; `volumetric: true` keeps clicks in other sections in its prompt
+(a 3-D model), and such a method may read the image itself through
+`request.grid` (`read(level, gridToLabel, size)`: any level of the image
+sampled on any grid).

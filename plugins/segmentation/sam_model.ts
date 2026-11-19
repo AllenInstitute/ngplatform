@@ -293,6 +293,7 @@ export function samMethod(model: SamModel): QuickSelectMethod {
     description: `${MOBILE_SAM.name} (${MOBILE_SAM.licence}), run in this page: a box, or clicks on what is wanted (Shift+click or Alt+click: not wanted), in a 2-D view. ${(MODEL_BYTES / 1e6).toFixed(1)} MB, downloaded on first use and kept in this browser.`,
     prompts: ["box", "point"],
     refines: true,
+    ai: true,
     run: (request, signal) => model.segment(request, signal),
   };
 }

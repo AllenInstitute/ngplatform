@@ -22,7 +22,7 @@ import { MEDSAM2_LOW, MEDSAM2_SIZE, medsam2Image, medsam2Prompt } from "./medsam
 import type { MedSam2Reply, MedSam2Request } from "./medsam2_worker.js";
 import type { Mask, QuickSelectMethod, QuickSelectRequest } from "./quick_select.js";
 import { cropBox, cropFor, keepParts, maskOnGrid, quantileWindow, sectionAxes, type Crop } from "./sam.js";
-import { MODEL_CACHE, ORT_URL, type Provider } from "./sam_model.js";
+import { HostedModel, modelBase } from "./hosted_model.js";
 
 export const MEDSAM2 = {
   id: "medsam2",
@@ -38,16 +38,8 @@ const PIXEL = { pixel_mean: [0.485, 0.456, 0.406], pixel_std: [0.229, 0.224, 0.2
 
 /** Where the model's files are: localStorage `ngplatform.medsam2.url` when set, else `models/medsam2/` beside the app. */
 export function medsam2Base(): string {
-  try {
-    const set = typeof localStorage !== "undefined" ? localStorage.getItem("ngplatform.medsam2.url") : null;
-    if (set) return new URL(set.endsWith("/") ? set : `${set}/`, location.href).href;
-  } catch {
-    // Storage refused: the default.
-  }
-  return new URL("models/medsam2/", typeof document !== "undefined" ? document.baseURI : location.href).href;
+  return modelBase("ngplatform.medsam2.url", "models/medsam2/");
 }
-
-type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
 /** A track's prompt and where it is, so Spread follows the mask the prompt made. */
 interface Track {
@@ -63,176 +55,23 @@ interface Track {
   tensors: { coords: Float32Array; labels: Int32Array };
 }
 
-export class MedSam2Model {
-  state: "unknown" | "absent" | "kept" | "loading" | "ready" | "failed" = "unknown";
-  kept = 0;
-  bytes = MEDSAM2.bytes;
-  progress: { loaded: number; total: number } | undefined;
-  error = "";
-  provider: Provider = "auto";
-  running = "";
-  threads = 1;
-  /** The last section's encoding, and the last mask's time (conditioning or a tracking step), ms. */
-  encodeMs: number | undefined;
-  decodeMs: number | undefined;
-  private worker: Worker | undefined;
-  private loaded: Promise<void> | undefined;
-  private next = 0;
-  private readonly waiting = new Map<number, { resolve(r: MedSam2Reply): void; reject(e: Error): void; progress?(loaded: number, total: number): void }>();
-  private readonly listeners = new Set<() => void>();
+export class MedSam2Model extends HostedModel<MedSam2Request, MedSam2Reply> {
   private track: Track | undefined;
 
   constructor() {
-    void this.refreshKept();
+    super(MEDSAM2.name, MEDSAM2.licence, MEDSAM2.bytes);
   }
 
-  onChanged(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+  base(): string {
+    return medsam2Base();
   }
 
-  private changed(): void {
-    this.listeners.forEach((l) => l());
+  protected startWorker(): Worker {
+    return new Worker(new URL("./medsam2_worker.ts", import.meta.url), { type: "module", name: "MedSAM2" });
   }
 
-  /** The model's files kept in this browser (those under its address). */
-  async refreshKept(): Promise<void> {
-    let n = 0;
-    if (typeof caches !== "undefined") {
-      const base = medsam2Base();
-      const cache = await caches.open(MODEL_CACHE).catch(() => undefined);
-      for (const request of (await cache?.keys().catch(() => [])) ?? []) {
-        if (!request.url.startsWith(base) || request.url.endsWith("manifest.json")) continue;
-        const r = await cache!.match(request);
-        if (r) n += Number(r.headers.get("content-length")) || 0;
-      }
-    }
-    this.kept = n;
-    if (this.state === "unknown" || this.state === "absent" || this.state === "kept") this.state = n > 0 ? "kept" : "absent";
-    this.changed();
-  }
-
-  /** Drops the model's files from this browser (and the worker). */
-  async forget(): Promise<void> {
-    this.stop();
-    if (typeof caches !== "undefined") {
-      const base = medsam2Base();
-      const cache = await caches.open(MODEL_CACHE).catch(() => undefined);
-      for (const request of (await cache?.keys().catch(() => [])) ?? []) if (request.url.startsWith(base)) await cache!.delete(request);
-    }
-    this.state = "unknown";
-    await this.refreshKept();
-  }
-
-  setProvider(provider: Provider): void {
-    if (provider === this.provider) return;
-    this.provider = provider;
-    this.stop();
-    this.state = this.kept > 0 ? "kept" : "absent";
-    this.changed();
-  }
-
-  get started(): boolean {
-    return this.worker !== undefined;
-  }
-
-  /** Lets the worker go (Quick select was left); the next prompt starts it again. */
-  release(): void {
-    if (this.worker === undefined) return;
-    this.stop();
-    this.state = this.kept > 0 ? "kept" : "absent";
-    this.changed();
-  }
-
-  dispose(): void {
-    this.stop();
-    this.listeners.clear();
-  }
-
-  private stop(): void {
-    this.worker?.terminate();
-    this.worker = undefined;
-    this.loaded = undefined;
+  protected onStopped(): void {
     this.track = undefined;
-    this.running = "";
-    for (const w of this.waiting.values()) w.reject(new Error("The model was stopped."));
-    this.waiting.clear();
-  }
-
-  private call(request: WithoutId<MedSam2Request>, transfer: Transferable[] = [], progress?: (loaded: number, total: number) => void): Promise<Extract<MedSam2Reply, { ok: true }>> {
-    if (this.worker === undefined) {
-      this.worker = new Worker(new URL("./medsam2_worker.ts", import.meta.url), { type: "module", name: "MedSAM2" });
-      this.worker.onmessage = (e: MessageEvent<MedSam2Reply>) => {
-        const r = e.data;
-        const w = this.waiting.get(r.id);
-        if (w === undefined) return;
-        if ("op" in r && r.op === "progress") {
-          w.progress?.(r.loaded, r.total);
-          return;
-        }
-        this.waiting.delete(r.id);
-        if ("error" in r) w.reject(new Error(r.error));
-        else w.resolve(r);
-      };
-      this.worker.onerror = (e) => {
-        for (const w of this.waiting.values()) w.reject(new Error(e.message || "MedSAM2's worker failed."));
-        this.waiting.clear();
-      };
-    }
-    const id = ++this.next;
-    return new Promise((resolve, reject) => {
-      this.waiting.set(id, { resolve: resolve as (r: MedSam2Reply) => void, reject, progress });
-      this.worker!.postMessage({ ...request, id }, transfer);
-    });
-  }
-
-  /** The model loaded in the worker: its files downloaded (or read from the browser), its sessions built. */
-  load(progress?: (loaded: number, total: number) => void): Promise<void> {
-    if (this.loaded === undefined) {
-      this.state = "loading";
-      this.error = "";
-      this.changed();
-      let told = 0;
-      this.loaded = this.call({ op: "load", ort: ORT_URL, provider: this.provider, cache: MODEL_CACHE, base: medsam2Base() }, [], (loaded, total) => {
-        this.progress = { loaded, total };
-        this.bytes = total;
-        if (loaded - told >= total / 100 || loaded === total) {
-          told = loaded;
-          progress?.(loaded, total);
-          this.changed();
-        }
-      }).then(
-        (r) => {
-          this.state = "ready";
-          this.progress = undefined;
-          this.running = r.provider ?? "";
-          this.threads = r.threads ?? 1;
-          if (r.bytes) this.bytes = r.bytes;
-          void this.refreshKept();
-          this.changed();
-        },
-        (e: Error) => {
-          this.state = "failed";
-          this.error = e.message;
-          this.progress = undefined;
-          this.loaded = undefined;
-          this.worker?.terminate();
-          this.worker = undefined;
-          this.changed();
-          throw e;
-        },
-      );
-    }
-    return this.loaded;
-  }
-
-  private async ready(request: Pick<QuickSelectRequest, "progress">, signal: AbortSignal): Promise<void> {
-    if (this.state !== "ready") {
-      const mb = (this.bytes / 1e6).toFixed(0);
-      request.progress?.(this.kept > 0 ? `Loading ${MEDSAM2.name} (kept in this browser)…` : `Downloading ${MEDSAM2.name} (${mb} MB, ${MEDSAM2.licence}) once; it is kept in this browser…`, 0);
-    }
-    await this.load((loaded, total) => request.progress?.(`Downloading ${MEDSAM2.name}: ${(loaded / 1e6).toFixed(1)} of ${(total / 1e6).toFixed(1)} MB (${MEDSAM2.licence})…`, loaded / total));
-    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
   }
 
   /** A section of the crop read, windowed and encoded (unless the worker still has it); its key. */
@@ -267,7 +106,7 @@ export class MedSam2Model {
     const hi: [number, number] = [Math.max(...us) + 1, Math.max(...ws) + 1];
     // Room round the prompt for the object to move into from section to section.
     const crop = cropFor(axis, index, lo, hi, { context: request.context ?? 256, margin: 2, spacing: [source.spacing[ua], source.spacing[wa]], extent: [source.size[ua], source.size[wa]] });
-    await this.ready(request, signal);
+    await this.ready(request.progress, signal);
     let window = source.window;
     if (window === undefined) {
       const box = cropBox(crop);
@@ -298,7 +137,7 @@ export class MedSam2Model {
     const given = JSON.stringify(request.prompts ?? (request.prompt.kind === "box" ? { box: { lo: request.prompt.lo, hi: request.prompt.hi }, points: [] } : { points: [{ at: request.prompt.at, positive: true }] }));
     // The track the prompt started, else started again (another prompt came since, or the model was let go).
     if (this.track === undefined || this.track.prompt !== given || this.track.image !== source.key || this.track.axis !== axis) await this.segment(request, signal);
-    else await this.ready(request, signal);
+    else await this.ready(request.progress, signal);
     const t = this.track!;
     const masks: Mask[] = [];
     const n = source.size[axis];
@@ -336,6 +175,7 @@ export function medsam2Method(model: MedSam2Model): QuickSelectMethod {
     description: `${MEDSAM2.name} (${MEDSAM2.licence}), run in this page: a box (or clicks: Shift or Alt for what is not wanted) in a 2-D view segments its section; Spread then tracks it through the next sections, as MedSAM2 tracks an organ through a scan. About ${(MEDSAM2.bytes / 1e6).toFixed(0)} MB, downloaded on first use and kept in this browser.`,
     prompts: ["box", "point"],
     refines: true,
+    ai: true,
     run: (request, signal) => model.segment(request, signal),
     propagate: (request, count, signal) => model.propagate(request, count, signal),
   };

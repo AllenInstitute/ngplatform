@@ -81,6 +81,7 @@ A label volume lives in this page until saved; it is also kept in this browser w
       { key: "shift+f", command: "segmentation.tool", args: { tool: "fill", fill3d: true }, when: EDITING },
       tool("i", "pick"),
       tool("q", "quick"),
+      tool("a", "ai"),
       { key: "escape", command: "segmentation.tool", args: { tool: "move" }, when: DRAWING },
       { key: "w", command: "segmentation.cycleTool", args: { step: 1 }, when: EDITING },
       { key: "shift+w", command: "segmentation.cycleTool", args: { step: -1 }, when: EDITING },

@@ -39,6 +39,16 @@ export interface QuickSelectRequest {
    * sides in mm, `size` the label grid's size in voxels.
    */
   source?: { key: string; window?: [number, number]; spacing: Vec3; size: Vec3 };
+  /**
+   * For a 3-D model working at its own spacing: the image read on a grid of its own (voxel i at label voxel
+   * `gridToLabel · i`, row-major 4 × 4) from one of its levels (`levels`: their voxel sizes in mm, finest
+   * first), and the label voxels' place in the world (`labelToRas`, row-major).
+   */
+  grid?: {
+    levels: number[];
+    labelToRas: ArrayLike<number>;
+    read(level: number, gridToLabel: ArrayLike<number>, size: Vec3, signal?: AbortSignal): Promise<Float32Array | undefined>;
+  };
   /** How much of the section round the prompt a model looks at: at least this many voxels across. */
   context?: number;
   /** Says what the method is doing when it takes a while (a download, an embedding), and how far along (0 … 1). */
@@ -60,6 +70,10 @@ export interface QuickSelectMethod {
   prompts: ("box" | "point")[];
   /** Clicks add to the prompt in the section (wanted, or not with Shift or Alt) rather than replacing it; the request's `prompts` holds them all. */
   refines?: boolean;
+  /** A model (the AI segment tool lists it), not a rule such as a threshold (Quick select does). */
+  ai?: boolean;
+  /** Its prompts are 3-D: a click in any section adds to them (not only in the section of the first), and its mask is a volume. */
+  volumetric?: boolean;
   run(request: QuickSelectRequest, signal: AbortSignal): Promise<Mask>;
   /**
    * For a method that tracks through the volume (a video model): the masks of up to `count` sections each way

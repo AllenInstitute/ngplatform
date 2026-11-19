@@ -14,7 +14,7 @@ import { SEGMENTATION_MANIFEST } from "../manifest.js";
 import { isVisible, nextSegment, segmentName, segmentRows, withVisibility } from "../segments.js";
 import { addGroup, assign, editGroup, groupOf, grouped, members, noGroups, readGroups, removeGroup } from "../segment_groups.js";
 import { barSpan, rowsMax } from "../toolbar.js";
-import { brushes, cycle, draws, stepRadius, TOOLS } from "../tools.js";
+import { brushes, cycle, draws, selects, stepRadius, TOOLS } from "../tools.js";
 import { checkManifest } from "../../../src/sdk/manifest.js";
 
 const PLACE = Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -29,10 +29,17 @@ describe("the tools", () => {
 
   it("cycles round the bar both ways (W, Shift+W)", () => {
     expect(cycle("move", 1)).toBe("brush");
-    expect(cycle("quick", 1)).toBe("move");
-    expect(cycle("move", -1)).toBe("quick");
+    expect(cycle("quick", 1)).toBe("ai");
+    expect(cycle("ai", 1)).toBe("move");
+    expect(cycle("move", -1)).toBe("ai");
     expect(cycle("fill", -2)).toBe("erase");
     expect(cycle("erase", 1)).toBe("lasso");
+  });
+
+  it("groups the tools: drawing by hand, then segmenting with a model", () => {
+    expect(TOOLS.filter((t) => t.group === "draw").map((t) => t.id)).toEqual(["move", "brush", "erase", "lasso", "fill", "pick", "quick"]);
+    expect(TOOLS.filter((t) => t.group === "ai").map((t) => t.id)).toEqual(["ai"]);
+    expect(selects("quick") && selects("ai") && !selects("brush")).toBe(true);
   });
 
   it("steps the brush by a quarter, and in whole voxels by at least one", () => {

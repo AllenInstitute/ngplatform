@@ -15,6 +15,7 @@ import { LabelVolume } from "../label_volume.js";
 import { Panel } from "../panel.js";
 import { SamModel } from "../sam_model.js";
 import { MedSam2Model } from "../medsam2_model.js";
+import { SamMed3dModel } from "../sammed3d_model.js";
 import { noGroups } from "../segment_groups.js";
 import { Session } from "../session.js";
 import type { Voxels } from "../../annotations/voxels.js";
@@ -67,6 +68,7 @@ function fakeEditor(session?: Partial<Session>) {
     storage: {},
     sam: new SamModel(),
     medsam2: new MedSam2Model(),
+    sammed3d: new SamMed3dModel(),
     quickSelect: { methods: () => [{ id: "threshold", title: "Threshold" }] },
     quickMethod: () => ({ id: "threshold", title: "Threshold" }),
     canSpread: () => false,

@@ -12,7 +12,7 @@
  * which it may have to read first.)
  */
 import type { PlatformContext } from "@ngplatform/sdk";
-import { between, type Placement, placement } from "../annotations/geometry.js";
+import { between, multiply, type Placement, placement } from "../annotations/geometry.js";
 import { space } from "../annotations/scene.js";
 import type { ImageLevel, Voxels } from "../annotations/voxels.js";
 import { History } from "./history.js";
@@ -294,6 +294,27 @@ export class Session {
       while (this.blocks.size > 256) this.blocks.delete(this.blocks.keys().next().value!);
     }
     return p;
+  }
+
+  /** The reference image's levels' voxel sizes (mm), finest first; none without a reference. */
+  referenceLevels(): number[] {
+    return this.reference?.levels.map((l) => l.voxelSize) ?? [];
+  }
+
+  /**
+   * The reference image's values on a grid of a model's own (a 3-D model working at its spacing, whatever the
+   * label volume's): `size` voxels, voxel i at label voxel `gridToLabel · i` (row-major 4 × 4), read from the
+   * reference's level `level` (nearest). Undefined without a placed reference.
+   */
+  async imageGrid(level: number, gridToLabel: ArrayLike<number>, size: Vec3, signal?: AbortSignal): Promise<Float32Array | undefined> {
+    const r = this.reference;
+    const own = this.placement();
+    const lv = r?.levels[level];
+    if (r === undefined || own === undefined || lv === undefined) return undefined;
+    const theirs = placement(this.ctx.viewer.layerTransform(r.layer), lv.voxelToRas, space(this.ctx));
+    const toLevel = theirs && between(own, theirs);
+    if (toLevel === undefined) return undefined;
+    return this.voxels.block(r.store, level, [0, 0, 0], [...size], multiply(toLevel, Float64Array.from(gridToLabel)), signal);
   }
 
   /** The image's values in one section (or any box), read as one block rather than chunk by chunk: for a fill. */

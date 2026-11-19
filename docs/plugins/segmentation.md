@@ -46,7 +46,7 @@ With no image or segmentation in the scene, the card says so, with
 
 While a segmentation layer is edited, a tool bar shows at the top of the
 2-D views (in a layout with a 3-D view, such as xy-3d, it stays over the
-2-D view). Hover a button for its name and key.
+2-D view). Hover a button for its name and key. The drawing tools are on the left; **AI segment**, with its model, after them.
 
 | Tool | Key | What it does |
 |---|---|---|
@@ -56,7 +56,8 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 | **Lasso** | ++l++ | Hold the left button and draw round a structure in a 2-D view: when you let go, the outline closes and its inside is painted with the active segment in that section (as **Paint over** says, and within the image's range when that is on). **Erase** on the bar erases inside it instead |
 | **Fill** | ++f++, ++shift+f++ | Fills the region clicked with the active segment: **2-D** in its section (++f++), or **3-D** in a box round the click (++shift+f++) |
 | **Pick segment** | ++i++ | The segment clicked becomes the active one |
-| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view, or click it. **Threshold** (on the bar): Otsu's threshold inside the box, or values near the one clicked. **AI (MobileSAM)**: a Segment Anything model run in the page; ++shift++ + click or ++alt++ + click marks what is not wanted (see below). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it; pressed while it is still being worked out, they apply as soon as it is |
+| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view, or click it: Otsu's threshold inside the box, or values near the one clicked. The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it; pressed while it is still being worked out, they apply as soon as it is |
+| **AI segment** | ++a++ | Segment with a model run in the page, chosen on the bar (**Model**): **SAM-Med3D** (3-D at once), **MedSAM2** (a section, then tracked through the volume) or **MobileSAM** (a section). A box or clicks in a 2-D view; ++shift++ + click or ++alt++ + click marks what is not wanted. The mask shows first, as with Quick select (see below) |
 
 - **Brush size**: ++alt++ + wheel over a 2-D view, ++bracket-left++ and
   ++bracket-right++, or **−** and **+** on the tool bar. The size is in
@@ -89,9 +90,42 @@ list) before ++enter++. **Preview** / **At once** on the bar (or
 **Result** in the panel) switches to painting at once, as before; undo
 takes a mask painted at once back.
 
-### AI quick select
+### AI segment
 
-**AI (MobileSAM)**, chosen on the bar or under **Method** in the panel,
+**AI segment** (++a++) runs a segmentation model in this page with ONNX
+Runtime Web; choose it on the bar or under **Model** in the panel. For a
+structure in a CT or MRI, start with **SAM-Med3D**.
+
+**AI 3-D (SAM-Med3D)** segments in 3-D at once with
+[SAM-Med3D](https://github.com/uni-medical/SAM-Med3D)-turbo (Apache-2.0),
+trained on CT and MRI of many organs and lesions.
+
+- **Drag a box** round the structure on a slice **through its middle**, or
+  **click near its middle**: the model looks at a cube of 19 cm (128 voxels
+  of 1.5 mm, coarser for a box larger than 15 cm) centred there, and does
+  well only when the structure is near the cube's centre. A box drawn on a
+  slice near the structure's end, or a click at its edge, gives a poor mask.
+- With a box, a click inside the structure as well helps (++shift++ + click
+  marks what is not wanted).
+- More clicks, in any section or view, refine the mask in 3-D (the last mask
+  is fed back). ++enter++ paints it; ++escape++ drops it.
+- Long structures (the aorta, a vessel) do better with a click on their
+  middle than a box. The cube is 19 cm: a larger structure is cut at its
+  faces.
+- The model is two ONNX files (202 MB), downloaded on first use and kept in
+  this browser. They are not published yet: the app looks for them at
+  `models/sammed3d/` beside itself (`npm run dev` serves the repository's
+  `models/` there) or at the address in localStorage
+  `ngplatform.sammed3d.url`. `tools/sammed3d/` makes them.
+- The first prompt in a place reads the cube from the image (it needs
+  **Image values**) and encodes it: about 17 s on the CPU (WebAssembly, one
+  thread), less with threads or WebGPU. Refining clicks take about 0.1 s.
+- Its voxels are 1.5 mm: on a much finer label volume the mask is blocky,
+  and a mask that would span more than 256 million label voxels (a 6 cm
+  structure on a 0.1 mm label volume) is refused: make a coarser label
+  volume (0.25–0.5 mm) to segment with it.
+
+**AI (MobileSAM)**, chosen on the bar or under **Model** in the panel,
 segments with [MobileSAM](https://github.com/ChaoningZhang/MobileSAM), a
 small Segment Anything model (Apache-2.0), run in this page with ONNX
 Runtime Web.
@@ -108,7 +142,7 @@ Runtime Web.
 - The first prompt in a region computes the image's embedding ("Computing
   the image's embedding…" on the bar): a few seconds on the CPU, much less
   on a GPU. Further clicks near it take a fraction of a second.
-- Half a minute after you leave Quick select (another tool, or editing
+- Half a minute after you leave AI segment (another tool, or editing
   stopped), the model is let go from memory with its embeddings; the next
   prompt loads it again from this browser.
 - The model sees the section round the prompt, at least **Context**
@@ -125,7 +159,7 @@ where nothing is found or the size jumps. ++enter++ paints all the
 sections as one stroke, which one undo takes back. It works with
 Threshold too.
 
-**AI 3-D (MedSAM2)**, under **Method**, segments with
+**AI 3-D (MedSAM2)**, under **Model**, segments with
 [MedSAM2](https://github.com/bowang-lab/MedSAM2) (Apache-2.0), SAM 2 fine-tuned
 on CT, MRI and other medical images. Drag a box round an organ (or click it;
 ++shift++ + click excludes) in a 2-D view: its section is segmented as with

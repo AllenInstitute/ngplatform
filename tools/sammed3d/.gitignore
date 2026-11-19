@@ -1,0 +1,8 @@
+repo/
+venv/
+wheel/
+onnx/
+onnx16/
+turbo.pth
+sam_med3d_model.py
+*.nii.gz

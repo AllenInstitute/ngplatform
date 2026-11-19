@@ -11,7 +11,7 @@ import type { Editor } from "./editor.js";
 import { iconButton } from "./icons.js";
 import { LABEL_MAX } from "./label_volume.js";
 import { type SegmentRow, segmentName } from "./segments.js";
-import { brushes, TOOLS } from "./tools.js";
+import { brushes, selects, TOOLS } from "./tools.js";
 
 export class Toolbar {
   private readonly overlay: { element: HTMLElement; dispose(): void };
@@ -93,7 +93,9 @@ export class Toolbar {
     }
     const group = (...children: (Node | null)[]) => el("div", { class: "sg-group" }, ...children);
 
-    const tools = group(...TOOLS.map((t) => iconButton(t.id, `${t.title} (${t.key}): ${t.hint}`, () => e.setTool(t.id), e.tool === t.id)));
+    // Drawing by hand, then segmenting with a model.
+    const toolButton = (t: (typeof TOOLS)[number]) => iconButton(t.id, `${t.title} (${t.key}): ${t.hint}`, () => e.setTool(t.id), e.tool === t.id);
+    const tools = el("div", { class: "row" }, group(...TOOLS.filter((t) => t.group === "draw").map(toolButton)), group(...TOOLS.filter((t) => t.group === "ai").map(toolButton)));
 
     let option: HTMLElement | null = null;
     if (brushes(e.tool)) {
@@ -121,7 +123,7 @@ export class Toolbar {
         } }, label));
       }
       option = group(dims);
-    } else if (e.tool === "quick" && e.quickStatus) {
+    } else if (selects(e.tool) && e.quickStatus) {
       // A download, an embedding or spreading under way: what, how far, and Stop.
       const s = e.quickStatus;
       option = group(
@@ -129,7 +131,7 @@ export class Toolbar {
         s.fraction === undefined ? null : el("progress", { class: "sg-progress", max: "1", value: String(s.fraction) }),
         iconButton("close", "Stop (Escape)", () => e.cancelPreview()),
       );
-    } else if (e.tool === "quick" && e.pending) {
+    } else if (selects(e.tool) && e.pending) {
       // The proposed mask, shown over the views: paint it or drop it, or spread it to the next sections.
       const accept = iconButton("check", "Accept: paint the mask with the active segment (Enter)", () => e.acceptPreview());
       accept.classList.add("sg-accept");
@@ -142,15 +144,12 @@ export class Toolbar {
         accept,
         iconButton("close", "Cancel: drop the mask (Escape)", () => e.cancelPreview()),
       );
-    } else if (e.tool === "quick") {
-      // The method (Threshold, AI (MobileSAM), and any a plugin adds), and whether the mask shows first.
+    } else if (selects(e.tool)) {
+      // The tool's methods (Threshold and plugins' for Quick select; the models for AI segment), and whether the mask shows first.
       const methods = el("div", { class: "segmented sg-dims" });
       const chosen = e.quickMethod();
-      for (const m of e.quickSelect.methods()) {
-        methods.append(el("button", { type: "button", title: m.description ?? m.title, "aria-pressed": String(m === chosen), onclick: () => {
-          e.method = m.id;
-          e.changed();
-        } }, m.title));
+      for (const m of e.quickMethods()) {
+        methods.append(el("button", { type: "button", title: m.description ?? m.title, "aria-pressed": String(m === chosen), onclick: () => e.chooseMethod(m.id) }, m.title.replace(/^AI (3-D )?\((.*)\)$/, "$2")));
       }
       const modes = el("div", { class: "segmented sg-dims" });
       for (const [mode, label, title] of [["preview", "Preview", "Show the mask first: Enter paints it, Escape drops it"], ["paint", "At once", "Paint the mask at once (undo takes it back)"]] as const) {
