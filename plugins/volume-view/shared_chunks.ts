@@ -102,7 +102,7 @@ export class ChunkCache {
 
 /** A level's key: its store and array (or scale), and a hash of its metadata. */
 export function levelKey(ref: LevelRef): string {
-  return `${ref.kind === "ome" ? `${ref.level.url}${ref.level.path}` : `${ref.url}${ref.scale.key}`}|${hash(ref.stamp)}|`;
+  return `${ref.kind === "precomputed" ? `${ref.url}${ref.scale.key}` : `${ref.level.url}${ref.level.path}`}|${hash(ref.stamp)}|`;
 }
 
 /** A short hash of text (FNV-1a, 32 bits), as hex. */

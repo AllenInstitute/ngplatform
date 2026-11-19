@@ -3,8 +3,9 @@ import { precomputedUrl } from "@ngplatform/sdk/sources";
 
 export { precomputedUrl };
 
-/** A store given to the reader as `precomputed:<url>` is a Neuroglancer precomputed image; others are OME-Zarr. */
+/** A store given to the reader as `precomputed:<url>` is a Neuroglancer precomputed image, `n5:<url>` an N5 pyramid; others are OME-Zarr. */
 export const PRECOMPUTED = "precomputed:";
+export const N5 = "n5:";
 
 /** The OME-Zarr store an image layer's source names, as an http(s) URL; undefined for other formats. */
 export function omeZarrUrl(source: string | undefined): string | undefined {
@@ -29,5 +30,19 @@ export function storeHttpUrl(address: string): string | undefined {
 /** The store the reader opens for an image layer: an OME-Zarr URL or `precomputed:<url>`; undefined for formats it does not read. */
 export function storeOf(source: string | undefined): string | undefined {
   const pre = precomputedUrl(source);
-  return pre !== undefined ? PRECOMPUTED + pre : omeZarrUrl(source);
+  if (pre !== undefined) return PRECOMPUTED + pre;
+  const n5 = n5Url(source);
+  return n5 !== undefined ? N5 + n5 : omeZarrUrl(source);
+}
+
+/** The store an N5 source names (`n5://<url>`, or a path ending `.n5`), as an http(s) URL ending in "/"; else undefined. */
+export function n5Url(source: string | undefined): string | undefined {
+  if (source === undefined) return undefined;
+  let url = source.trim();
+  const scheme = /^n5:\/\//i.exec(url);
+  const pipe = /\|n5(:[^|]*)?$/i.exec(url);
+  if (scheme === null && pipe === null && !/\.n5\/?$/i.test(url)) return undefined;
+  if (scheme) url = url.slice(scheme[0].length);
+  if (pipe) url = url.slice(0, pipe.index);
+  return storeHttpUrl(url);
 }

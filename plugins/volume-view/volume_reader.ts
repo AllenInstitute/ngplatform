@@ -25,8 +25,9 @@ import { httpJson, PrecomputedScale, readInfo, type Scale } from "@ngplatform/sd
 import { gcsReadable } from "@ngplatform/sdk/sources";
 import { mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { chunkSource, levelKey } from "./shared_chunks.js";
-import { PRECOMPUTED } from "./sources.js";
+import { N5, PRECOMPUTED } from "./sources.js";
 import { withZarr2 } from "./zarr2.js";
+import { decodeN5Block, type N5Array, readN5Levels } from "./n5.js";
 
 export interface LevelInfo extends VolumeLevel {
   /** The array's shape and read-chunk shape, in its axis order. */
@@ -44,7 +45,16 @@ export interface LevelInfo extends VolumeLevel {
  * metadata, so a store written again with other metadata is not answered
  * with the chunks kept of it before.
  */
-export type LevelRef = ({ kind: "ome"; level: VolumeLevel } | { kind: "precomputed"; url: string; scale: Scale; stored: string; labels: boolean }) & { stamp: string };
+export type LevelRef = (
+  | { kind: "ome"; level: VolumeLevel }
+  | { kind: "precomputed"; url: string; scale: Scale; stored: string; labels: boolean }
+  | { kind: "n5"; level: VolumeLevel; array: N5Array }
+) & { stamp: string };
+
+/** The store a level is read from (for a level ref of any kind). */
+export function refUrl(ref: LevelRef): string {
+  return ref.kind === "precomputed" ? ref.url : ref.level.url;
+}
 
 /** A level as opened: what it is, and its chunks' own values read from the store (kept by no one). */
 export interface RawLevel {
@@ -463,6 +473,38 @@ export function openPrecomputedScale(url: string, scale: Scale, stored: string, 
   };
 }
 
+/**
+ * A level of an N5 pyramid (./n5.ts) as an array in z, y, x order: its blocks read at `<path>/<x>/<y>/<z>`,
+ * decoded, swapped to little-endian and padded to the full block; values as their type (64-bit ones narrowed).
+ */
+export function openN5Level(level: VolumeLevel, array: N5Array): RawLevel {
+  const stored = array.dataType;
+  const wide = stored in NARROWED ? (stored as keyof typeof NARROWED) : undefined;
+  if (!(stored in NUMERIC) && wide === undefined) throw new Error(`${level.url}${level.path}: ${stored} values cannot be read`);
+  const type = (wide === undefined ? stored : NARROWED[wide]) as keyof typeof NUMERIC;
+  const width = wide !== undefined ? 8 : NUMERIC[stored as keyof typeof NUMERIC].BYTES_PER_ELEMENT;
+  const [sx, sy, sz] = array.dimensions;
+  const [bx, by, bz] = array.blockSize;
+  const info: LevelInfo = { ...level, shape: [sz, sy, sx], chunk: [bz, by, bx], size: [sx, sy, sz], type };
+  const raw = async ([z, y, x]: number[]) => {
+    const response = await fetch(`${level.url}${level.path}/${x}/${y}/${z}`);
+    if (response.status === 404 || response.status === 403) return undefined;
+    if (!response.ok) throw new Error(`${level.url}${level.path}/${x}/${y}/${z}: ${response.status} ${response.statusText}`);
+    const bytes = await decodeN5Block(new Uint8Array(await response.arrayBuffer()), array, width);
+    return wide === undefined ? bytes : narrow(bytes, wide);
+  };
+  return {
+    info,
+    ref: { kind: "n5", level, array, stamp: JSON.stringify(array) },
+    raw,
+    type,
+    fill: 0,
+    dimOf: [2, 1, 0],
+    grid: [Math.ceil(sz / bz), Math.ceil(sy / by), Math.ceil(sx / bx)],
+    chunkBytes: bx * by * bz * width,
+  };
+}
+
 export class VolumeReader {
   private levels: OpenLevel[] = [];
 
@@ -513,7 +555,7 @@ export class VolumeReader {
   private adopt(level: RawLevel): OpenLevel {
     const source = chunkSource();
     const key = levelKey(level.ref);
-    if (this.opened.has(key) || !onServer(level.ref.kind === "ome" ? level.ref.level.url : level.ref.url)) source.forget(level.ref);
+    if (this.opened.has(key) || !onServer(refUrl(level.ref))) source.forget(level.ref);
     this.opened.add(key);
     const { ref, raw, type } = level;
     const rawChunk = (index: number[], keep = true) => source.chunk(ref, index, keep, raw);
@@ -541,6 +583,7 @@ export class VolumeReader {
    */
   async open(stores: string[], space: string | undefined, signal?: AbortSignal, full = false): Promise<{ levels: LevelInfo[]; name: string; description?: string; window: [number, number] }> {
     if (stores.length === 1 && stores[0].startsWith(PRECOMPUTED)) return this.openPrecomputed(stores[0].slice(PRECOMPUTED.length), signal, full);
+    if (stores.length === 1 && stores[0].startsWith(N5)) return this.openN5(stores[0].slice(N5.length), signal, full);
     const pyramids = await Promise.all(
       stores.map(async (store) => {
         const url = store.endsWith("/") ? store : `${store}/`;
@@ -615,6 +658,17 @@ export class VolumeReader {
     const coarsest = this.levels[this.levels.length - 1];
     if (!labels && coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal, full);
     return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "", window: this.window };
+  }
+
+  /** An N5 pyramid (./n5.ts): its levels, finest first, drawn through the window of its coarsest. */
+  private async openN5(url: string, signal?: AbortSignal, full = false): Promise<{ levels: LevelInfo[]; name: string; window: [number, number] }> {
+    const base = url.endsWith("/") ? url : `${url}/`;
+    const { levels, arrays, name } = await readN5Levels(base, signal);
+    this.levels = levels.map((level, i) => this.adopt(openN5Level(level, arrays[i])));
+    this.window = [0, 255];
+    const coarsest = this.levels[this.levels.length - 1];
+    if (coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal, full);
+    return { levels: this.levels.map((l) => l.info), name, window: this.window };
   }
 
   /** The fill value as drawn: through the image's window to 0..255, as chunks are. */

@@ -12,7 +12,7 @@
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { ChunkCache, levelKey } from "./shared_chunks.js";
-import { type LevelRef, openOmeLevel, openPrecomputedScale, type RawLevel, type StoreAccess } from "./volume_reader.js";
+import { type LevelRef, openN5Level, openOmeLevel, openPrecomputedScale, type RawLevel, type StoreAccess } from "./volume_reader.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
 setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.zarr-vectors"]));
@@ -27,7 +27,12 @@ function level(ref: LevelRef): Promise<RawLevel> {
   const key = levelKey(ref);
   let opened = levels.get(key);
   if (opened === undefined) {
-    opened = ref.kind === "ome" ? openOmeLevel(ref.level, accesses) : Promise.resolve(openPrecomputedScale(ref.url, ref.scale, ref.stored, ref.labels));
+    opened =
+      ref.kind === "ome"
+        ? openOmeLevel(ref.level, accesses)
+        : ref.kind === "n5"
+          ? Promise.resolve(openN5Level(ref.level, ref.array))
+          : Promise.resolve(openPrecomputedScale(ref.url, ref.scale, ref.stored, ref.labels));
     const mine = opened;
     opened.catch(() => levels.get(key) === mine && levels.delete(key));
     levels.set(key, opened);

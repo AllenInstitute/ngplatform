@@ -11,7 +11,7 @@ import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
 import organPresetsJson from "../../../runner/ngplatform_render/presets/hipct-organs.json";
 import generalPresetsJson from "../../../runner/ngplatform_render/presets/general.json";
 import params from "../../../runner/ngplatform_render/params.json";
-import { PRECOMPUTED, precomputedUrl, storeHttpUrl } from "../../volume-view/sources.js";
+import { N5, n5Url, PRECOMPUTED, precomputedUrl, storeHttpUrl } from "../../volume-view/sources.js";
 import { VolumeClient } from "../../volume-view/volume_client.js";
 import type { ViewSpec } from "../client.js";
 import shaderSource from "./pathtrace.wgsl?raw";
@@ -515,8 +515,10 @@ export interface Level8 {
 export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
   // A precomputed image (precomputed://…) is read as the volume view reads one: `precomputed:<http url>`.
   const pre = url.startsWith("precomputed://") ? precomputedUrl(url) : undefined;
-  const http = pre !== undefined ? PRECOMPUTED + pre : storeHttpUrl(url.endsWith("/") ? url : `${url}/`);
-  if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only`);
+  // An N5 pyramid (n5://…, as the Human Organ Atlas serves them): `n5:<http url>`.
+  const n5 = pre === undefined ? n5Url(url) : undefined;
+  const http = pre !== undefined ? PRECOMPUTED + pre : n5 !== undefined ? N5 + n5 : storeHttpUrl(url.replace(/^zarr[23]?:\/\//i, "").replace(/\/?$/, "/"));
+  if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only (OME-Zarr, N5 and precomputed)`);
   // All of the image's values read as 0..255, as the host holds them: the densest tissue not cut off.
   const { levels, window: range } = await client.open([http], undefined, { full: true });
   const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
