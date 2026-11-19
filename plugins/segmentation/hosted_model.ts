@@ -11,7 +11,16 @@ import { MODEL_CACHE, ORT_URL, type Provider } from "./sam_model.js";
 type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 type Reply = { id: number; op: "progress"; loaded: number; total: number } | ({ id: number; ok: true } & Record<string, unknown>) | { id: number; ok: false; error: string };
 
-/** The files' address: localStorage `key` when set, else `fallback` beside the app. */
+/**
+ * Where the models' files are published (Hugging Face, Apache-2.0 like the models; tools/medsam2/ and
+ * tools/sammed3d/ make them): a folder for each model, with its manifest.json.
+ */
+export const MODELS_HOME = "https://huggingface.co/akeenlyside/ngplatform-models/resolve/main/";
+
+/**
+ * The files' address: localStorage `key` when set (a copy elsewhere, or `/models/<name>/` for the copies
+ * `npm run dev` serves from the repository's models/), else `fallback` (absolute, or beside the app).
+ */
 export function modelBase(key: string, fallback: string): string {
   try {
     const set = typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;

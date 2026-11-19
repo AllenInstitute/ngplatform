@@ -112,10 +112,9 @@ trained on CT and MRI of many organs and lesions.
 - Long structures (the aorta, a vessel) do better with a click on their
   middle than a box. The cube is 19 cm: a larger structure is cut at its
   faces.
-- The model is two ONNX files (202 MB), downloaded on first use and kept in
-  this browser. They are not published yet: the app looks for them at
-  `models/sammed3d/` beside itself (`npm run dev` serves the repository's
-  `models/` there) or at the address in localStorage
+- The model is two ONNX files (202 MB) from
+  [Hugging Face](https://huggingface.co/akeenlyside/ngplatform-models), downloaded on first use and kept in this browser.
+  To use a copy elsewhere, put its address in localStorage
   `ngplatform.sammed3d.url`. `tools/sammed3d/` makes them.
 - The first prompt in a place reads the cube from the image (it needs
   **Image values**) and encodes it: about 17 s on the CPU (WebAssembly, one
@@ -169,10 +168,9 @@ through a scan: each section is segmented from the memory of the ones before
 it, not from a box, until the object ends or the count (**Spread to
 sections**) is reached. ++enter++ paints it all as one stroke.
 
-- The model is four ONNX files (86 MB), downloaded on first use and kept
-  in this browser. They are not published yet: the app looks for them at
-  `models/medsam2/` beside itself (`npm run dev` serves the repository's
-  `models/` there), or at the address in the browser's localStorage key
+- The model is four ONNX files (86 MB) from
+  [Hugging Face](https://huggingface.co/akeenlyside/ngplatform-models), downloaded on first use and kept in this browser.
+  To use a copy elsewhere, put its address in localStorage
   `ngplatform.medsam2.url`. `tools/medsam2/` makes them.
 - Each section costs one encoding: about 0.7 s on the CPU with threads
   (2 s on one), less with WebGPU. A track of 100 sections takes a minute or

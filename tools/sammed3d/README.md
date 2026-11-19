@@ -74,8 +74,9 @@ refines with them, the last mask fed back) are not measured here.
 
 The segmentation tool's **AI segment** tool, method **AI 3-D (SAM-Med3D)** (plugins/segmentation/sammed3d*.ts;
 its README has the details). `half_weights.py` writes the float16 files with `manifest.json` into `onnx16/`; the
-app loads them from `models/sammed3d/` beside itself (`cp onnx16/* ../../models/sammed3d/` for `npm run dev`) or
-from localStorage `ngplatform.sammed3d.url`.
+app loads them from [akeenlyside/ngplatform-models](https://huggingface.co/akeenlyside/ngplatform-models) (`hf upload akeenlyside/ngplatform-models onnx16 sammed3d`
+publishes new ones), or from localStorage `ngplatform.sammed3d.url`: for files being made, copy them to the
+repository's `models/sammed3d/` and set it to `/models/sammed3d/` under `npm run dev`.
 
 ## Running it
 

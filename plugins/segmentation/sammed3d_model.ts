@@ -6,8 +6,8 @@
  *
  * - The model's files (an encoder and a decoder, float16 weights, about
  *   200 MB; manifest.json lists them) come from `sammed3dBase()`: localStorage
- *   `ngplatform.sammed3d.url` when set, else `models/sammed3d/` beside the app
- *   (`npm run dev` serves the repository's models/). tools/sammed3d/ makes them.
+ *   `ngplatform.sammed3d.url` when set, else MODELS_HOME's sammed3d/ (Hugging
+ *   Face). tools/sammed3d/ makes them.
  * - A box (or else the first click) places a cube of 128 voxels round its
  *   middle in the world's axes, at the model's 1.5 mm (coarser for a large
  *   box), read from the image's level nearest that, normalised, and encoded
@@ -24,7 +24,7 @@ import type { Vec3 } from "./kernels.js";
 import type { Mask, QuickSelectMethod, QuickSelectRequest } from "./quick_select.js";
 import { type Cube, cubeAt, maskOnLabels, modelVolume, pointInCube, SAMMED3D_SIZE, SAMMED3D_SPACING, spacingFor, upsampleMask } from "./sammed3d.js";
 import type { SamMed3dReply, SamMed3dRequest } from "./sammed3d_worker.js";
-import { HostedModel, modelBase } from "./hosted_model.js";
+import { HostedModel, modelBase, MODELS_HOME } from "./hosted_model.js";
 
 export const SAMMED3D = {
   id: "sammed3d",
@@ -36,7 +36,7 @@ export const SAMMED3D = {
 };
 
 export function sammed3dBase(): string {
-  return modelBase("ngplatform.sammed3d.url", "models/sammed3d/");
+  return modelBase("ngplatform.sammed3d.url", `${MODELS_HOME}sammed3d/`);
 }
 
 export class SamMed3dModel extends HostedModel<SamMed3dRequest, SamMed3dReply> {

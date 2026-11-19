@@ -8,7 +8,7 @@
  * - The model's files (four ONNX graphs with float16 weights, 86 MB, and
  *   constants.json; manifest.json lists them) come from `medsam2Base()`:
  *   the address in localStorage `ngplatform.medsam2.url` when set, else
- *   `models/medsam2/` beside the app. They are downloaded on first use and
+ *   MODELS_HOME's medsam2/ (Hugging Face). They are downloaded on first use and
  *   kept in the browser's Cache Storage. tools/medsam2/ makes them.
  * - A prompt: the section round it (at least `context` voxels across, twice
  *   the prompt's size) is read, windowed as its layer shows it, resampled to
@@ -22,7 +22,7 @@ import { MEDSAM2_LOW, MEDSAM2_SIZE, medsam2Image, medsam2Prompt } from "./medsam
 import type { MedSam2Reply, MedSam2Request } from "./medsam2_worker.js";
 import type { Mask, QuickSelectMethod, QuickSelectRequest } from "./quick_select.js";
 import { cropBox, cropFor, keepParts, maskOnGrid, quantileWindow, sectionAxes, type Crop } from "./sam.js";
-import { HostedModel, modelBase } from "./hosted_model.js";
+import { HostedModel, modelBase, MODELS_HOME } from "./hosted_model.js";
 
 export const MEDSAM2 = {
   id: "medsam2",
@@ -36,9 +36,9 @@ export const MEDSAM2 = {
 /** ImageNet's mean and spread, MedSAM2's normalisation (constants.json has them too). */
 const PIXEL = { pixel_mean: [0.485, 0.456, 0.406], pixel_std: [0.229, 0.224, 0.225] };
 
-/** Where the model's files are: localStorage `ngplatform.medsam2.url` when set, else `models/medsam2/` beside the app. */
+/** Where the model's files are: localStorage `ngplatform.medsam2.url` when set, else MODELS_HOME's medsam2/ (Hugging Face). */
 export function medsam2Base(): string {
-  return modelBase("ngplatform.medsam2.url", "models/medsam2/");
+  return modelBase("ngplatform.medsam2.url", `${MODELS_HOME}medsam2/`);
 }
 
 /** A track's prompt and where it is, so Spread follows the mask the prompt made. */

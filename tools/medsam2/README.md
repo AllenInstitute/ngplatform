@@ -54,8 +54,10 @@ the model files.
 
 The segmentation tool's **AI 3-D (MedSAM2)** quick select method runs these graphs
 (plugins/segmentation/medsam2*.ts; its README has the details and the checks). `half_weights.py` writes the
-float16 files with `manifest.json` into `onnx16/`; the app loads them from `models/medsam2/` beside itself
-(`cp onnx16/* ../../models/medsam2/` for `npm run dev`) or from localStorage `ngplatform.medsam2.url`.
+float16 files with `manifest.json` into `onnx16/`; the app loads them from [akeenlyside/ngplatform-models](https://huggingface.co/akeenlyside/ngplatform-models)
+(`hf upload akeenlyside/ngplatform-models onnx16 medsam2` publishes new ones), or from localStorage
+`ngplatform.medsam2.url`: for files being made, copy them to the repository's `models/medsam2/` and set it to
+`/models/medsam2/` under `npm run dev`.
 
 ## Running it
 

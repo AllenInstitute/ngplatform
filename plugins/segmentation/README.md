@@ -462,9 +462,11 @@ through a video.
   encoder. With float16 weights, 86 MB; `manifest.json` lists them and a
   version (their hash) the browser keeps them under. They load from
   `medsam2Base()`: localStorage `ngplatform.medsam2.url`, else
-  `models/medsam2/` beside the app, which `npm run dev` serves from the
-  repository's git-ignored `models/` (vite.config.ts `localModels`; never
-  built into the app).
+  `MODELS_HOME` (`hosted_model.ts`: akeenlyside/ngplatform-models on
+  Hugging Face) `medsam2/`. For files being made, `npm run dev` serves the
+  repository's git-ignored `models/` at `/models/` (vite.config.ts
+  `localModels`; never built into the app): set the key to
+  `/models/medsam2/`.
 - **The tracker** (`medsam2.ts`) is the bookkeeping of MedSAM2's PyTorch
   video predictor: the prompted section conditioned on its features plus
   `no_mem_embed` (one mask for a box, falling back to the best of three when
@@ -501,7 +503,7 @@ through a video.
   graphs).
 
 Not done: SAM 2's filling of small holes (`fill_hole_area`), refining a
-tracked section with clicks, WebGPU timings, a home for the model files.
+tracked section with clicks, WebGPU timings.
 
 ## AI 3-D segmentation (SAM-Med3D)
 
@@ -515,7 +517,7 @@ and MRI at 1.5 mm, with point prompts and the last mask fed back.
   embedding) and the decoder (points, labels and the last 32³ logits to
   new ones). 202 MB with float16 weights; `manifest.json` as MedSAM2's.
   They load from `sammed3dBase()`: localStorage `ngplatform.sammed3d.url`,
-  else `models/sammed3d/` beside the app (`npm run dev` only).
+  else `MODELS_HOME` `sammed3d/` (as MedSAM2's).
 - **The cube** (`sammed3d.ts`): 128 voxels a side in the world's axes (RAS,
   as the model's training canonicalised them), read through the session's
   `imageGrid` (`QuickSelectRequest.grid`: any level of the image, any grid)
@@ -558,7 +560,7 @@ and MRI at 1.5 mm, with point prompts and the last mask fed back.
   upsampling, the mask on the label grid, the budget, where the prompts put
   the cube.
 
-Not done: WebGPU and threaded timings, a home for the model files.
+Not done: WebGPU and threaded timings.
 
 ## Adding a quick select method
 
