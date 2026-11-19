@@ -1,5 +1,5 @@
 {
- "commit": "7b4a52162aed",
+ "commit": "a5d80314ad60",
  "files": [
   {
    "path": "assets/FreeSurferColorLUT-c2dMMQ80.js",
@@ -317,6 +317,11 @@
    "sha256": "2132e89167ba4b973dfad251e60e2920f91e697ac7af572195a40e1cf2203ede"
   },
   {
+   "path": "assets/index-DGctdJL9.js",
+   "size": 46802,
+   "sha256": "6c0ca750ce8c210622da979ac6c449df84709fdb7d156b0859ff8521519b5ac6"
+  },
+  {
    "path": "assets/index-DmFTeYIz.js",
    "size": 4462,
    "sha256": "47958bc13f6655fb252cccb4048481184c3ff8ec62ae7c2afc8360464546d25f"
@@ -325,11 +330,6 @@
    "path": "assets/index-DrRdPqSw.js",
    "size": 53234,
    "sha256": "d83026c2d475914553835d73d18e71be514b62ad249a7f0ae72c214894bd3efa"
-  },
-  {
-   "path": "assets/index-o2I4nCfZ.js",
-   "size": 46802,
-   "sha256": "91949a0cdf2ac6bda85e22965129c41e6b2d52f1f359622d121dd193d1ac19bc"
   },
   {
    "path": "assets/jpeg-DTGYmCge.js",
@@ -397,14 +397,14 @@
    "sha256": "5981646e7de2d52a2a13d4fd6e9b502b916c6df237409ce9aee92ebbfbbbb14d"
   },
   {
-   "path": "assets/main-BN3QpsX6.js",
+   "path": "assets/main-DnCKZXOT.js",
    "size": 441711,
-   "sha256": "daf0ad919875531f771b57f586c3d736f107117bb275794041ea31b0e13fc153"
+   "sha256": "fd024bbd15ecb3d78c329487e582c9e7f6cda8c024833fee90441e278f640e56"
   },
   {
-   "path": "assets/main-DyMS1KFZ.css",
-   "size": 90532,
-   "sha256": "ee2fad2b3ebad49906d6fda97c5b1a3fbc76776350b59f58d9d8904d6eda4e7a"
+   "path": "assets/main-MpMFjR_W.css",
+   "size": 91477,
+   "sha256": "c3343f13f66a3210bb62f29eaa5b3f86d9a49b0432fdf6186cf213d1614593cd"
   },
   {
    "path": "assets/manifest-BQbWtMgY.js",
@@ -472,14 +472,14 @@
    "sha256": "e2262b8cd98e3b9355d21756f658a88a4d1b83defe80047d094acd94ad43c923"
   },
   {
+   "path": "assets/neuroglancer-B7lZ4T9R.js",
+   "size": 12343,
+   "sha256": "c04fc3fd718e505f644ef4db04330dc96c60e5909157116e2ed0ba6c734d6055"
+  },
+  {
    "path": "assets/neuroglancer-DgPbtY9s.css",
    "size": 2531,
    "sha256": "e35508186972e5405b1b919c68089f62630607ed9438109775b97c479f87feec"
-  },
-  {
-   "path": "assets/neuroglancer-M8mIJ1gj.js",
-   "size": 12343,
-   "sha256": "f6a054edfb2a7dd0bad77ca30bd4ab6bc6ddf6b77529205f26758d8caf1b1972"
   },
   {
    "path": "assets/neuroglancer_draco-DghDCUD5.wasm",
@@ -572,14 +572,14 @@
    "sha256": "56092d26bef4be05423b0929c5b16338e49d7f624658c9edb25a31b875ad7adf"
   },
   {
-   "path": "assets/plugin-DeJM815_.js",
-   "size": 169503,
-   "sha256": "7d9a2a7a0e829fecaf2903b810f5a17270449c63b980837d8b805bd7274ba451"
-  },
-  {
    "path": "assets/plugin-FRIDtsT8.js",
    "size": 48330,
    "sha256": "0958e2cadff25075444bb2ddbc5867b455d22b9d3b0b1a53ad356a4aa7ef7e81"
+  },
+  {
+   "path": "assets/plugin-XgrGRNlZ.js",
+   "size": 176592,
+   "sha256": "43510410795a0c70c988e186b09bf58e471d7599c99beb8b88589f7403460451"
   },
   {
    "path": "assets/precomputed-DNtQCeou.js",
@@ -677,9 +677,9 @@
    "sha256": "4f5fcc2d5375c881f83225fb5fa3bbb01208a6ee098a7de458a0268ee831b453"
   },
   {
-   "path": "assets/store_format-qaep6_eC.js",
-   "size": 7299,
-   "sha256": "2e069cef25f071b6816069ad5c7267e4b2b02e4c0533eb1b004a8d64a5273f47"
+   "path": "assets/store_format-DR-QhljO.js",
+   "size": 7733,
+   "sha256": "d582dbb36d59061ad22cb89acab5b4240de5760705e2ed0570bf7ead4c76aa73"
   },
   {
    "path": "assets/ui-B4BXgm8S.js",
@@ -824,17 +824,17 @@
   {
    "path": "index.html",
    "size": 5568,
-   "sha256": "da51c2cd0cbbab3eb1d8a8636cec49122daa7dfbe544b742851f70748da974c4"
+   "sha256": "a8e020d6d944d4d98abd5a806c3243c526762417f073f15d1443d14e0f51e882"
   },
   {
    "path": "neuroglancer.html",
    "size": 2761,
-   "sha256": "86a7b553a48b5d6390d27d59375c3a1f3309d2d521914fc62f79bc08e4f382f6"
+   "sha256": "a5372df502517165e30b30928ae5feff3a00cd22bbb9a02ec62628b3425c789a"
   },
   {
    "path": "sw.js",
    "size": 9569,
-   "sha256": "cb843aa5945121e6096054df1533896f0414c18d786a6e1ea00e1d8849a71e82"
+   "sha256": "660c2e68bbb10b50cfb7978ffa21044e237e242ff61e5ef70beed4cc3f28a62d"
   },
   {
    "path": "theme.js",
