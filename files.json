@@ -1,5 +1,5 @@
 {
- "commit": "a5d80314ad60",
+ "commit": "1d36e1dfa320",
  "files": [
   {
    "path": "assets/FreeSurferColorLUT-c2dMMQ80.js",
@@ -317,9 +317,9 @@
    "sha256": "2132e89167ba4b973dfad251e60e2920f91e697ac7af572195a40e1cf2203ede"
   },
   {
-   "path": "assets/index-DGctdJL9.js",
+   "path": "assets/index-DJJ9hjXt.js",
    "size": 46802,
-   "sha256": "6c0ca750ce8c210622da979ac6c449df84709fdb7d156b0859ff8521519b5ac6"
+   "sha256": "ebc69a48757b5965ab762cd54f4832806f9d196dcc49234e074460a9ba6e3c3b"
   },
   {
    "path": "assets/index-DmFTeYIz.js",
@@ -397,9 +397,9 @@
    "sha256": "5981646e7de2d52a2a13d4fd6e9b502b916c6df237409ce9aee92ebbfbbbb14d"
   },
   {
-   "path": "assets/main-DnCKZXOT.js",
+   "path": "assets/main-Dva3Mjb8.js",
    "size": 441711,
-   "sha256": "fd024bbd15ecb3d78c329487e582c9e7f6cda8c024833fee90441e278f640e56"
+   "sha256": "250b9a15959821d393dc22d04143aceecbfe88d237e512bcedb45c0afa66efba"
   },
   {
    "path": "assets/main-MpMFjR_W.css",
@@ -472,9 +472,9 @@
    "sha256": "e2262b8cd98e3b9355d21756f658a88a4d1b83defe80047d094acd94ad43c923"
   },
   {
-   "path": "assets/neuroglancer-B7lZ4T9R.js",
+   "path": "assets/neuroglancer-CEwQZAqm.js",
    "size": 12343,
-   "sha256": "c04fc3fd718e505f644ef4db04330dc96c60e5909157116e2ed0ba6c734d6055"
+   "sha256": "0b15d07b408f9c2c0df2398702628cc6b29eaa95debdcbde7ffd30ca0f9fdb5c"
   },
   {
    "path": "assets/neuroglancer-DgPbtY9s.css",
@@ -557,11 +557,6 @@
    "sha256": "68bd53d9e1ea94142ec0681220aa4c7498bb79ad5f0a0ec5a5ab2a6d961404cf"
   },
   {
-   "path": "assets/plugin-CSh4uOyw.js",
-   "size": 590893,
-   "sha256": "fb66c1732ffa764897244fab4cca0ea57123ff712081449eecb98627d6a08a81"
-  },
-  {
    "path": "assets/plugin-Cmng1spf.js",
    "size": 44413,
    "sha256": "78f301dc42850d8c275e8044a5a319a45303fe36761aca4734195cab502afb09"
@@ -570,6 +565,11 @@
    "path": "assets/plugin-Cyuwxdwx.js",
    "size": 35386,
    "sha256": "56092d26bef4be05423b0929c5b16338e49d7f624658c9edb25a31b875ad7adf"
+  },
+  {
+   "path": "assets/plugin-DPLuxQY8.js",
+   "size": 593181,
+   "sha256": "884265752b0a32f378622cc2a812758d75f9b9985408735a301fa0b1fa806a4c"
   },
   {
    "path": "assets/plugin-FRIDtsT8.js",
@@ -824,17 +824,17 @@
   {
    "path": "index.html",
    "size": 5568,
-   "sha256": "a8e020d6d944d4d98abd5a806c3243c526762417f073f15d1443d14e0f51e882"
+   "sha256": "d31afbfad5679836f24495e004caaee0bd8a930b2f5cf9cfea22abe6f43be987"
   },
   {
    "path": "neuroglancer.html",
    "size": 2761,
-   "sha256": "a5372df502517165e30b30928ae5feff3a00cd22bbb9a02ec62628b3425c789a"
+   "sha256": "f5c8f4702eb7200509c7a4b64c5f2c47ce4956d5f8bf50156401103242453e5a"
   },
   {
    "path": "sw.js",
    "size": 9569,
-   "sha256": "660c2e68bbb10b50cfb7978ffa21044e237e242ff61e5ef70beed4cc3f28a62d"
+   "sha256": "7ca95a529ab579ab141c2837e2d8077c4a81d2676a3245d2e50d04a6be7f379e"
   },
   {
    "path": "theme.js",
