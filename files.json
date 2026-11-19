@@ -1,5 +1,5 @@
 {
- "commit": "1413757aca69",
+ "commit": "a2827ac4a7be",
  "files": [
   {
    "path": "assets/FreeSurferColorLUT-c2dMMQ80.js",
@@ -302,11 +302,6 @@
    "sha256": "0b96c70c570d52c883b661800d8f5893fe11d1bcb3b57782101d9587b82b9104"
   },
   {
-   "path": "assets/index-Bn00uJAs.js",
-   "size": 45947,
-   "sha256": "59fc855e3cbc9509595784722febab0b90a88a4962d0676da5b6a6f938065197"
-  },
-  {
    "path": "assets/index-Cs3bcJTL.js",
    "size": 56839,
    "sha256": "00f736d830dd08b535da23bd6b2306fba0ec9e775c78964209ac31b70a9554a4"
@@ -330,6 +325,11 @@
    "path": "assets/index-DrRdPqSw.js",
    "size": 53234,
    "sha256": "d83026c2d475914553835d73d18e71be514b62ad249a7f0ae72c214894bd3efa"
+  },
+  {
+   "path": "assets/index-T8kgzb69.js",
+   "size": 45947,
+   "sha256": "acb45a18eb924ad6d0f44e2ff13c38003c50fc65d8b7d743c0de556aa768776a"
   },
   {
    "path": "assets/jpeg-DTGYmCge.js",
@@ -397,14 +397,14 @@
    "sha256": "5981646e7de2d52a2a13d4fd6e9b502b916c6df237409ce9aee92ebbfbbbb14d"
   },
   {
-   "path": "assets/main-7SaocJEy.js",
-   "size": 441141,
-   "sha256": "369d7ba73884c15e5d2b75f5e5b2bc2898b3db1776146eddff958ffa3f77887b"
-  },
-  {
    "path": "assets/main-DyMS1KFZ.css",
    "size": 90532,
    "sha256": "ee2fad2b3ebad49906d6fda97c5b1a3fbc76776350b59f58d9d8904d6eda4e7a"
+  },
+  {
+   "path": "assets/main-UiXmtxef.js",
+   "size": 441141,
+   "sha256": "08258c815332de6d153cbd67009a471344b54870f212ec5ae6e5a7b10b3a9a13"
   },
   {
    "path": "assets/manifest-BQbWtMgY.js",
@@ -472,9 +472,9 @@
    "sha256": "e2262b8cd98e3b9355d21756f658a88a4d1b83defe80047d094acd94ad43c923"
   },
   {
-   "path": "assets/neuroglancer-CoSj9S6z.js",
+   "path": "assets/neuroglancer-CRl4AN1S.js",
    "size": 12340,
-   "sha256": "0225d0306669f3a461f8574af3157b7569796e19830c486c5664585eea1fe1fd"
+   "sha256": "f52feb0b41020818f305c06e6f29e1bf108a14cfc9504a4744d558b40d23cc4a"
   },
   {
    "path": "assets/neuroglancer-DgPbtY9s.css",
@@ -562,11 +562,6 @@
    "sha256": "fb66c1732ffa764897244fab4cca0ea57123ff712081449eecb98627d6a08a81"
   },
   {
-   "path": "assets/plugin-CZKO9c-x.js",
-   "size": 160605,
-   "sha256": "2cc1f6283adabf27d7b8db3872c870ed60f839144a05eb566b4a820fc82bd78b"
-  },
-  {
    "path": "assets/plugin-Cmng1spf.js",
    "size": 44413,
    "sha256": "78f301dc42850d8c275e8044a5a319a45303fe36761aca4734195cab502afb09"
@@ -575,6 +570,11 @@
    "path": "assets/plugin-Cyuwxdwx.js",
    "size": 35386,
    "sha256": "56092d26bef4be05423b0929c5b16338e49d7f624658c9edb25a31b875ad7adf"
+  },
+  {
+   "path": "assets/plugin-DRw6IBFM.js",
+   "size": 169429,
+   "sha256": "41ed7d380a2007a0fd4be59191ee865dcc46d9e0ebf115784feba9f9b9d0d3f5"
   },
   {
    "path": "assets/plugin-FRIDtsT8.js",
@@ -637,6 +637,11 @@
    "sha256": "881b32eaae3e2a87b96f588dd5894c85cdb225fe098571c9eb4a077655847750"
   },
   {
+   "path": "assets/sammed3d_worker-KuCdVlFn.js",
+   "size": 3581,
+   "sha256": "888a4e7ca871ad8ab1f6429eeb8335b22e4bcb37b9c07feca50a04a16f37e853"
+  },
+  {
    "path": "assets/save_worker-BFyAZAWq.js",
    "size": 144056,
    "sha256": "f2d29a6c06e31a1efd4a5e4e6431d5e8a1771a92391066b4516ed118c33c87f7"
@@ -672,9 +677,9 @@
    "sha256": "4f5fcc2d5375c881f83225fb5fa3bbb01208a6ee098a7de458a0268ee831b453"
   },
   {
-   "path": "assets/store_format-DW2m5LJG.js",
-   "size": 7287,
-   "sha256": "ec583cb7eb268c930c228c9f17f425add06d5cdd38bf3b6c523b61f2dd4d0dc2"
+   "path": "assets/store_format-qaep6_eC.js",
+   "size": 7299,
+   "sha256": "2e069cef25f071b6816069ad5c7267e4b2b02e4c0533eb1b004a8d64a5273f47"
   },
   {
    "path": "assets/ui-B4BXgm8S.js",
@@ -819,17 +824,17 @@
   {
    "path": "index.html",
    "size": 5568,
-   "sha256": "20bb51302a3da2f0671a2a9c5374d464832878e59c79eed84e0c005b0f1dc457"
+   "sha256": "a6d46a0f2480bb56009da2ac6d7d1207e23aa7fd06b5c99257255a4bcaad7c04"
   },
   {
    "path": "neuroglancer.html",
    "size": 2761,
-   "sha256": "41028e865750a16f2701b05508e3bf82fbff455948dfe4cf3ac4a6d2779cadf9"
+   "sha256": "3004b98f30b907005a1fbf2128785073d5223b8b00cf7e2c1534df9b9fa531ba"
   },
   {
    "path": "sw.js",
    "size": 9569,
-   "sha256": "f2a34b54cebb0121021e990160d628800e761a0e1e9370a6ed90e68084ecfebf"
+   "sha256": "9ec1cf0c95a23de103bbd4edceb836978c547f30c86c583aabf4b9c997546928"
   },
   {
    "path": "theme.js",
