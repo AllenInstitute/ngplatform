@@ -31,14 +31,22 @@
   --ink-3: #000;         /* raised parts (a card's head, a secondary button): drawn by their lines */
   --ink-card: #000;      /* a card's body */
   --ink-4: rgba(255, 255, 255, 0.10); /* pressed */
+  /* The chrome's surfaces, a few steps off the views' black so its parts read as parts (decided
+     2026-11-19): the bars and docks (chrome), a card in them (card, its head a step lighter),
+     what floats over all of it (overlay).  Fields stay black wells.  Faint text is at least
+     4.5:1 on each. */
+  --surface-chrome: #0d0d0d;
+  --surface-card: #161616;
+  --surface-card-head: #1b1b1b;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
   /* What floats over the rest (menus, tips, toasts, sheets, a view's card), with --line-strong. */
-  --surface-overlay: #141414;
+  --surface-overlay: #1f1f1f;
   --line: rgba(255, 255, 255, 0.10);         /* between parts */
   --line-strong: rgba(255, 255, 255, 0.20);  /* a control's edge, a section's */
   --line-control: rgba(255, 255, 255, 0.20); /* a field's edge */
   --line-hover: rgba(255, 255, 255, 0.36);   /* a field or a split under the pointer */
   --line-focus: rgba(255, 255, 255, 0.92);   /* a field with the focus */
-  /* Text: 92, 64 and 46 % white, each at least 4.5:1 on black and on the overlay grey. */
+  /* Text: 92, 64 and 46 % white, each at least 4.5:1 on black and on every surface (chrome, card, overlay). */
   --text: rgba(255, 255, 255, 0.92);
   --text-strong: #fff;
   --muted: rgba(255, 255, 255, 0.64);
@@ -68,13 +76,14 @@
   --off: rgba(255, 255, 255, 0.20);
   --on: #ebebeb;
   --knob: rgba(255, 255, 255, 0.92);
-  /* The one hue: Neuroglancer's error red, for errors and what deletes (4.9:1 on black). */
-  --err: #db4437;
-  --err-line: rgba(219, 68, 55, 0.6);
+  /* The one hue: Neuroglancer's error red a step lighter, for errors and what deletes: at least
+     4.5:1 on every surface (5.8 on black, 5.0 on a card, 4.6 on the overlay grey). */
+  --err: #e5584b;
+  --err-line: rgba(229, 88, 75, 0.6);
   /* An action that deletes: red words, a red tint under the pointer. */
-  --danger: rgba(219, 68, 55, 0.18);
-  --danger-hover: rgba(219, 68, 55, 0.28);
-  --danger-ink: #db4437;
+  --danger: rgba(229, 88, 75, 0.18);
+  --danger-hover: rgba(229, 88, 75, 0.28);
+  --danger-ink: #e5584b;
   /* Direction-encoded colour, as tractography draws x, y and z (the logo). */
   --dec-x: #e0574b;
   --dec-y: #5cb46c;
@@ -125,14 +134,21 @@
 }
 :root[data-theme="light"], [data-view-ground="light"], [data-view-ground-3d="light"] .over-3d {
   /* White panels, black at fixed opacities.  Text 88, 62 and 56 % black: at least 4.8:1 on
-     white and on the overlay grey (faint is 56 %, not 46 %, for that). */
+     white and on the cards' greys (faint is 56 %, not 46 %, for that). */
   --ink-0: #fff;
   --ink-1: #fff;
   --ink-2: #fff;
   --ink-3: #fff;
   --ink-card: #fff;
   --ink-4: rgba(0, 0, 0, 0.10);
-  --surface-overlay: #f4f4f4;
+  /* The mirror: the chrome white, a card a step darker (#f5f5f5, its head #efefef), fields white wells
+     in it, what floats white with its edge and shadow.  Faint text at least 4.75:1 and the error red
+     4.5:1 on each. */
+  --surface-chrome: #fff;
+  --surface-card: #f5f5f5;
+  --surface-card-head: #efefef;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --surface-overlay: #fff;
   --line: rgba(0, 0, 0, 0.10);
   --line-strong: rgba(0, 0, 0, 0.20);
   --line-control: rgba(0, 0, 0, 0.20);
@@ -158,7 +174,7 @@
   --off: rgba(0, 0, 0, 0.20);
   --on: #141414;
   --knob: rgba(0, 0, 0, 0.88);
-  /* The same red, a step darker: 5.3:1 on white, 4.8:1 on the overlay grey. */
+  /* The same red, a step darker: 5.3:1 on white, 4.8 on a card, 4.5 on a card's head. */
   --err: #c53929;
   --err-line: rgba(197, 57, 41, 0.6);
   --danger: rgba(197, 57, 41, 0.12);
@@ -326,6 +342,10 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 .app.tools-collapsed { --tw: 34px; }
 .app.tools-empty, .app.left-collapsed { --tw: 0px; }
 .app.bottom-collapsed { --bh: 34px; }
+
+/* The chrome (bars and docks) on its own ground, a step off the views' black: what takes a
+   panel's ground there (ink 1 to 3) takes the chrome's; wells (ink 0) stay black. */
+.topbar, .side, .dock, .ng-status { --ink-1: var(--surface-chrome); --ink-2: var(--surface-chrome); --ink-3: var(--surface-chrome); }
 
 /* ---------------------------------------------------------------- top bar */
 .topbar {
@@ -789,7 +809,10 @@ kbd {
 /* Open, the card grows to hold the dataset's settings: one box, its row the head (no box of its
    own), the settings below a line, darker than the dock; the selected dataset's card with the selection's bar. */
 .ds-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-radius: var(--r); }
-.ds-card.open { background: var(--ink-1); padding-bottom: var(--sp-4); }
+/* Open, a box as the cards are: 6 px in from the column's edges, its rows' content still on the 12 px edge. */
+.ds-card.open { background: var(--surface-card); box-shadow: var(--shadow-card); padding-bottom: var(--sp-4); margin-inline: var(--sp-3); border: 1px solid var(--line); }
+.layers-list .ds-card.open .ds-row { padding-inline: calc(11px - var(--sp-3) - 1px); }
+.ds-card.open .ds-body { padding-left: calc(var(--sp-7) - var(--sp-3) - 1px); padding-right: calc(var(--sp-5) - var(--sp-3) - 1px); }
 .ds-card.open.selected .ds-row.card-row { border-color: var(--text); }
 /* More room between datasets than within one: an open card stands apart from its neighbours. */
 .ds-card.open:not(:first-child) { margin-top: var(--sp-3); }
@@ -1635,9 +1658,11 @@ textarea.state-input.tall { min-height: 50vh; }
 /* No outline: its head is raised, its body on the panel. */
 /* A card is one block, raised off the dock: its head (ink-3) over its body (ink-card), within one
    edge, so an open card's settings read as its own and not the dock's. */
-.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line); background: var(--ink-card); height: max-content; }
+.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line); background: var(--surface-card); box-shadow: var(--shadow-card); height: max-content; }
+/* Within a card, what takes a panel's ground takes the card's (a list's head, a sticky header). */
+.card, .ds-card.open { --ink-1: var(--surface-card); --ink-2: var(--surface-card); --ink-3: var(--surface-card-head); }
 /* The card title: the panel's heading style. */
-.card > .card-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); font-weight: 600; font-size: var(--fs-heading); color: var(--text); background: var(--ink-3); cursor: pointer; list-style: none; user-select: none; }
+.card > .card-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); font-weight: 600; font-size: var(--fs-heading); color: var(--text); background: var(--surface-card-head); cursor: pointer; list-style: none; user-select: none; }
 .card > .card-head::-webkit-details-marker { display: none; }
 .card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast) var(--ease-out); flex: none; }
 .card[open] > .card-head::before { transform: rotate(45deg); }
@@ -1666,9 +1691,12 @@ textarea.state-input.tall { min-height: 50vh; }
 .card > .card-body > :is(div, p, span, section, ul, ol):empty { display: none; }
 /* In the left column a card is open at its sides, as a dataset's: lines above and below, its head on
    the column's edge, its body one step (12 px) in, every row ending on the column's one right edge. */
-.side .card { border-left: 0; border-right: 0; }
-.side .card > .card-head { padding: var(--sp-4) 0; }
-.side .card > .card-body { padding: var(--sp-5) 0 var(--sp-5) var(--sp-5); }
+/* With its own ground it is a box a small margin (6 px) in from the column's edges, its content still on
+   the column's 12 px edge: the head 5 px inside its 1 px line, the body one step (12 px) further in. */
+.side .card { margin-inline: calc(var(--sp-3) - var(--sp-5)); }
+.side .card > .card-head { padding: var(--sp-4) var(--card-pad); }
+.side .card > .card-body { padding: var(--sp-5) var(--card-pad) var(--sp-5) calc(var(--card-pad) + var(--sp-5)); }
+.side { --card-pad: calc(var(--sp-5) - var(--sp-3) - 1px); }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-4); }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }

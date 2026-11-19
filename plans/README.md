@@ -20,6 +20,7 @@ Item line numbers are from that commit and move as the code changes.
 | CI | As few runs as possible: on pull requests and by hand, `[skip ci]` on work-in-progress pushes. |
 | Errors | Kept locally: in Activity, and a log Settings › Developer can save. No remote reporter. |
 | Theme | Dark (default), Light or Match system, kept per browser (Settings › View); light mirrors dark. The views are white in the light theme (display only, never saved) unless Black views in the light theme is on. Decided 2026-11-14, replacing "Dark only". |
+| Surfaces | The chrome on quiet layers, not all black: views black, bars and docks #0d0d0d, cards #161616 (head #1b1b1b) with a slight shadow, what floats #1f1f1f; in the light theme a white chrome with light grey cards (#f5f5f5, head #efefef). Decided 2026-11-19, replacing "a part is told from its neighbour by a 1 px line, not a fill". The error red lightened to #e5584b to stay 4.5:1 on them. |
 | Splats | Shown, marked *In progress*, until a fit has run end to end. |
 | Browsers | Chrome and Edge fully; Firefox and Safari work, without folder access. |
 

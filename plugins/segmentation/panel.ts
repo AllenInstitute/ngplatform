@@ -105,7 +105,7 @@ export class Panel {
         const rows = e.rows();
         badge(segmentsCard, String(rows.length));
         // A hash of the rows, not the rows: with 100k segments their text alone is megabytes.
-        segmentsBody.update([s.fileName, rowsHash(rows), rows.length, e.value, e.groups(s), s.volume.type]);
+        segmentsBody.update([s.fileName, rowsHash(rows), rows.length, e.value, e.groups(s), s.volume.type, e.morphAmount, e.morphScope]);
         toolBody.update(this.toolKey());
         valuesBody.update([s.fileName, s.reference?.layer, s.reference?.level, readableImages(this.ctx), e.limit, e.low, e.high]);
         badge(saveCard, s.unsaved ? `${s.unsaved} unsaved` : "");
@@ -532,7 +532,46 @@ export class Panel {
       vg.groups.length
         ? field(`Group of segment ${e.value}`, select([["", "No group"], ...vg.groups.map((g): [string, string] => [g.id, g.name])], groupOf(vg, e.value)?.id ?? "", (v) => e.assignGroup([e.value], v || undefined), "Group of the active segment"))
         : null,
-      rows.every((r) => r.voxels === 0) ? emptyState("Nothing painted yet.", { label: "Brush (B)", run: () => e.setTool("brush") }) : null,
+      rows.every((r) => r.voxels === 0) ? emptyState("Nothing painted yet.", { label: "Brush (B)", run: () => e.setTool("brush") }) : this.refineRow(session),
+    );
+  }
+
+  /** Grow, Shrink and Smooth for the active segment, by how much and where. */
+  private refineRow(session: Session): HTMLElement {
+    const e = this.editor;
+    const voxel = Math.min(...voxelEdges(session.volume.voxelToRas));
+    const where = e.morphScope === "section" ? `in the section in view (across the view last drawn in)` : "in 3-D";
+    return el(
+      "div",
+      { class: "stack sg-refine" },
+      el(
+        "div",
+        { class: "row" },
+        el("span", { class: "faint" }, `Segment ${e.value}`),
+        button("Grow", () => e.morph("grow"), `Dilate: add every voxel within the distance of segment ${e.value}, ${where}; paints over what Paint over allows`),
+        button("Shrink", () => e.morph("shrink"), `Erode: remove every voxel of segment ${e.value} within the distance of its edge, ${where}`),
+        button("Smooth", () => e.morph("smooth"), `Round corners and remove specks and pinholes smaller than about the distance (a Gaussian of that σ), ${where}`),
+      ),
+      el(
+        "div",
+        { class: "row" },
+        field(
+          "By (mm)",
+          numberInput(e.morphAmount, (v) => {
+            if (!(v > 0)) return;
+            e.morphAmount = v;
+            e.changed();
+          }, { min: voxel / 4, step: +(voxel / 2).toPrecision(2), "aria-label": "Grow, shrink or smooth by (mm)" }),
+        ),
+        field(
+          "Where",
+          select([["3d", "3-D"], ["section", "This section"]], e.morphScope, (v) => {
+            e.morphScope = v as "3d" | "section";
+            e.changed();
+          }, "Grow, shrink or smooth in 3-D, or in the section in view only"),
+        ),
+        el("span", { class: "faint" }, `${+(e.morphAmount / voxel).toFixed(1)} voxels`),
+      ),
     );
   }
 

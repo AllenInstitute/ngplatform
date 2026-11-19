@@ -41,7 +41,7 @@ While a label volume is edited, a tool bar shows at the top of the views:
 - **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`: strokes and workspace changes as one history); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
 
 ## Segments
-Each segment's colour, name, voxels and volume; the active one is marked. **+ New group** makes a named group: drag segments onto it (or choose the active segment's **Group**); a group's eye shows or hides all its segments, its colour square colours them all, and its name can be typed. Click one to paint with it; the eye shows or hides it; **Go to** moves the views to it; **Merge** gives its voxels to the active segment; **Delete** erases it. All undoable.
+Each segment's colour, name, voxels and volume; the active one is marked. **+ New group** makes a named group: drag segments onto it (or choose the active segment's **Group**); a group's eye shows or hides all its segments, its colour square colours them all, and its name can be typed. Click one to paint with it; the eye shows or hides it; **Go to** moves the views to it; **Merge** gives its voxels to the active segment; **Delete** erases it. **Grow**, **Shrink** and **Smooth** change the active segment by the millimetres given (Smooth: a Gaussian of that σ), in 3-D or in the section in view. All undoable.
 
 ## Saving
 The panel's **Save** card, or the tool bar's save button: NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole grid or only the painted box. Progress and failures show in the panel's status line; a save done or failed is also a message and a line in Activity.
@@ -66,6 +66,9 @@ A label volume lives in this page until saved; it is also kept in this browser w
       { id: "segmentation.brushSize", title: "Brush size", group: "Segmentation", args: { type: "object", properties: { notches: { type: "number", default: 1 } } } },
       { id: "segmentation.newSegment", title: "New segment", group: "Segmentation", when: EDITING },
       { id: "segmentation.interpolate", title: "Interpolate the segment between drawn sections", group: "Segmentation", when: EDITING },
+      { id: "segmentation.grow", title: "Grow the active segment (dilate)", group: "Segmentation", when: EDITING },
+      { id: "segmentation.shrink", title: "Shrink the active segment (erode)", group: "Segmentation", when: EDITING },
+      { id: "segmentation.smooth", title: "Smooth the active segment", group: "Segmentation", when: EDITING },
       { id: "segmentation.undo", title: "Undo the last stroke or workspace change, whichever came last", group: "Segmentation", when: EDITING },
       { id: "segmentation.redo", title: "Redo a stroke or workspace change, in the order undone", group: "Segmentation", when: EDITING },
       { id: "segmentation.stopEditing", title: "Stop editing the label volume (hide the tool bar)", group: "Segmentation", when: EDITING },

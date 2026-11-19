@@ -183,6 +183,12 @@ sections**) is reached. ++enter++ paints it all as one stroke.
 the same 2-D view), then press ++v++: each section between gets a shape
 between the two drawn. Check the result, as with any interpolation.
 
+**A structure in 3-D from a few sections**: with AI segment's MobileSAM, box
+it in one section, **Spread** both ways, **Interpolate** any gaps, then
+**Smooth** it (under the segment list) by about an image voxel. The plan for
+doing better (`plans/ai-3d-segmentation.md`) is a protocol built on this and
+nnInteractive on the render computer.
+
 While the tool bar shows, the keys above are the tools'. Some are
 Neuroglancer's otherwise (++b++ scale bar, ++e++ rotate, ++l++ new segment
 colours, ++v++ default
@@ -233,6 +239,17 @@ in its row.
 - **Go to** moves the views to the segment (its voxel nearest its centre).
 - **Merge** gives a segment's voxels to the active segment; **Delete**
   erases them. Both can be undone.
+- **Grow**, **Shrink** and **Smooth**, under the list, change the active
+  segment by **By (mm)**, in **3-D** or in **This section** (the section in
+  view, across the view last drawn in). Grow (dilate) adds every voxel within
+  that distance of the segment, painting over what **Paint over** allows;
+  Shrink (erode) takes away every voxel of it within that distance of its
+  edge (not at the volume's edge); Smooth blurs it by a Gaussian of that σ
+  and keeps what is over half, so corners round off and specks and pinholes
+  smaller than about the distance go. Distances are in millimetres, so a
+  ball on voxels longer one way. One undo each; also in the command palette.
+  A segment of any size works (in tiles); a distance of more than about 95
+  voxels at once is refused: use several steps.
 - A long list (a copied segmentation can have 100,000 segments) draws only
   the rows in view as it scrolls. A layer opened with more than 1,000
   segments keeps Neuroglancer's own colours for them, not one each in the

@@ -8,7 +8,10 @@ colors:
   ink-3: "#000"
   ink-card: "#000"
   ink-4: "rgba(255, 255, 255, 0.10)"
-  surface-overlay: "#141414"
+  surface-chrome: "#0d0d0d"
+  surface-card: "#161616"
+  surface-card-head: "#1b1b1b"
+  surface-overlay: "#1f1f1f"
   line: "rgba(255, 255, 255, 0.10)"
   line-strong: "rgba(255, 255, 255, 0.20)"
   line-control: "rgba(255, 255, 255, 0.20)"
@@ -28,9 +31,9 @@ colors:
   on: "#ebebeb"
   off: "rgba(255, 255, 255, 0.20)"
   knob: "rgba(255, 255, 255, 0.92)"
-  err: "#db4437"
-  err-line: "rgba(219, 68, 55, 0.6)"
-  danger: "rgba(219, 68, 55, 0.18)"
+  err: "#e5584b"
+  err-line: "rgba(229, 88, 75, 0.6)"
+  danger: "rgba(229, 88, 75, 0.18)"
   dec-x: "#e0574b"
   dec-y: "#5cb46c"
   dec-z: "#4f88dc"
@@ -51,7 +54,10 @@ colors-light:
   ink-3: "#fff"
   ink-card: "#fff"
   ink-4: "rgba(0, 0, 0, 0.10)"
-  surface-overlay: "#f4f4f4"
+  surface-chrome: "#fff"
+  surface-card: "#f5f5f5"
+  surface-card-head: "#efefef"
+  surface-overlay: "#fff"
   line: "rgba(0, 0, 0, 0.10)"
   line-strong: "rgba(0, 0, 0, 0.20)"
   line-control: "rgba(0, 0, 0, 0.20)"
@@ -158,7 +164,7 @@ components:
     backgroundColor: "{colors.off}"
     rounded: "{rounded.switch}"
   card:
-    backgroundColor: "{colors.ink-card}"
+    backgroundColor: "{colors.surface-card}"
     textColor: "{colors.text}"
     rounded: "{rounded.none}"
   float-surface:
@@ -206,8 +212,9 @@ this browser, never saved in the scene or its link); Black views in the
 light theme keeps them black there, as Neuroglancer and radiology viewers
 show images. Density is a feature: docks hold sections of
 small controls at one control height (24 px), on a 4 px grid. Hierarchy
-comes from white at a few opacities, weight, position and 1 px lines, not
-from grey fills or colour.
+comes from white at a few opacities, weight, position, 1 px lines and a few
+quiet surfaces (the chrome a step off the views' black, cards a step up
+again), not from colour.
 
 Rejected: colourful accents (a blue, then a green accent, then a light-grey
 accent on grey fills), an eight-colour palette for the interface's own use,
@@ -215,7 +222,7 @@ gradients, rounded cards, invented control shapes, decorative motion, "AI"
 styling.
 
 **Key Characteristics:**
-- Black panels separated by 1 px lines; menus, sheets and floating cards a step up (#141414). In the light theme the mirror: white panels, what floats a step down (#f4f4f4).
+- Layered surfaces, a few steps apart: the views black; the chrome (bars, docks) #0d0d0d; a card #161616, its head #1b1b1b; what floats #1f1f1f with a shadow; fields black wells. In the light theme: the chrome white, cards a step darker (#f5f5f5, head #efefef) with white field wells, what floats white with an edge and shadow.
 - White at fixed opacities: text 92, 64 and 46 %; lines 10, 20 and 36 %; hover 6 %.
 - One hue in the chrome: Neuroglancer's error red, for errors and what deletes.
 - What is chosen or on is inverted (a white fill, black words) or outlined in 1 px white; nothing is green.
@@ -228,10 +235,13 @@ styling.
 Black and white at a few opacities; one red; colour belongs to the data.
 
 ### Neutral
-- **Black** (#000, ink-0 … ink-card): the views' surroundings, docks, cards, bars, field wells. A part is told from its neighbour by a 1 px line, not a fill.
-- **Overlay** (#141414): what floats: menus, the command palette, sheets, toasts, tips, a view's floating card.
+- **Black** (#000, ink-0): the views' surroundings and field wells.
+- **Chrome** (#0d0d0d, surface-chrome): the bars and docks, a step off the views so the interface reads as one part and the data as another.
+- **Card** (#161616, surface-card; its head #1b1b1b, surface-card-head): a card, and a dataset's open card, a step up from the chrome with a 1 px line and a slight shadow, so a group of settings reads as one thing. In a side column a card is a box 6 px in from the column's edges, its content on the column's 12 px edge. Within a card, anything that takes a panel's ground (ink-1 to ink-3) takes the card's; in the chrome, the chrome's.
+- **Overlay** (#1f1f1f): what floats: menus, the command palette, sheets, toasts, tips, a view's floating card.
+- The surfaces' steps are small and fixed (decided 2026-11-19, after the all-black chrome proved hard to read): no other greys, no gradients, no fill to mark a state.
 - **Lines** (white 10 % between parts, 20 % a control's or a section's edge, 36 % under the pointer, 92 % a field with the focus).
-- **Text** (white 92 %), **Strong** (#fff), **Muted** (64 %), **Faint** (46 %, 4.6:1 on black): labels are muted, hints and disabled words faint.
+- **Text** (white 92 %), **Strong** (#fff), **Muted** (64 %), **Faint** (46 %, at least 4.5:1 on every surface: 4.7 on the chrome, 4.6 on a card, 4.5 on the overlay): labels are muted, hints and disabled words faint.
 - **Hover** (white 6 %), **Pressed** (10 %), **Selected text** (30 %). A selected row is not a tint (see Chosen and on).
 
 ### Chosen and on
@@ -241,7 +251,7 @@ Black and white at a few opacities; one red; colour belongs to the data.
 - **Focus**: a 1 px white outline, 2 px out.
 
 ### Error
-- **Error red** (#db4437, Neuroglancer's): error words and marks, an error toast's edge, a deleting action's words and its tint under the pointer. Nothing else is red; warnings and success are white, told by their words and marks.
+- **Error red** (#e5584b, Neuroglancer's #db4437 a step lighter, so it is at least 4.5:1 on cards and the overlay): error words and marks, an error toast's edge, a deleting action's words and its tint under the pointer. Nothing else is red; warnings and success are white, told by their words and marks.
 
 ### Axes
 - **Direction colours** (x #e0574b, y #5cb46c, z #4f88dc): as tractography draws x, y and z; the logo, axis arrows and the orientation cube's edges in the views.
@@ -259,11 +269,11 @@ Neuroglancer's own parts over and in the views, in this system.
 
 ### Light theme
 The dark set mirrored (`colors-light`, `:root[data-theme="light"]` in `src/ui/styles.css`): what is white at an opacity in the dark is black at about the same one in the light.
-- **White** (#fff, ink-0 … ink-card) for panels, wells and bars; **Overlay** (#f4f4f4) for what floats, with its 1 px line-strong edge and a lighter shadow.
-- **Text** black 88 %, **Muted** 62 %, **Faint** 56 % (not 46 %: black at 46 % is 3.4:1 on white). Every level at least 4.8:1 on white and on the overlay grey: text 16.5 and 15.3, muted 6.2 and 6.0, faint 4.95 and 4.85.
+- **Chrome** white for bars and docks; **cards** a step darker (#f5f5f5, their head #efefef) with a 1 px line; field wells white inside them; **Overlay** white for what floats, with its 1 px line-strong edge and a lighter shadow.
+- **Text** black 88 %, **Muted** 62 %, **Faint** 56 % (not 46 %: black at 46 % is 3.4:1 on white). Every level at least 4.75:1 on white and on the cards' greys: text 16.6, 15.4 and 14.8; muted 6.2, 6.0 and 5.9; faint 4.9, 4.8 and 4.75.
 - **Lines** black 10, 20 and 36 %, the focus's field 88 %; **Hover** 6 %, **Pressed** 10 %, **Selected text** 22 %; a selected row a 1 px black-88 % outline.
 - **Inverted** is a black fill (#141414) with white words; **Outlined** a 1 px black line; **Focus** a 1 px black outline, 2 px out.
-- **Error red** a step darker, #c53929: 5.3:1 on white, 4.8:1 on the overlay grey (#db4437 there would be 4.3 and 3.9). In the dark #db4437 is 4.9:1 on black and 4.3:1 on the overlay grey.
+- **Error red** a step darker, #c53929: 5.3:1 on white, 4.8 on a card, 4.5 on a card's head. In the dark #e5584b is 5.8:1 on black, 5.0 on a card and 4.6 on the overlay grey.
 - Scrollbars, the caret, placeholders, ranges and tick boxes follow (the browser draws them in the light scheme, in the accent).
 
 ### Views and their ground
@@ -308,21 +318,26 @@ The left column has one inset: its content 12 px in from either side, so
 every row starts on one left edge and ends on one right edge, and one
 nested step of 12 px (a dataset's settings and its views, a card's body).
 A row that can be selected spans the column (its outline edge to edge),
-its content on the 12 px edge. Cards and the plugins there are open at
-their sides: lines above and below, not boxes.
+its content on the 12 px edge. Cards there (and a dataset's open card) are
+boxes a small margin (6 px) in from the column's edges, so the chrome shows
+round them, their content on the same 12 px edge.
 
 ## Elevation & Depth
 
-Flat: parts sit side by side on black, divided by 1 px lines. Only what
-floats is lighter (#141414) and has a shadow.
+Quiet layers: the views on black; the chrome a step lighter; a card a step
+lighter again with a 1 px line and a slight shadow (`--shadow-card`); what
+floats lighter still (#1f1f1f) with its own shadow. Fields are black wells in
+whatever holds them. In the light theme the chrome is white, cards a step
+darker grey with white wells, and what floats white with its shadow.
 
 ### Shadow Vocabulary
 - **Sheet** (`0 20px 48px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.4)`): dialogs over the dimmed page.
 - **Float** (`0 8px 24px rgba(0,0,0,.45)`): everything that floats without dimming the page (`--shadow-menu` is the same shadow).
+- **Card** (`0 1px 2px rgba(0,0,0,.5)`; `.05` in the light theme): a card and a dataset's open card.
 - **Dock** (`0 0 40px rgba(0,0,0,.6)`): the left column over the views on a phone.
 
 ### The Floating Surface
-One style for what floats over the views or the page: menus, the command palette, toasts, tips, completions, Neuroglancer's dropdowns and a view's floating card (class `float-surface`): #141414, a 1 px line-strong edge, square, the Float shadow.
+One style for what floats over the views or the page: menus, the command palette, toasts, tips, completions, Neuroglancer's dropdowns and a view's floating card (class `float-surface`): #1f1f1f (white in the light theme), a 1 px line-strong edge, square, the Float shadow.
 
 ## Motion
 Motion only shows a change of state, briefly, easing out: `--t-fast` (120 ms) for a control's own change (a switch, a chevron), `--t` (200 ms) for a part that grows or moves (a progress bar), `--ease-out` (`cubic-bezier(0.2, 0, 0, 1)`). With reduced motion every duration is 0: changes happen at once.
@@ -338,7 +353,7 @@ sheets alike. The one round shape is the on/off switch.
 - **Tabs**: the chosen one inverted, as Neuroglancer's; the left column's Layers and Plugins only in the strong text.
 - **Fields and selects**: a black well, a 20 % edge, 36 % under the pointer, 92 % with the focus; numbers in the mono face, no spinners.
 - **On/off**: a round switch, a quiet track off, white on; a tick box (the browser's own, white) where a list of options each turn on.
-- **Cards**: a 1 px line around a head and its body, both black; a closed card is its head.
+- **Cards**: a head (#1b1b1b) over a body (#161616) within a 1 px line, with the Card shadow; a closed card is its head. In a side column 6 px in from its edges.
 - **Layer chips**: a layer's number (Neuroglancer's, in draw order) in a small square, mono: white while shown, faint while hidden.
 - **Layer rows**: the chip and the name, then the layer's kind (image, segmentation, vectors…; "local" before it for data on this computer) in the muted mono caption, right-aligned before the row's icons.
 - **Layer source**: the source line sits above the layer's tabs, and Neuroglancer's Source tab was folded into Details beneath it before this redesign; kept, because a layer's source is what the layer is, so it shows whichever tab is open, while its rarely changed parts (subsources, transforms) stay folded.
@@ -354,7 +369,7 @@ sheets alike. The one round shape is the on/off switch.
 - **Do** keep the chrome black and white and let the data carry colour.
 - **Do** keep Neuroglancer's conventions recognisable: restyle its parts, don't reinvent their shapes.
 - **Do** use the tokens in `src/ui/styles.css`; `npm run ui:audit` counts font sizes, button styles, radii and inline styles against `plans/ui-audit-baseline.json`.
-- **Don't** add a hue to the chrome, a grey fill to tell parts apart, a gradient or a rounded card; the light theme is the dark one mirrored, not a look of its own.
+- **Don't** add a hue to the chrome, a grey beyond the surfaces' fixed steps, a gradient or a rounded card; the light theme is the dark one mirrored, not a look of its own.
 - **Don't** colour what is drawn over the views with fixed values: read the view's ink (`viewInk()`, the `--view-ink-*` tokens), so it reads on either ground.
 - **Don't** use green, any colour, or a grey tint for on or selected: invert or outline in white.
 - **Don't** put a character where an icon belongs, or a coloured bar down the side of a selected row.

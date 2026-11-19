@@ -36,6 +36,7 @@ import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
 import { CowVolume, type Original } from "./cow_volume.js";
 import { chooseUndo, Stroke } from "./history.js";
+import { halo, MAX_HALO, type MorphOp, type MorphTile, morphTile, readMask, tiles } from "./morphology.js";
 import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { discard, type KeptInfo, kept, restore, restoreInto, storageUse } from "./keep.js";
 import { CHUNK, LABEL_ARRAYS, LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
@@ -169,6 +170,9 @@ export class Editor implements LabelVolumes {
   quickPrompts: { session: Session; method: string; axis: number; index: number; box?: { lo: Vec3; hi: Vec3 }; points: { at: Vec3; positive: boolean }[] } | undefined;
   /** Spread goes this many sections each way. */
   spreadCount = 5;
+  /** Grow, Shrink and Smooth: by this much (mm; σ for Smooth), in 3-D or in the section in view. */
+  morphAmount = 1;
+  morphScope: "3d" | "section" = "3d";
   saveFormat: "nii.gz" | "zarr" = "nii.gz";
   saveCrop = false;
   /** Edited in place: save the edits only, or the whole volume (a job). */
@@ -254,6 +258,9 @@ export class Editor implements LabelVolumes {
     c.register("segmentation.undo", () => this.undo(false));
     c.register("segmentation.redo", () => this.undo(true));
     c.register("segmentation.interpolate", () => this.interpolate());
+    c.register("segmentation.grow", () => this.morph("grow"));
+    c.register("segmentation.shrink", () => this.morph("shrink"));
+    c.register("segmentation.smooth", () => this.morph("smooth"));
     c.register("segmentation.stopEditing", () => this.setEditing(false));
     c.register("segmentation.acceptPreview", () => this.acceptPreview());
     c.register("segmentation.cancelPreview", () => this.cancelPreview());
@@ -1249,6 +1256,110 @@ export class Editor implements LabelVolumes {
         break;
       }
     }
+  }
+
+  /**
+   * Grows, shrinks or smooths the active segment by `morphAmount` mm (morphology.ts), in 3-D or in the section in
+   * view along the last view's axis; one undo step. Growing and smoothing paint over what Paint over allows.
+   */
+  morph(op: MorphOp): void {
+    const session = this.current;
+    const placed = session?.placement();
+    if (session === undefined) return;
+    const value = this.value;
+    const amount = this.morphAmount;
+    const only = this.overwrite === "empty" ? 0 : undefined;
+    const axis = this.morphScope === "section" ? this.axis : undefined;
+    let index: number | undefined;
+    if (axis !== undefined) {
+      if (placed === undefined) return;
+      const position = (this.ctx.viewer.getState() as { position?: number[] }).position ?? [];
+      index = voxelIndex(toVoxel(placed, position)[axis]);
+    }
+    const verb = { grow: "Grew", shrink: "Shrank", smooth: "Smoothed" }[op];
+    this.enqueue(async () => {
+      const v = session.volume;
+      const own = v instanceof CowVolume ? await v.prepareKeys(v.keysWith(value)) : undefined;
+      const painted = v.paintedBox(value);
+      own?.();
+      if (painted === undefined) {
+        this.ctx.ui.toast(`Segment ${value} is not drawn yet.`);
+        return;
+      }
+      const box = { lo: [...painted.lo] as Vec3, hi: [...painted.hi] as Vec3 };
+      if (axis !== undefined && index !== undefined) {
+        if (index < box.lo[axis] || index >= box.hi[axis]) {
+          this.ctx.ui.toast(`Segment ${value} is not in this section (${"xyz"[axis]} = ${index}).`);
+          return;
+        }
+        box.lo[axis] = index;
+        box.hi[axis] = index + 1;
+      }
+      const spacing = voxelEdges(v.voxelToRas);
+      const reach = halo(op, amount, spacing, axis);
+      if (Math.max(...reach) > MAX_HALO) {
+        this.ctx.ui.toast(`${amount} mm is ${Math.max(...reach)} voxels here; at most ${MAX_HALO - 1} at once (${op === "smooth" ? "3σ" : "the distance"}): use a smaller amount, or several steps.`);
+        return;
+      }
+      const t0 = performance.now();
+      // Every tile's changes first (no tile reads what another wrote), then written as one stroke.
+      const changes: { tile: MorphTile; add: Uint32Array; remove: Uint32Array }[] = [];
+      const list = tiles(op, box, reach, v.size as Vec3, axis);
+      for (let t = 0; t < list.length; ++t) {
+        const tile = list[t];
+        const release = await this.ready(session, tile.read.lo, tile.read.hi, { grow: "Growing it", shrink: "Shrinking it", smooth: "Smoothing it" }[op]);
+        if (release === undefined) return;
+        let mask: Uint8Array;
+        try {
+          mask = readMask(v, value, tile.read.lo, tile.read.hi);
+        } finally {
+          release();
+        }
+        if (!mask.includes(1)) continue;
+        const n = tile.read.hi.map((x, k) => x - tile.read.lo[k]) as Vec3;
+        const after = morphTile(op, mask, n, tile.read.lo, tile.core, amount, spacing, axis);
+        const cn = tile.core.hi.map((x, k) => x - tile.core.lo[k]);
+        const off = tile.core.lo.map((x, k) => x - tile.read.lo[k]);
+        const add: number[] = [];
+        const remove: number[] = [];
+        let o = 0;
+        for (let z = 0; z < cn[2]; ++z)
+          for (let y = 0; y < cn[1]; ++y)
+            for (let x = 0; x < cn[0]; ++x, ++o) {
+              const was = mask[off[0] + x + n[0] * (off[1] + y + n[1] * (off[2] + z))];
+              if (after[o] && !was) add.push(o);
+              else if (!after[o] && was) remove.push(o);
+            }
+        if (add.length || remove.length) changes.push({ tile, add: Uint32Array.from(add), remove: Uint32Array.from(remove) });
+        // Room for the page between tiles.
+        if (t % 4 === 3) await new Promise((r) => setTimeout(r, 0));
+      }
+      const stroke = new Stroke(v);
+      for (const { tile, add, remove } of changes) {
+        const release = await this.ready(session, tile.core.lo, tile.core.hi, `${verb} it`);
+        if (release === undefined) return;
+        try {
+          const cn = tile.core.hi.map((x, k) => x - tile.core.lo[k]);
+          const at = (o: number): Vec3 => [tile.core.lo[0] + (o % cn[0]), tile.core.lo[1] + (Math.floor(o / cn[0]) % cn[1]), tile.core.lo[2] + Math.floor(o / (cn[0] * cn[1]))];
+          for (const o of add) {
+            const p = at(o);
+            if (only === undefined || v.get(...p) === only) stroke.set(...p, value);
+          }
+          for (const o of remove) stroke.set(...at(o), 0);
+        } finally {
+          release();
+        }
+      }
+      const where = axis === undefined ? "in 3-D" : `in section ${"xyz"[axis]} = ${index}`;
+      const added = changes.reduce((n, c) => n + c.add.length, 0);
+      const removed = changes.reduce((n, c) => n + c.remove.length, 0);
+      this.ctx.ui.toast(
+        stroke.changes
+          ? `${verb} segment ${value} by ${amount} mm ${where}: ${added.toLocaleString()} voxels in, ${removed.toLocaleString()} out (${((performance.now() - t0) / 1000).toFixed(1)} s).`
+          : `Segment ${value} is unchanged by ${amount} mm ${where}${op === "grow" && only === 0 ? " (Paint over: empty voxels only)" : ""}.`,
+      );
+      this.commit(stroke, session, value);
+    });
   }
 
   /** Fills the sections between those where the active segment is drawn, along the last view's axis. */

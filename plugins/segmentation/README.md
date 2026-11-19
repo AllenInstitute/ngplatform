@@ -70,6 +70,7 @@ with WebKnossos.
 | `medsam2_worker.ts` | MedSAM2's worker: its files (manifest.json), sessions, sections' features, the track |
 | `medsam2_model.ts` | The AI 3-D (MedSAM2) method: a section from a prompt, and `propagate` (Spread tracks) |
 | `hosted_model.ts` | A model whose files are served from an address and run in a worker of its own (MedSAM2's, SAM-Med3D's): its state, download, calls |
+| `morphology.ts` | Grow, Shrink and Smooth (pure): an exact anisotropic distance transform, a Gaussian blur, tiles with halos so a segment of any size is done in bounded memory |
 | `sammed3d.ts` | SAM-Med3D's cube, image, points and mask back on the label grid (pure) |
 | `sammed3d_worker.ts` | SAM-Med3D's worker: its files, the cubes' embeddings, the decoder with the last mask fed back |
 | `sammed3d_model.ts` | The AI 3-D (SAM-Med3D) method: where the prompts put the cube (`cubePrompts`), a 3-D mask from them |
