@@ -117,7 +117,20 @@ const DISK_THICKNESS = 0.04;
  * a sample of the objects.
  */
 const GROUP_STORE_POINTS = 8_000_000;
+/**
+ * The most points a level may hold for a group to be read from it. A group's whole streamlines are read from every
+ * chunk they pass through, each chunk decoded whole (about 12 bytes a point): streamlines chosen by a region run
+ * through most of the store, so reading them costs about the whole level, not their own points. (S-21-46's level 1,
+ * 744 M points, ran the page out of memory for 38,000 streamlines.)
+ */
+const GROUP_STORE_LEVEL_POINTS = 16_000_000;
 const GROUP_STORE_DELAY_MS = 400;
+
+/** A share as a percentage, to two significant figures under 10 % ("0.39%", not "0%"). */
+export function percentText(share: number): string {
+  const p = 100 * share;
+  return `${p >= 10 || p === 0 ? Math.round(p) : Number(p.toPrecision(2))}%`;
+}
 /** How often the panel follows progress, ms. */
 const PROGRESS_MS = 100;
 /**
@@ -1429,8 +1442,8 @@ export class TrackGroups {
           // The exact answer can come first (its levels are cached): a late preview must not replace it.
           if (!current() || this.results.get(group.id)?.state === "exact") return;
           const mask = combine(results);
-          const sample = Math.round(100 * (info.levels[preview].vertexCount ?? 0) / (info.levels[0].vertexCount || 1));
-          this.setResult(group, { mask, count: countPassing(mask), state: "preview", detail: `Previewed from about ${sample}% of the points; counting exactly…` });
+          const sample = percentText((info.levels[preview].vertexCount ?? 0) / (info.levels[0].vertexCount || 1));
+          this.setResult(group, { mask, count: countPassing(mask), state: "preview", detail: `Previewed from about ${sample} of the points; counting exactly…` });
         },
         () => {},
       );
@@ -1691,18 +1704,20 @@ export class TrackGroups {
     const total = info.levels[0].vertexCount ?? 0;
     const perObject = total / Math.max(1, props.ids.length);
     const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
-    const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS)?.index ?? info.levels[info.levels.length - 1].index;
+    // Within what is drawn and within what is read (a level of unknown size: as its points' share says).
+    const readable = (l: StoreInfo["levels"][number]) => (l.vertexCount ?? total) <= GROUP_STORE_LEVEL_POINTS;
+    const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS && readable(l))?.index ?? info.levels[info.levels.length - 1].index;
     if (level > 0) {
       // Past what the page draws whole: the group is drawn from a sample level.
-      const sample = Math.round((100 * (info.levels[level].vertexCount ?? 0)) / Math.max(1, total));
-      this.sizeNotes.set(id, `Drawn from a sample (level ${level}, ~${sample}% of the points); Save .trk writes every one.`);
+      const sample = percentText((info.levels[level].vertexCount ?? 0) / Math.max(1, total));
+      this.sizeNotes.set(id, `Drawn from a sample (level ${level}, ~${sample} of the points); Save .trk writes every one.`);
       this.updateAll();
     } else if (this.sizeNotes.delete(id)) {
       // The group has shrunk: drawn whole again.
       this.updateAll();
     }
     // A big group first from a sample level (read in seconds), then whole.
-    const preview = info.levels.find((l) => l.index > level && estimate(l) <= GROUP_PREVIEW_POINTS && estimate(l) >= GROUP_PREVIEW_POINTS / 20)?.index;
+    const preview = info.levels.find((l) => l.index > level && readable(l) && estimate(l) <= GROUP_PREVIEW_POINTS && estimate(l) >= GROUP_PREVIEW_POINTS / 20)?.index;
     for (const at of preview === undefined ? [level] : [preview, level]) {
       // Read and written as a .trk in the region worker: the page only hands the file on.
       const bytes = await engine.trk(ids, at, trkSpace(info), signal);

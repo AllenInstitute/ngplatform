@@ -20,6 +20,9 @@
   "peerDependencies": {
     "neuroglancer": "*"
   },
+  "dependencies": {
+    "fzstd": "^0.1.1"
+  },
   "sideEffects": [
     "./src/register_default.ts",
     "./src/layer.ts",

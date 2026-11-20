@@ -950,6 +950,11 @@ export class ZarrArrayReader {
       byteRange: location.range,
     });
     if (encoded === undefined) return undefined;
+    return this.decodeStored(encoded, signal);
+  }
+
+  /** A stored chunk's bytes decoded by the array's codecs. */
+  private async decodeStored(encoded: Uint8Array, signal?: AbortSignal): Promise<Uint8Array> {
     if (this.array.raw) return encoded;
     const decoded = await decodeArray(
       this.array.codecs,
@@ -1146,8 +1151,7 @@ export class ZarrArrayReader {
     const chunkIndices: number[] = [];
     for (let c = first; c <= last; ++c) chunkIndices.push(c);
     const trailing = new Array<number>(array.shape.length - 1).fill(0);
-    await mapConcurrent(chunkIndices, concurrency, async (c) => {
-      const bytes = await this.readChunk([c, ...trailing], signal);
+    const put = (c: number, bytes: Uint8Array | undefined) => {
       const chunkStart = c * chunkRows;
       const lo = Math.max(start, chunkStart);
       const hi = Math.min(end, chunkStart + chunkRows);
@@ -1170,7 +1174,47 @@ export class ZarrArrayReader {
         ),
         dst,
       );
-    });
+    };
+    if (array.sharding !== undefined && chunkIndices.length > 1) {
+      // Sharded: each shard's chunks read in one request (the span they lie in), not one request each: a column of
+      // ten million rows is a few shards of a hundred-odd chunks.
+      const byShard = new Map<number, number[]>();
+      const per = array.sharding.subGridShape[0];
+      for (const c of chunkIndices) {
+        const k = Math.floor(c / per);
+        let list = byShard.get(k);
+        if (list === undefined) byShard.set(k, (list = []));
+        list.push(c);
+      }
+      await mapConcurrent([...byShard.values()], concurrency, async (list) => {
+        const located = await Promise.all(list.map((c) => this.locate([c, ...trailing], signal)));
+        const ranges = located.map((l) => l?.range).filter((r): r is { offset: number; length: number } => r !== undefined);
+        if (ranges.length === 0) {
+          for (const c of list) put(c, undefined);
+          return;
+        }
+        const lo = Math.min(...ranges.map((r) => r.offset));
+        const hi = Math.max(...ranges.map((r) => r.offset + r.length));
+        const used = ranges.reduce((n, r) => n + r.length, 0);
+        // Mostly gaps (a few chunks of a large shard): one request each, as unsharded.
+        if (used < 0.5 * (hi - lo)) {
+          await mapConcurrent(list, 4, async (c) => put(c, await this.readChunk([c, ...trailing], signal)));
+          return;
+        }
+        const key = located.find((l) => l !== undefined)!.key;
+        const span = await this.read(key, { signal, byteRange: { offset: lo, length: hi - lo } });
+        await Promise.all(
+          list.map(async (c, i) => {
+            const r = located[i]?.range;
+            if (r === undefined || span === undefined) return put(c, undefined);
+            // A copy each: a decoder may take (transfer) its input's buffer, which the others share.
+            put(c, await this.decodeStored(span.slice(r.offset - lo, r.offset - lo + r.length), signal));
+          }),
+        );
+      });
+    } else {
+      await mapConcurrent(chunkIndices, concurrency, async (c) => put(c, await this.readChunk([c, ...trailing], signal)));
+    }
     // A UTF-32 element is a run of 4-byte code units.
     const unit = array.elementType === "utf32" ? 4 : array.elementBytes;
     if (array.bigEndian && unit > 1) swapEndian(out, unit);

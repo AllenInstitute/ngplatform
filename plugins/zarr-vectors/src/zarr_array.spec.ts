@@ -21,6 +21,7 @@ import {
   coalesceRangeReads,
   openZarrArray,
   ShardIndexCache,
+  type ZarrArrayRead,
   ZarrArrayReader,
 } from "./zarr_array.js";
 
@@ -431,5 +432,80 @@ describe("cellPayloadLength", () => {
     expect(
       await reader.cellPayloadLength(key.split(".").map(Number)),
     ).toBeNull();
+  });
+});
+
+describe("a sharded column's rows", () => {
+  // 1000 int32 rows (row i holds i), shards of 400 rows in inner chunks of 100; the last shard holds two chunks.
+  const files = new Map<string, Uint8Array>();
+  files.set(
+    "col/zarr.json",
+    new TextEncoder().encode(
+      JSON.stringify({
+        zarr_format: 3,
+        node_type: "array",
+        shape: [1000],
+        data_type: "int32",
+        chunk_grid: { name: "regular", configuration: { chunk_shape: [400] } },
+        chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+        fill_value: 0,
+        codecs: [
+          {
+            name: "sharding_indexed",
+            configuration: {
+              chunk_shape: [100],
+              codecs: [{ name: "bytes", configuration: { endian: "little" } }],
+              index_codecs: [{ name: "bytes", configuration: { endian: "little" } }],
+              index_location: "end",
+            },
+          },
+        ],
+      }),
+    ),
+  );
+  for (let s = 0; s < 3; ++s) {
+    const chunks: Uint8Array[] = [];
+    const index = new BigUint64Array(8).fill(0xffffffffffffffffn);
+    let at = 0;
+    for (let k = 0; k < 4; ++k) {
+      const c = s * 4 + k;
+      if (c * 100 >= 1000) continue;
+      const values = Int32Array.from({ length: 100 }, (_, i) => c * 100 + i);
+      const bytes = new Uint8Array(values.buffer);
+      index[2 * k] = BigInt(at);
+      index[2 * k + 1] = BigInt(bytes.length);
+      chunks.push(bytes);
+      at += bytes.length;
+    }
+    const out = new Uint8Array(at + index.byteLength);
+    let o = 0;
+    for (const c of chunks) {
+      out.set(c, o);
+      o += c.length;
+    }
+    out.set(new Uint8Array(index.buffer), o);
+    files.set(`col/c/${s}`, out);
+  }
+
+  it("reads each shard's chunks in one request", async () => {
+    let requests = 0;
+    const read: ZarrArrayRead = async (p, options) => {
+      const data = files.get(p);
+      if (data === undefined) return undefined;
+      if (p.startsWith("col/c/")) ++requests;
+      const r = options.byteRange;
+      if (r === undefined) return data.slice();
+      return "suffixLength" in r ? data.slice(data.length - r.suffixLength) : data.slice(r.offset, r.offset + r.length);
+    };
+    const array = await openZarrArray(read, "col");
+    const reader = new ZarrArrayReader(array!, read, new ShardIndexCache());
+    const rows = new Int32Array((await reader.readRows(0, 1000, undefined, 2)).buffer);
+    expect(Array.from(rows)).toEqual(Array.from({ length: 1000 }, (_, i) => i));
+    // An index and a span for each of the three shards.
+    expect(requests).toBe(6);
+    // Part of the column: within its shards.
+    const part = new Int32Array((await reader.readRows(250, 650)).buffer);
+    expect(part[0]).toBe(250);
+    expect(part[part.length - 1]).toBe(649);
   });
 });

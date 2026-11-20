@@ -87,6 +87,27 @@ describe("TrackGroups' answers", () => {
     groups.dispose();
   });
 
+  it("reads a group's store from a level small enough to read whole, however few streamlines pass", async () => {
+    // Its streamlines run through most chunks, each decoded whole: the cost is the level's, not the group's.
+    const info = { ...INFO, levels: [
+      // (One streamline of the few in the fake store: well within what is drawn at every level.)
+      { index: 0, vertexCount: 40_000_000, chunkShape: [32, 32, 32] },
+      { index: 1, vertexCount: 20_000_000, chunkShape: [64, 64, 64] },
+      { index: 2, vertexCount: 6_000_000, chunkShape: [128, 128, 128] },
+    ] };
+    const { groups, reader } = await opened({ info });
+    reader.evaluations[0].answer([1n]);
+    await settle();
+    await vi.advanceTimersByTimeAsync(400);
+    // Every read (a preview first, if any) answered in turn: none from the levels too big to read whole.
+    for (let i = 0; i < reader.reads.length; ++i) {
+      reader.reads[i].answer();
+      await settle();
+    }
+    expect(reader.reads.map((r) => r.level)).toEqual([2]);
+    groups.dispose();
+  });
+
   it("makes each streamline group a store of its own, replaces it as the answer changes, lets it go, and puts it back after undo", async () => {
     const { w, groups, reader } = await opened({ holdOpens: true });
     reader.evaluations[0].answer([1n]);

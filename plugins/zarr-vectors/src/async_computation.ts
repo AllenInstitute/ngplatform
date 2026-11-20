@@ -17,4 +17,8 @@
 // Decoders for the compressors zarr-vectors stores use (zstd is the default
 // of zarr-vectors-py's high-level API; blosc is a zvtools option).
 import "neuroglancer/unstable/async_computation/decode_blosc.js";
-import "neuroglancer/unstable/async_computation/decode_zstd.js";
+// zstd: our own handler (zstd_decode.ts) in place of Neuroglancer's, which a large array can leave broken.
+import { registerZstd } from "./zstd_decode.js";
+
+/** Called by the platform's async worker once Neuroglancer's handlers are registered: zstd ours again. */
+export const afterNeuroglancer = registerZstd;
