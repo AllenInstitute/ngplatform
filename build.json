@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
-  "commit": "6e9e04a9e6ff",
-  "date": "2026-11-19T15:33:49.521Z",
+  "commit": "6afae1c58332+changes",
+  "date": "2026-11-20T00:59:12.611Z",
   "neuroglancer": {
     "commit": "2a12b947feca",
     "pin": "2a12b947feca"
