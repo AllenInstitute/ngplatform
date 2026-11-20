@@ -21,7 +21,9 @@ import { LIVE_VOXELS, type LiveLook, LiveVolume, type LivePreset, MAX_CLIPS, MAX
 import { placementMm } from "../luxar/view_math.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, invert, levelResolved, LocalRenderer, mul, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { allocateLevels, GEOMETRY_BUDGET, type GeometryRead, groupColours, readGeometry } from "./points.js";
+import { lengthText, type LevelRow, type ResolutionUse, resolutionShares, resolutionUse } from "./resolution.js";
+import { multiscale } from "./adaptive_bricks.js";
+import { allocateLevels, COARSEST, GEOMETRY_BUDGET, type GeometryRead, groupColours, readGeometry } from "./points.js";
 import { layerGeometry } from "./geometry/from_read.js";
 import { lodChunks } from "./geometry/lod.js";
 import { framesFor, type MovieView, rotationFrames } from "./movie_camera.js";
@@ -199,6 +201,8 @@ export interface Saved {
   geometryBudget: number;
   /** Show the path-traced picture of the view when the camera rests, over the object (else the object alone; the host renders stills, movies and splats). */
   restPicture: boolean;
+  /** In this browser, each part of an image drawn at the level its size on screen calls for (plans/adaptive-multiscale.md). */
+  multiscale: boolean;
   keyframes: Keyframe[];
   /** Crops for all layers rendered: boxes each keeping its inside or cutting it out; what shows is inside any that keeps and in none that cuts out. */
   boxes: Crop[];
@@ -342,6 +346,7 @@ export function readSaved(raw: unknown): Saved {
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
     restPicture: s.restPicture === true,
+    multiscale: s.multiscale === true,
     objectVoxels: num(s.objectVoxels, LIVE_VOXELS),
     geometryBudget: Math.min(Math.max(num(s.geometryBudget, GEOMETRY_BUDGET), 0.25e6), GEO_MAX),
     keyframes: Array.isArray(s.keyframes) ? s.keyframes.filter((k) => k && typeof k.time === "number" && k.view && typeof k.view === "object") : [],
@@ -428,6 +433,13 @@ function bounded(value: number, fix: (v: number) => number, on: (v: number) => v
 /** The plugin's own layout: the colourmap canvas, crop boxes, the movie preview and the splat viewer. */
 const STYLE = `
 .ar-grow { flex: 1 1 140px; min-width: 0; }
+/* The levels drawn: a column a level, finest on the left, as Neuroglancer's resolution charts. */
+.ar-res-chart { display: flex; align-items: stretch; gap: 2px; height: 56px; padding: var(--sp-2); background: var(--ink-0); border: 1px solid var(--line); }
+.ar-res-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ar-res-track { flex: 1; display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); }
+.ar-res-bar { width: 100%; background: var(--line-strong); }
+.ar-res-bar.on { background: var(--accent); }
+.ar-res-label { font: var(--fs-caption)/1.2 var(--mono); color: var(--faint); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ar-cut { display: grid; grid-template-columns: 5.5em auto minmax(0, 1fr); align-items: center; gap: var(--sp-3); }
 .ar-cut > .ar-all { grid-column: 3; justify-self: end; }
 .ar-all[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
@@ -534,6 +546,39 @@ class AnatomicalRendering {
   private serviceInfo: ServiceInfo | undefined;
   private presets: PresetInfo[] = [];
   private session: SessionInfo | undefined;
+  /**
+   * Which levels of each image rendered are drawn, and how much of it each covers (resolution.ts): in this browser
+   * the level read; on a render computer its level and the finer region it holds where the view looks.
+   */
+  private resolutionUses(): { name: string; use: ResolutionUse }[] {
+    if (!this.saved.on) return [];
+    const out: { name: string; use: ResolutionUse }[] = [];
+    if (this.saved.where === "browser") {
+      for (const l of this.renderedLayers()) {
+        if (this.isVectors(l)) continue;
+        const level = this.live.levelOf(this.sourceOf(l) ?? "");
+        if (level === undefined) continue;
+        const rows: LevelRow[] = (level.levels ?? []).map((x) => ({ path: x.path, size: x.size, voxelMm: x.voxelMm }));
+        const base = rows.find((r) => r.path === level.path) ?? { path: level.path, size: level.size, voxelMm: Math.cbrt(Math.abs(level.voxelToRas[0] * level.voxelToRas[5] * level.voxelToRas[10])) };
+        const shares = this.msWanted() ? this.live.levelShares(this.sourceOf(l) ?? "") : undefined;
+        out.push({ name: l.name, use: shares ? resolutionShares(rows.length ? rows : [base], shares) : resolutionUse(rows, base) });
+      }
+      return out;
+    }
+    const v = this.session?.volume as Partial<VolumeMeta> | undefined;
+    if (v === undefined || v.level === undefined) return [];
+    const mean = (a: number[] | undefined) => (a && a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+    const rows: LevelRow[] = (v.levels ?? []).map((x) => ({ path: x.path, size: x.size, voxelMm: mean(x.voxel_mm) }));
+    const base = rows.find((r) => r.path === v.level) ?? { path: v.level, size: [...(v.shape ?? [])].reverse(), voxelMm: mean(v.voxel_mm) };
+    const held = this.detailHeld;
+    const detailLevel = held ? rows.find((r) => r.path === held.path) : undefined;
+    const name = this.target()?.name ?? "";
+    out.push({ name, use: resolutionUse(rows, base, held && detailLevel ? { level: detailLevel, lo: held.lo, hi: held.hi } : undefined) });
+    return out;
+  }
+
+  /** The finer region a render computer holds for the view (from its last frame): its level and box. */
+  private detailHeld: { path: string; lo: number[]; hi: number[] } | undefined;
   /** The session open on a host, and the service it was opened through (closed through it, whatever computer is chosen next). */
   private opened: { service: RenderService; id: string } | undefined;
   /** Sessions opened again since the last frame, after the host forgot one (it closes those left idle). */
@@ -619,6 +664,7 @@ class AnatomicalRendering {
       }
     };
     this.live.onRedraw = () => this.handle?.redraw();
+    this.live.settling = () => this.geometrySettling();
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
     this.offs.push(
       ctx.viewer.onLayersChanged(() => this.update()),
@@ -735,7 +781,7 @@ class AnatomicalRendering {
     // On a render computer: the first image; a Zarr Vectors layer alone (its geometry) while switched on.
     if (this.images().length === 0) {
       const v = this.vectorsAlone();
-      return v !== undefined && this.isOn(v) ? v : undefined;
+      return v !== undefined && v.visible && this.isOn(v) ? v : undefined;
     }
     return this.renderedLayers()[0];
   }
@@ -800,7 +846,8 @@ class AnatomicalRendering {
   private renderedLayers(): LayerInfo[] {
     // In this browser a Zarr Vectors layer's points are drawn with the images; a render computer draws them as objects.
     // (A segmentation with no segment chosen has nothing to draw.)
-    const on = (this.saved.where === "browser" ? this.switchable() : this.images()).filter((l) => this.isOn(l) && (!this.isVectors(l) || this.sourceOf(l) !== undefined));
+    // A layer hidden in Layers (its eye off) is not rendered either.
+    const on = (this.saved.where === "browser" ? this.switchable() : this.images()).filter((l) => l.visible && this.isOn(l) && (!this.isVectors(l) || this.sourceOf(l) !== undefined));
     const first = on.find((l) => l.name === this.saved.layer);
     return (first ? [first, ...on.filter((l) => l !== first)] : on).slice(0, MAX_VOLUMES);
   }
@@ -1010,15 +1057,30 @@ class AnatomicalRendering {
     }
   }
 
+  /** Multiscale switched on here (in this browser, rendering). */
+  private msWanted(): boolean {
+    return this.saved.on && this.saved.multiscale && this.saved.where === "browser";
+  }
+
+  /**
+   * Who draws multiscale: WebGPU's picture when it is drawn at rest (it chooses the levels for its view; the object
+   * then draws its one level, its pool given back, so the bricks are held on the GPU once), else the object.
+   */
+  private msRoute(): void {
+    const wanted = this.msWanted();
+    const webgpu = wanted && this.saved.restPicture && this.local?.ready === true;
+    this.live.multiscale = wanted && !webgpu;
+    this.live.plansMultiscale = !webgpu;
+    this.local?.setMultiscale(webgpu);
+    if (!wanted) multiscale.clear();
+  }
+
   private update(): void {
     this.watchObjects();
+    this.msRoute();
     const found = this.target();
     const browser = this.saved.where === "browser";
-    // Geometry traced here: Neuroglancer's own drawing of each layer hidden once the object shows it (it then reads nothing).
-    const drawnPoints = this.saved.on && browser
-      ? this.renderedLayers().filter((l) => this.isVectors(l) && this.surfaceLayout?.layers.some((x) => x.name === l.name) === true && this.live.heldSurfaces !== undefined)
-      : [];
-    this.hidePointsDrawing(new Set(drawnPoints.map((l) => l.name)));
+    this.hideTracedDrawing();
     // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
     const target = found !== undefined && this.axesOf(found).problem === undefined ? found : undefined;
     if (!this.saved.on || target === undefined || (!browser && this.serviceInfo === undefined)) {
@@ -1058,6 +1120,7 @@ class AnatomicalRendering {
       for (const name of [...this.points.keys()]) if (!clouds.some((l) => l.name === name)) this.points.delete(name);
       this.rebuildSurfaces(clouds);
       const images = layers.filter((l) => !this.isVectors(l));
+      // (Multiscale: WebGPU's picture takes it too; without WebGPU, ensureLocal falls back to the object's reader.)
       if (images.length === 1 && clouds.length > 0) {
         // One image and geometry: the image as the object and in WebGPU's picture at rest, the geometry traced in both.
         void this.ensureLocal(images[0]);
@@ -1068,6 +1131,8 @@ class AnatomicalRendering {
         void this.live.open(layers.filter((l) => !this.isVectors(l)).map((l) => this.sourceOf(l)!), this.saved.objectVoxels);
         for (const l of clouds) this.ensurePoints(l, clouds.length);
       } else void this.ensureLocal(target);
+      // The geometry layers now being read: Neuroglancer's drawing of them hidden at once, so it reads them no more.
+      this.hideTracedDrawing();
     } else {
       this.closeLocal();
       void this.ensureSession(target);
@@ -1083,6 +1148,21 @@ class AnatomicalRendering {
 
   /** The layers whose own drawing is hidden while their points are drawn here. */
   private pointsHidden = new Set<string>();
+
+  /** Hides Neuroglancer's own drawing of the geometry layers traced in this browser (see `update`). */
+  private hideTracedDrawing(): void {
+    // Geometry traced here: Neuroglancer's own drawing of each layer hidden from when it is read here (Neuroglancer then
+    // reads nothing): drawn by both, the same meshes were downloaded twice at once and each read waited on the other's
+    // (MICrONS cells: 300 requests of Neuroglancer's beside these). Shown again where every part of the read failed.
+    const drawnPoints = this.saved.on && this.saved.where === "browser"
+      ? this.renderedLayers().filter((l) => {
+          if (!this.isVectors(l)) return false;
+          const entry = this.points.get(l.name);
+          return entry !== undefined && entry.parts.size > 0 && [...entry.parts.values()].some((p) => !p.failed);
+        })
+      : [];
+    this.hidePointsDrawing(new Set(drawnPoints.map((l) => l.name)));
+  }
 
   private hidePointsDrawing(names: Set<string>): void {
     for (const name of this.pointsHidden) if (!names.has(name)) this.ctx.viewer.hideLayerDrawing(name, false);
@@ -1120,8 +1200,10 @@ class AnatomicalRendering {
     // Each part: its store, and what it is read for (a mesh's level within its share; a store's colours and budget).
     const wanted: { key: string; store: string; readFor: (part: Part) => string; budget: number; look: ColourByLook | undefined; level?: number; chunks?: string[] }[] = [];
     if (meshes !== undefined) {
-      // At first an equal share each; once every segment's levels are known, levels shared out between them
-      // (allocateLevels, two triangles a vertex), the segments that can come finer read again.
+      // At first each at its coarsest (a few pieces: its levels and bounds, and a first look); once every segment's
+      // levels are known, levels shared out between them (allocateLevels, two triangles a vertex), or with the camera
+      // at rest at once its chunks by distance. Each segment's pieces are kept (part.cache), so no stage reads again
+      // what one before it read.
       const share = budget / Math.max(1, meshes.ids.length);
       const known = meshes.ids.map((id) => entry!.parts.get(String(id))?.read);
       const levels = known.every((r) => r !== undefined) ? allocateLevels(known as GeometryRead[], budget / 2) : undefined;
@@ -1132,8 +1214,8 @@ class AnatomicalRendering {
         const r = known[i];
         const eye = r && level !== undefined ? this.eyeInStore(r, entry!.placement) : undefined;
         const chunks = r && eye && level !== undefined ? lodChunks(r.levels, r.bounds.lower, r.bounds.upper, eye, r.levels[level].vertexCount ?? Infinity) : undefined;
-        const readFor = () => (chunks ? `lod ${chunks.length} ${hashText(chunks.join(","))}` : level !== undefined ? String(level) : r ? String(r.level) : `share ${share}`);
-        wanted.push({ key: String(id), store: meshStoreUrl(meshes.volume, [id]), readFor, budget: share, look: undefined, level, chunks });
+        const readFor = () => (chunks ? `lod ${chunks.length} ${hashText(chunks.join(","))}` : level !== undefined ? String(level) : r ? String(r.level) : "coarsest");
+        wanted.push({ key: String(id), store: meshStoreUrl(meshes.volume, [id]), readFor, budget: share, look: undefined, level: level ?? (r ? r.level : COARSEST), chunks });
       });
     } else {
       const store = storeUrlOfSource(layer.sources[0] ?? "") ?? zarrVectorsStore(layer.sources[0])!;
@@ -1180,7 +1262,7 @@ class AnatomicalRendering {
       try {
         // A mesh's chunks kept from read to read: another choice of them reads only those it lacks.
         if (mesh) part.cache ??= new Map();
-        const read = await readGeometry(store, look, budget, say, stale, level, chunks && part.cache ? { keys: chunks, cache: part.cache } : undefined);
+        const read = await readGeometry(store, look, budget, say, stale, level, part.cache ? { keys: chunks, cache: part.cache } : undefined);
         if (stale()) return;
         part.read = read;
         // A mesh's key is the level it read; a store's, what it was read for.
@@ -1198,6 +1280,22 @@ class AnatomicalRendering {
         this.statusUpdate?.();
       }
     });
+  }
+
+  /**
+   * Whether the geometry drawn in this browser is still being chosen and read: a part read for something other than
+   * it is wanted for, or meshes read before the camera has rested to choose their chunks by distance.
+   */
+  private geometrySettling(): boolean {
+    if (this.saved.where !== "browser") return false;
+    let meshes = false;
+    for (const entry of this.points.values())
+      for (const part of entry.parts.values()) {
+        if (part.failed) continue;
+        if (part.read === undefined || part.wantKey !== part.readKey) return true;
+        if (part.read.kind === "meshes") meshes = true;
+      }
+    return meshes && this.lodEye === undefined;
   }
 
   /** The camera where geometry was last chosen by distance (world); a rest far enough from it chooses again. */
@@ -2183,6 +2281,7 @@ class AnatomicalRendering {
         }
         this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: view ? undefined : this.depth, view, camera: cam, look: sent?.look });
         this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass${f.detail ? `\nDetail: ${f.detail}` : ""}`;
+        this.detailHeld = f.detailHeld;
         this.handle?.redraw();
         this.statusUpdate?.();
       } catch (e) {
@@ -2248,6 +2347,7 @@ class AnatomicalRendering {
     const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.looks, this.renderedLayers().map((l) => l.name), this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightFrom, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
     this.drawer.pictureAtRest = this.saved.restPicture;
+    this.msRoute();
     // A camera plane of before that turned with the view: fixed now, as the view is.
     if (this.saved.planes.some((p) => p.normal.every((x) => x === 0))) {
       this.save((x) => (x.planes = x.planes.map((p) => (p.normal.every((v) => v === 0) ? { ...planeFromView(frame.invViewProjection, frame.position, p.name), on: p.on, offset: p.offset } : p))));
@@ -3109,6 +3209,10 @@ class AnatomicalRendering {
       const words = onSwitch.querySelector("span");
       if (words && words.textContent !== (on ? "Render on" : "Render off")) words.textContent = on ? "Render on" : "Render off";
     };
+    const multiscale = toggle("Multiscale", this.saved.multiscale, (v) => {
+      this.save((x) => (x.multiscale = v));
+      this.update();
+    });
     const status = statusLine();
     const empty = emptyState("No OME-Zarr or N5 image in this scene.", openData);
 
@@ -3262,9 +3366,23 @@ class AnatomicalRendering {
     const presetRow = el("div", { class: "row" },
       field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
       button("Load…", () => this.loadPresetFile()));
+    // Which levels are drawn (resolutionUses), drawn again when they change.
+    const resolution = el("div", { class: "stack ar-resolution" });
+    let resolutionKey = "";
+    const drawResolution = () => {
+      const uses = this.resolutionUses();
+      const key = JSON.stringify(uses);
+      if (key === resolutionKey) return;
+      resolutionKey = key;
+      resolution.hidden = uses.length === 0;
+      resolution.replaceChildren(
+        ...uses.map(({ name, use }) => field(uses.length > 1 ? `Resolution: ${name}` : "Resolution", resolutionChart(use), { info: "The image's levels, finest on the left: the bar is how much of the image is drawn at that level (the highlighted ones). In this browser one level is drawn for all of it; a render computer draws one for all of it and, with Finer detail, a finer level where the view looks." })),
+      );
+    };
     const rendering = card("anatomical.rendering", "Rendering", { open: true },
       imageNote,
       volumePart,
+      resolution,
       presetRow,
       references,
       windowPart,
@@ -3622,7 +3740,7 @@ class AnatomicalRendering {
     );
 
     host.append(
-      el("div", { class: "row" }, onSwitch, info(`Each image is rendered by its own switch: select it in Layers, and its Render switch, preset, window, colourmap and density show here. The images switched on are rendered together as one volume (up to ${MAX_VOLUMES}), each placed by its layer's transform; where they overlap, the finest shows. On a render computer, only the first is rendered.`, "About rendering per image")),
+      el("div", { class: "row" }, onSwitch, multiscale, info(`Each image is rendered by its own switch: select it in Layers, and its Render switch, preset, window, colourmap and density show here. The images switched on are rendered together as one volume (up to ${MAX_VOLUMES}), each placed by its layer's transform; where they overlap, the finest shows. On a render computer, only the first is rendered.`, "About rendering per image")),
       editingNote,
       layersNote,
       empty,
@@ -3646,6 +3764,7 @@ class AnatomicalRendering {
         } else if (st.progress !== undefined) status.progress(st.progress);
         else status.clear();
       }
+      drawResolution();
       const text = this.readout();
       if (frameReadout.textContent !== text) frameReadout.textContent = text;
       frameReadout.hidden = text === "";
@@ -3683,6 +3802,9 @@ class AnatomicalRendering {
 
       // The head: the switch, an empty scene's action, the view buttons.
       onSwitch.set(layerOn());
+      multiscale.set(this.saved.multiscale);
+      multiscale.input.disabled = this.saved.where !== "browser";
+      multiscale.title = this.saved.where === "browser" ? "Each part of an image drawn at the level its size on screen calls for: finer near the camera, coarser far away (see Resolution)" : "In this browser only (a render computer has Finer detail)";
       switchWords(layerOn());
       onSwitch.input.disabled = !scene;
       empty.hidden = scene;
@@ -4007,4 +4129,23 @@ function readSurface(v: Record<string, unknown>): Partial<SurfaceMaterial> {
 function toMmOf(read: GeometryRead, placement: ArrayLike<number> | undefined): number[] {
   const scale = [read.mm[0], 0, 0, 0, 0, read.mm[1], 0, 0, 0, 0, read.mm[2], 0, 0, 0, 0, 1];
   return placement ? mul(rowMajor(placement), scale) : scale;
+}
+
+/**
+ * An image's levels as a bar chart (as Neuroglancer's resolution charts): a column a level, finest on the left, its
+ * bar as high as the share of the image drawn at it (the drawn ones in the accent), its voxel side beneath; the
+ * levels drawn in words above.
+ */
+function resolutionChart(use: ResolutionUse): HTMLElement {
+  const columns = use.levels.map((l, i) => {
+    const share = use.shares[i];
+    const bar = el("div", { class: `ar-res-bar${share > 0 ? " on" : ""}`, style: `height: ${share > 0 ? Math.max(3, Math.round(share * 100)) : 0}%` });
+    return el(
+      "div",
+      { class: "ar-res-col", title: `${l.path}: ${lengthText(l.voxelMm)} voxels, ${l.size.join(" × ")}${share > 0 ? `; drawn over ${share >= 0.995 ? "all" : `${Math.round(share * 1000) / 10} %`} of the image` : "; not drawn"}` },
+      el("div", { class: "ar-res-track" }, bar),
+      el("span", { class: "ar-res-label" }, lengthText(l.voxelMm)),
+    );
+  });
+  return el("div", { class: "stack" }, el("p", { class: "hint" }, use.text), el("div", { class: "ar-res-chart", role: "img", "aria-label": `Levels drawn: ${use.text}` }, ...columns));
 }

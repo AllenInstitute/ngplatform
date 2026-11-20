@@ -169,6 +169,8 @@ export interface VolumeMeta {
   channels?: number;
   times?: number;
   axes?: string[];
+  /** Every level of the store, finest first (older hosts say nothing). */
+  levels?: { path: string; size: number[]; voxel_mm: number[] }[];
 }
 
 export interface SessionInfo {
@@ -250,6 +252,8 @@ export interface Frame {
   alpha?: Uint8Array;
   /** What finer detail the host holds or is reading for the view, in a few words. */
   detail?: string;
+  /** The finer region held: its level and box (voxels of that level, x, y, z; hi exclusive). */
+  detailHeld?: { path: string; lo: number[]; hi: number[] };
   number: number;
   samples: number;
   version: number;
@@ -410,7 +414,14 @@ export class RenderService {
       offset ? new Response(blob.slice(offset).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer().then((b) => new Uint8Array(b)) : undefined,
       distance,
     ]);
-    return { bitmap, alpha, detail: r.headers.get("X-Detail") ?? undefined, number: n("X-Frame"), samples: n("X-Samples"), version, width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass"), distance: dist };
+    const held = r.headers.get("X-Detail-Held");
+    let detailHeld: { path: string; lo: number[]; hi: number[] } | undefined;
+    try {
+      detailHeld = held ? JSON.parse(held) : undefined;
+    } catch {
+      detailHeld = undefined;
+    }
+    return { bitmap, alpha, detail: r.headers.get("X-Detail") ?? undefined, detailHeld, number: n("X-Frame"), samples: n("X-Samples"), version, width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass"), distance: dist };
   }
 
   /** The distance along each pixel's ray (from the near plane) to where it first meets tissue, -1 where nothing: the frame's points, to draw it moving with the view. */

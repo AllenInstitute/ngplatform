@@ -57,7 +57,11 @@ setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.z
 // The main thread keeps what it draws; raw cells need only last while neighbours are read.
 setVertexCellCacheBytes(96 * 1024 * 1024);
 
-const CONCURRENCY = 6;
+/**
+ * Cells read at once. A cell of a precomputed mesh store is a handful of range requests, each with a fixed cost
+ * (0.2 to 0.7 s to Google Cloud Storage): 6 at once kept a 4-cell MICrONS read at 16 requests in flight.
+ */
+const CONCURRENCY = 16;
 
 export interface LevelInfo {
   index: number;

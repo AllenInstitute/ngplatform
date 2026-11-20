@@ -84,9 +84,31 @@ async function readJson(read: RangeRead, url: string): Promise<any | undefined> 
   return bytes === undefined ? undefined : JSON.parse(textOf(bytes));
 }
 
+/**
+ * Kept across readers of the same files (a page reads a segment again for a finer level or other chunks, each time
+ * with a reader of its own): the minishard indexes and manifests read, by file and place, the least recently used
+ * let go past `max`. Shard files do not change under a URL; a failed read is not kept.
+ */
+class Recent<T> {
+  private readonly map = new Map<string, Promise<T>>();
+  constructor(private readonly max: number) {}
+  get(key: string, make: () => Promise<T>): Promise<T> {
+    let v = this.map.get(key);
+    if (v !== undefined) this.map.delete(key);
+    else {
+      v = make();
+      v.catch(() => this.map.get(key) === v && this.map.delete(key));
+    }
+    this.map.set(key, v);
+    if (this.map.size > this.max) this.map.delete(this.map.keys().next().value!);
+    return v;
+  }
+}
+const minishardIndexes = new Recent<ReturnType<typeof decodeMinishardIndex> | undefined>(256);
+const shardManifests = new Recent<Uint8Array | undefined>(2048);
+
 /** A sharded mesh directory's entries by segment id, with where each starts in its shard file (the manifest's fragments end there). */
 class ShardedManifests {
-  private readonly minishards = new Map<string, Promise<ReturnType<typeof decodeMinishardIndex> | undefined>>();
 
   constructor(
     private readonly folder: string,
@@ -97,20 +119,16 @@ class ShardedManifests {
   async manifest(id: bigint): Promise<{ bytes: Uint8Array; file: string; start: number } | undefined> {
     const { shard, minishard } = shardOf(this.sharding, id);
     const file = `${this.folder}${shard}`;
-    const key = `${shard}#${minishard}`;
-    let index = this.minishards.get(key);
-    if (index === undefined) {
-      index = this.minishard(file, minishard);
-      index.catch(() => this.minishards.delete(key));
-      this.minishards.set(key, index);
-    }
-    const entries = await index;
+    const entries = await minishardIndexes.get(`${file}#${minishard}`, () => this.minishard(file, minishard));
     const i = entries?.ids.indexOf(id) ?? -1;
     if (entries === undefined || i < 0) return undefined;
     const start = entries.starts[i];
-    let bytes = await this.read(file, { offset: start, length: entries.ends[i] - start });
+    const end = entries.ends[i];
+    const bytes = await shardManifests.get(`${file}@${start}-${end}`, async () => {
+      const b = await this.read(file, { offset: start, length: end - start });
+      return b !== undefined && this.sharding.data_encoding === "gzip" ? gunzip(b) : b;
+    });
     if (bytes === undefined) return undefined;
-    if (this.sharding.data_encoding === "gzip") bytes = await gunzip(bytes);
     return { bytes, file, start };
   }
 

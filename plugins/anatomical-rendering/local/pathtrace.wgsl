@@ -9,10 +9,15 @@
 @group(0) @binding(3) var<storage, read> tf: array<vec4f>;
 @group(0) @binding(4) var<storage, read_write> maj: array<f32>;
 @group(0) @binding(5) var<storage, read_write> accum: array<vec4f>;
-@group(0) @binding(6) var<storage, read_write> outrgba: array<u32>;
-@group(0) @binding(7) var<storage, read_write> depthbuf: array<f32>;
+// The picture (RGBA8), then the depth (f32 bits) at width × height on.
+@group(0) @binding(6) var<storage, read_write> outbuf: array<u32>;
+// Multiscale (../adaptive_bricks.ts): [0] on, the regions along x, y, z; [1 + 2j], [2 + 2j] level j's scale and
+// offset (f32 bits); from MS_HEAD on, the table (each region, then each region's bricks' slots).
+@group(0) @binding(7) var<storage, read> ms: array<vec4u>;
 @group(0) @binding(8) var<storage, read> bounds: array<vec2f>;
 @group(0) @binding(9) var<uniform> U: vec4u; // width, height, frame, samples so far
+// The bricks of finer levels (SLOT³ texels a slot).
+@group(0) @binding(11) var pool: texture_3d<f32>;
 
 var<private> rs: u32;
 
@@ -50,7 +55,38 @@ fn lin3(o: u32, d: vec3f) -> vec3f {
                P[o + 6u] * d.x + P[o + 7u] * d.y + P[o + 8u] * d.z);
 }
 
+// The region of the base at voxel point v (its table entry: level | bricks along x, y, z; its bricks' first entry;
+// its first brick).
+fn msRegion(v: vec3f) -> vec4u {
+  let g = vec3f(ms[0].yzw);
+  let c = clamp(floor((v + vec3f(0.5)) / f32(MS_REGION)), vec3f(0.0), g - vec3f(1.0));
+  return ms[MS_HEAD + u32(c.x + g.x * (c.y + g.y * c.z))];
+}
+fn msSample(a: vec4u, v: vec3f) -> f32 {
+  let l = (a.x & 255u) - 1u;
+  let u = v * bitcast<vec3f>(ms[1u + 2u * l].xyz) + bitcast<vec3f>(ms[2u + 2u * l].xyz);
+  let n = vec3f(f32((a.x >> 8u) & 255u), f32((a.x >> 16u) & 255u), f32(a.x >> 24u));
+  let b0 = vec3f(f32(a.z & 65535u), f32(a.z >> 16u), f32(a.w));
+  let b = clamp(floor((u + vec3f(0.5)) / f32(MS_BRICK)) - b0, vec3f(0.0), n - vec3f(1.0));
+  let slot = ms[MS_HEAD + a.y + u32(b.x + n.x * (b.y + n.y * b.z))].x;
+  let at = vec3f(f32(slot % MS_POOL_X), f32((slot / MS_POOL_X) % MS_POOL_Y), f32(slot / (MS_POOL_X * MS_POOL_Y)));
+  let local = clamp(u - (b + b0) * f32(MS_BRICK), vec3f(0.5 - f32(MS_APRON)), vec3f(f32(MS_BRICK + MS_APRON) - 1.5));
+  let dims = vec3f(textureDimensions(pool));
+  return textureSampleLevel(pool, samp, (at * f32(MS_SLOT) + vec3f(f32(MS_APRON)) + local + vec3f(0.5)) / dims, 0.0).r;
+}
+// A step of the level drawn at v, in base voxels (1: the base).
+fn msStep(v: vec3f) -> f32 {
+  if (ms[0].x == 0u) { return 1.0; }
+  let l = msRegion(v).x & 255u;
+  if (l == 0u) { return 1.0; }
+  let s = bitcast<vec3f>(ms[1u + 2u * (l - 1u)].xyz);
+  return 1.0 / max(s.x, max(s.y, s.z));
+}
 fn texval(v: vec3f) -> f32 {
+  if (ms[0].x != 0u) {
+    let a = msRegion(v);
+    if ((a.x & 255u) != 0u) { return msSample(a, v); }
+  }
   let dims = pv(P_DIMS);
   return textureSampleLevel(vol, samp, (v + vec3f(0.5)) / dims, 0.0).r;
 }
@@ -316,9 +352,11 @@ fn trace(@builtin(global_invocation_id) gid: vec3u) {
     let w = ow + dw * tc;
     let v = ov + dv * tc;
     var albedo = medium(w, v).col * P[P_ALBEDO];
-    let gv = vec3f(texval(v + vec3f(1.0, 0.0, 0.0)) - texval(v - vec3f(1.0, 0.0, 0.0)),
-                   texval(v + vec3f(0.0, 1.0, 0.0)) - texval(v - vec3f(0.0, 1.0, 0.0)),
-                   texval(v + vec3f(0.0, 0.0, 1.0)) - texval(v - vec3f(0.0, 0.0, 1.0))) * 0.5;
+    // Over a voxel of the level drawn there (a finer level's where one is), as live.ts's grad.
+    let h = msStep(v);
+    let gv = vec3f(texval(v + vec3f(h, 0.0, 0.0)) - texval(v - vec3f(h, 0.0, 0.0)),
+                   texval(v + vec3f(0.0, h, 0.0)) - texval(v - vec3f(0.0, h, 0.0)),
+                   texval(v + vec3f(0.0, 0.0, h)) - texval(v - vec3f(0.0, 0.0, h))) * 0.5;
     let gm = length(gv);
     if (P[P_INSET] > 0.0 && gm > 1e-6) {
       // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface. Only where
@@ -409,7 +447,7 @@ fn firsthit(@builtin(global_invocation_id) gid: vec3u) {
       t += dt;
     }
   }
-  depthbuf[y * U.x + x] = out;
+  outbuf[U.x * U.y + y * U.x + x] = bitcast<u32>(out);
 }
 
 @compute @workgroup_size(64)
@@ -437,5 +475,5 @@ fn tonemap(@builtin(global_invocation_id) gid: vec3u) {
   c = select(1.055 * pow(c, vec3f(1.0 / 2.4)) - vec3f(0.055), 12.92 * c, c <= vec3f(0.0031308));
   let al = clamp(a.w * inv, 0.0, 1.0);
   let q = vec4u(vec4f(c, al) * 255.0 + vec4f(0.5));
-  outrgba[y * U.x + x] = q.x | (q.y << 8u) | (q.z << 16u) | (q.w << 24u);
+  outbuf[y * U.x + x] = q.x | (q.y << 8u) | (q.z << 16u) | (q.w << 24u);
 }

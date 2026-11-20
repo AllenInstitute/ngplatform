@@ -31,6 +31,8 @@ import { brickBounds, cameraAxes, invert, type Level8, type LevelPreset, levelTa
 import { bindPicks, GEO_PICK_GLSL, GeometryTextures, geometryGlsl, geoWidth, type LiveGeometryLook } from "./geometry/live_geometry.js";
 import type { Surfaces } from "./geometry/surfaces.js";
 import { drawColourBlended } from "./blend.js";
+import { APRON, BRICK_SIDE, MAX_LEVELS, REGION, regionGrid, SLOT } from "./adaptive.js";
+import { MS_TABLE_W, type MsTable, multiscale, POOL_SLOTS, POOL_X, POOL_Y, POOL_Z, slotAt } from "./adaptive_bricks.js";
 
 /** The voxels of the level read for the object by default (Quality › Object); this browser's path tracer shares its own. */
 export const LIVE_VOXELS = 64e6;
@@ -110,6 +112,11 @@ export function lightGrid(size: readonly number[]): { cell: number; grid: [numbe
   const cell = Math.max(1, Math.ceil(Math.max(...size) / LIGHT_SIDE));
   return { cell, grid: [0, 1, 2].map((a) => Math.ceil(size[a] / cell)) as [number, number, number] };
 }
+
+/** Multiscale: how long the light and the path tracer wait for a plan's bricks, then how often they take those come since. */
+const MS_WAIT_MS = 8000;
+const MS_FOLD_MS = 15000;
+const MS_FOLD_SAMPLES = 64;
 
 /** The most volumes drawn together as one: each takes two of the GPU's texture units (WebGL 2 promises 16). */
 export const MAX_VOLUMES = 5;
@@ -266,17 +273,61 @@ struct Ray {
   float t1;
 };
 
+// Multiscale (adaptive.ts): a volume's regions (REGION³ voxels of the level read whole) each drawn at that level or
+// a finer one, from bricks in the pool; the table holds each region's entry (its level, the bricks' list and the
+// first brick) and the lists of bricks' slots.
+uniform bool uMs[N];
+uniform int uMsBase[N];
+uniform vec3 uMsGrid[N];
+uniform vec3 uLvlScale[${MAX_LEVELS * n}];
+uniform vec3 uLvlOff[${MAX_LEVELS * n}];
+uniform highp usampler2D uMsTable;
+uniform sampler3D uPool;
+uniform vec3 uPoolDims;
+uvec4 msEntry(int i) { return texelFetch(uMsTable, ivec2(i % ${MS_TABLE_W}, i / ${MS_TABLE_W}), 0); }
+uvec4 msRegion(int k, vec3 v) {
+  vec3 g = clamp(floor((v + 0.5) / ${REGION}.0), vec3(0.0), uMsGrid[k] - 1.0);
+  return msEntry(uMsBase[k] + int(g.x + uMsGrid[k].x * (g.y + uMsGrid[k].y * g.z)));
+}
+// A step of the level drawn at voxel point v of volume k, in its base voxels (1: the base).
+float msStep(int k, vec3 v) {
+  if (!uMs[k]) return 1.0;
+  uvec4 a = msRegion(k, v);
+  uint l = a.x & 255u;
+  if (l == 0u) return 1.0;
+  vec3 s = uLvlScale[k * ${MAX_LEVELS} + int(l) - 1];
+  return 1.0 / max(s.x, max(s.y, s.z));
+}
+float msSample(int k, uvec4 a, vec3 v) {
+  int li = k * ${MAX_LEVELS} + int(a.x & 255u) - 1;
+  vec3 u = v * uLvlScale[li] + uLvlOff[li];
+  vec3 n = vec3(float((a.x >> 8u) & 255u), float((a.x >> 16u) & 255u), float(a.x >> 24u));
+  vec3 b0 = vec3(float(a.z & 65535u), float(a.z >> 16u), float(a.w));
+  vec3 b = clamp(floor((u + 0.5) / ${BRICK_SIDE}.0) - b0, vec3(0.0), n - 1.0);
+  uint slot = msEntry(int(a.y) + int(b.x + n.x * (b.y + n.y * b.z))).x;
+  vec3 at = vec3(float(slot % ${POOL_X}u), float((slot / ${POOL_X}u) % ${POOL_Y}u), float(slot / ${POOL_X * POOL_Y}u));
+  vec3 local = clamp(u - (b + b0) * ${BRICK_SIDE}.0, vec3(${-APRON + 0.5}), vec3(${BRICK_SIDE + APRON - 1.5}));
+  return texture(uPool, (at * ${SLOT}.0 + ${APRON}.0 + local + 0.5) / uPoolDims).r;
+}
 float tex(int k, vec3 v) {
+  if (uMs[k]) {
+    uvec4 a = msRegion(k, v);
+    if ((a.x & 255u) != 0u) return msSample(k, a, v);
+  }
   ${chain((k) => `return texture(uVol${k}, (v + 0.5) / uDims[${k}]).r;`, "return 0.0;")}
 }
 bool occupied(int k, vec3 cell) {
+  // A region drawn finer than the base is never skipped as clear: what its finer level holds the base may not show.
+  if (uMs[k] && (msRegion(k, cell * ${BRICK}.0 + ${BRICK / 2 - 0.5}).x & 255u) != 0u) return true;
   ${chain((k) => `return texelFetch(uOcc${k}, ivec3(clamp(cell, vec3(0.0), vec3(textureSize(uOcc${k}, 0) - 1))), 0).r != 0.0;`, "return true;")}
 }
 vec4 tf(int k, float t) { return texture(uTf, vec2((clamp(t, 0.0, 1.0) * ${TF_SIZE - 1}.0 + 0.5) / ${TF_SIZE}.0, (float(k) + 0.5) / float(N))); }
+// The rise of the value a voxel of the level drawn there (a voxel of a finer level where one is).
 vec3 grad(int k, vec3 v) {
-  return vec3(tex(k, v + vec3(1.0, 0.0, 0.0)) - tex(k, v - vec3(1.0, 0.0, 0.0)),
-              tex(k, v + vec3(0.0, 1.0, 0.0)) - tex(k, v - vec3(0.0, 1.0, 0.0)),
-              tex(k, v + vec3(0.0, 0.0, 1.0)) - tex(k, v - vec3(0.0, 0.0, 1.0))) * 0.5;
+  float h = msStep(k, v);
+  return vec3(tex(k, v + vec3(h, 0.0, 0.0)) - tex(k, v - vec3(h, 0.0, 0.0)),
+              tex(k, v + vec3(0.0, h, 0.0)) - tex(k, v - vec3(0.0, h, 0.0)),
+              tex(k, v + vec3(0.0, 0.0, h)) - tex(k, v - vec3(0.0, 0.0, h))) * 0.5;
 }
 // The gradient in the world: the way the value rises there.
 vec3 worldGrad(int k, vec3 g) { return transpose(mat3(uVoxFromWorld[k])) * g; }
@@ -313,8 +364,8 @@ Ray ray(vec3 o, vec3 d) {
 }
 // The ray's helpers read it in place (macros): passing a Ray, arrays and all, to a function copies it at every step.
 #define INSIDE(r, j, t) ((t) >= r.tin[j] && (t) < r.tout[j])
-// The voxel (world units) of the finest volume the ray is in at t; 1e30: none.
-#define FINEST(r, t, m) m = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (INSIDE(r, j_, t)) m = min(m, r.vox[j_]); }
+// The voxel (world units) of the finest volume the ray is in at t (of the level drawn there); 1e30: none.
+#define FINEST(r, t, m) m = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (INSIDE(r, j_, t)) m = min(m, r.vox[j_] * msStep(j_, r.ov[j_] + r.dv[j_] * (t))); }
 // Where the ray next enters a volume after t (1e30: none).
 #define NEXT_IN(r, t, n) n = 1e30; for (int j_ = 0; j_ < N; ++j_) { if (r.tout[j_] > r.tin[j_] && r.tin[j_] > (t)) n = min(n, r.tin[j_]); }
 // How far the ray goes from t through bricks every volume it is in leaves clear, cut short where it enters another; 0: not clear.
@@ -1151,11 +1202,15 @@ interface Vol {
   /** What it says while being read, or why it could not be. */
   text: string;
   failed?: boolean;
+  /** Its reader: while it is read, and after, for its finer levels' bricks (multiscale); let go when the image is. */
+  client?: VolumeClient;
   tex?: WebGLTexture;
   occ?: WebGLTexture;
   uploaded?: Level8;
   occKey?: string;
 }
+
+type V3 = [number, number, number];
 
 /** The voxels each image is read within, when `count` are drawn together within `voxels`: a share, but not too small a one. */
 export function shareOf(voxels: number, count: number): number {
@@ -1172,6 +1227,14 @@ export class LiveVolume {
   onChange: (() => void) | undefined;
   /** Called while the light held is being path-traced: the view should be drawn again. */
   onRedraw: (() => void) | undefined;
+  /**
+   * Whether the geometry is still being chosen and read (a segment's meshes come in stages: an equal share each,
+   * then levels shared out, then chunks by distance once the camera rests). Meanwhile the light is not held and the
+   * view not path-traced (each stage would start them again): the preview shows, and the path tracer starts once,
+   * on what is read last.
+   */
+  settling: (() => boolean) | undefined;
+  private settlingTimer: ReturnType<typeof setTimeout> | undefined;
   /** The images wanted, in the order asked for (the first is the one cropped by and lit for). */
   private wanted: string[] = [];
   private readonly vols = new Map<string, Vol>();
@@ -1222,6 +1285,7 @@ export class LiveVolume {
     const one = vols.length === 1;
     const lines = vols.map((v) => (one ? v.text : `${v.text} (${shortName(v.url)})`));
     if (this.surfaces) lines.push(this.surfacesText);
+    if (multiscale.text) lines.push(multiscale.text);
     const base = this.failed ? `Object: ${this.failed}` : lines.join("\n");
     const h = this.held;
     if (this.failed || !this.ready() || h === undefined || !this.canBake) return base;
@@ -1247,6 +1311,7 @@ export class LiveVolume {
       const v = this.vols.get(url);
       if (v === undefined || v.level !== undefined) return;
       const client = new VolumeClient();
+      v.client = client;
       try {
         v.text = "Object: reading the image";
         this.onChange?.();
@@ -1257,16 +1322,18 @@ export class LiveVolume {
         if (this.vols.get(url) !== v) return;
         this.held = undefined;
         this.put(v, level);
+        // The reader is kept, for its finer levels' bricks (multiscale), until the image is let go (drop).
       } catch (e) {
+        if (v.client === client) v.client = undefined;
+        client.dispose();
         if (this.vols.get(url) !== v) return;
         v.failed = true;
         v.text = `Object: ${(e as Error).message}`;
         this.onChange?.();
-      } finally {
-        client.dispose();
       }
     };
-    // One at a time: several large images read at once would hold their chunks together.
+    // One at a time: several large images read at once would hold their chunks together. An image let go meanwhile
+    // (switched off, another chosen) has its read cancelled (drop), so the next does not wait for it to end.
     const run = this.reading.then(async () => {
       for (const url of todo) await read(url);
     });
@@ -1298,11 +1365,122 @@ export class LiveVolume {
     });
   }
 
-  /** Lets an image go, and its textures. */
+  // ------------------------------------------------------------ multiscale (adaptive.ts, adaptive_bricks.ts)
+
+  /** Each image's regions drawn at the level their size on screen calls for (plans/adaptive-multiscale.md). */
+  multiscale = false;
+  /** Whether this chooses the levels (not while WebGPU's picture, of the same image, does). */
+  plansMultiscale = true;
+  private pool: WebGLTexture | undefined;
+  private msTable: WebGLTexture | undefined;
+  /** The bricks' stamp the pool was last brought up to, and the table's version uploaded (with its images). */
+  private poolStamp = 0;
+  /** Whether the pool has its full size (else a placeholder). */
+  private poolFull = false;
+  private msTableKey = "";
+  private msUniforms: MsTable | undefined;
+  private msListening: (() => void)[] | undefined;
+  /** The version of what is drawn finer the light and the path tracer last took, and when. */
+  private msShownVersion = 0;
+  private msShownAt = 0;
+
+  /** The levels each image is drawn at, and their shares of it (multiscale on and its finer levels known); undefined: its one level. */
+  levelShares(url: string): { path: string; share: number }[] | undefined {
+    const v = this.vols.get(url);
+    if (v?.level === undefined) return undefined;
+    return multiscale.shares(url, v.level.path);
+  }
+
+  /**
+   * Chooses each region's level for the view at rest (adaptive_bricks.ts plan): off screen, cropped away or clear at
+   * the base (the occupancy), left there.
+   */
+  private msPlan(frame: Frame3d, d: Drawn, table: Float32Array, slots: number): void {
+    const v = d.vol;
+    if (v.level === undefined || !multiscale.attach(v.url, v.level)) return;
+    const size = v.level.size;
+    const grid = regionGrid([...size] as V3);
+    // Clear at the base: every brick of the occupancy (8³) under the region.
+    const occ = v.bounds !== undefined ? occupancy(v.bounds, table) : undefined;
+    const og = size.map((x) => Math.ceil(x / BRICK)) as V3;
+    const per = REGION / BRICK;
+    const clear = (r: number) => {
+      if (occ === undefined) return false;
+      const gx = r % grid[0], gy = Math.floor(r / grid[0]) % grid[1], gz = Math.floor(r / (grid[0] * grid[1]));
+      for (let z = gz * per; z < Math.min(og[2], (gz + 1) * per); ++z)
+        for (let y = gy * per; y < Math.min(og[1], (gy + 1) * per); ++y)
+          for (let x = gx * per; x < Math.min(og[0], (gx + 1) * per); ++x) if (occ[x + og[0] * (y + og[1] * z)]) return false;
+      return true;
+    };
+    const key = JSON.stringify([d.q.cropLo, d.q.cropHi, d.q.clips.slice(0, 4 * d.q.nclip), d.q.worldFromVox, this.tfKey]);
+    multiscale.plan(v.url, { invViewProjection: frame.invViewProjection, viewProjection: frame.viewProjection, height: frame.height, worldFromVox: d.q.worldFromVox, cropLo: d.q.cropLo, cropHi: d.q.cropHi, key }, slots, clear);
+  }
+
+  /** The bricks come since the last frame put in the pool; the table again when it changed. */
+  private msApply(gl: WebGL2RenderingContext, sorted: Drawn[]): void {
+    if (!this.multiscale) {
+      // Off (or WebGPU's picture drawing it): the pool's memory given back, placeholders bound in its place.
+      if (this.poolFull) {
+        for (const t of [this.pool, this.msTable]) if (t) gl.deleteTexture(t);
+        this.pool = this.msTable = undefined;
+        this.poolFull = false;
+      }
+      this.msUniforms = undefined;
+      this.msTableKey = "";
+      this.poolStamp = 0;
+      multiscale.pin(this, undefined);
+      for (const f of this.msListening ?? []) f();
+      this.msListening = undefined;
+    } else this.msListening ??= [multiscale.listenRedraw(() => this.onRedraw?.()), multiscale.listen(() => this.onChange?.())];
+    if (this.pool === undefined) {
+      this.pool = this.texture(gl, gl.TEXTURE_3D);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, 1, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array(1));
+      this.msTable = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.msTable);
+      for (const [p, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, new Uint32Array(4));
+      this.msTableKey = "";
+      this.poolStamp = 0;
+    }
+    if (!this.multiscale) return;
+    const { slots, stamp } = multiscale.written(this.poolStamp);
+    if (slots.length > 0) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_3D, this.pool);
+      if (!this.poolFull) {
+        // (Storage once: a new texture, as texStorage3D's is immutable.)
+        gl.deleteTexture(this.pool!);
+        this.pool = this.texture(gl, gl.TEXTURE_3D);
+        gl.texStorage3D(gl.TEXTURE_3D, 1, gl.R8, POOL_X * SLOT, POOL_Y * SLOT, POOL_Z * SLOT);
+        this.poolFull = true;
+      }
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      for (const slot of slots) {
+        const at = slotAt(slot);
+        gl.texSubImage3D(gl.TEXTURE_3D, 0, at[0] * SLOT, at[1] * SLOT, at[2] * SLOT, SLOT, SLOT, SLOT, gl.RED, gl.UNSIGNED_BYTE, multiscale.slotBytes(slot)!);
+      }
+    }
+    this.poolStamp = stamp;
+    // The table: each volume's regions (in the order drawn), then each region's bricks' slots.
+    const urls = sorted.map((d) => d.vol.url);
+    const key = `${this.msShownVersion}|${urls.join("\n")}`;
+    if (key === this.msTableKey) return;
+    this.msTableKey = key;
+    const t = multiscale.table(urls);
+    multiscale.pin(this, t.slots);
+    this.msUniforms = t;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.msTable!);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, MS_TABLE_W, t.rows, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, t.data);
+  }
+
   private drop(url: string): void {
     const v = this.vols.get(url);
     if (v === undefined) return;
     this.vols.delete(url);
+    v.client?.dispose();
+    v.client = undefined;
+    multiscale.detach(url);
     const gl = this.gl;
     if (gl) for (const t of [v.tex, v.occ]) if (t) gl.deleteTexture(t);
     this.held = undefined;
@@ -1431,15 +1609,42 @@ export class LiveVolume {
     // A light that turns with the camera: its direction to a degree or so, so a still camera keeps what is held.
     const dir = primary.lightDir.map((x) => Math.round(x * 50) / 50);
     const geoKey = surf ? [surf.n, surf.lo, surf.hi, look.geometry!.key, look.geometry!.layers] : null;
-    const heldKey = JSON.stringify([tfKey, materials, geoKey, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
+    const heldKey = JSON.stringify([tfKey, materials, geoKey, this.multiscale ? this.msShownVersion : 0, primary.lightRgb, primary.envTop, primary.envHorizon, primary.envBottom, primary.envScale, box, dir, light?.camera_space ?? true]);
     if (this.held?.key !== heldKey) this.held = { key: heldKey, lightDir: primary.lightDir, envUp: primary.envUp, pass: 0, layer: 0, row: 0 };
     primary.lightDir = this.held.lightDir;
     primary.envUp = this.held.envUp;
     // A ray leaving a surface starts 2e-5 of the scene away from it (float32 hits are good to about 1e-6 of it).
     const diag = box.cell * Math.hypot(...box.grid);
     const scene: Scene = { n, drawn: sorted, primary, box, geo: surf ? { surf, look: look.geometry!, geoFromWorld: invert(wfp), geoW, eps: 2e-5 * diag } : undefined };
+    // Multiscale: each image's regions chosen for the view at rest, bricks put in the pool, the table again. Off: the
+    // regions drawn at the base (the pool and table kept, bound as placeholders).
+    if (this.multiscale && this.plansMultiscale && !frame.moving) {
+      const each = Math.floor((0.9 * POOL_SLOTS) / Math.max(1, sorted.length));
+      sorted.forEach((d) => this.msPlan(frame, d, tables[drawn.indexOf(d)], each));
+    }
+    // Bricks still coming: the light and the path tracer wait a moment for them (the nearest come first), then take
+    // what is drawn finer then, and what has come since every MS_FOLD_MS once the picture has MS_FOLD_SAMPLES (each
+    // time starting again). Between, they draw with the table they took (its slots pinned), so a picture's samples
+    // are all of one choice. A moving camera takes each change at once (the picture starts again anyway).
+    const now0 = performance.now();
+    const busy = this.multiscale && multiscale.busy();
+    // (Not before the picture has MS_FOLD_SAMPLES samples: on a slow GPU a fold would otherwise keep it at a few.)
+    const tracedSoFar = this.traced?.samples ?? 0;
+    if (this.msShownVersion !== multiscale.version && (frame.moving || !busy || (now0 - this.msShownAt > MS_FOLD_MS && tracedSoFar >= MS_FOLD_SAMPLES))) {
+      this.msShownVersion = multiscale.version;
+      this.msShownAt = now0;
+    }
+    this.msApply(gl, sorted);
     // A light that turns with the camera is held again once the camera rests; short rays stand in while it moves.
-    const baking = !(look.lightFollows && frame.moving);
+    const settling = this.settling?.() === true || (busy && now0 - multiscale.plannedAt < MS_WAIT_MS);
+    if (settling && this.settlingTimer === undefined) {
+      // Looked at again now and then: once the geometry has settled, the light and the path tracer start.
+      this.settlingTimer = setTimeout(() => {
+        this.settlingTimer = undefined;
+        this.onRedraw?.();
+      }, 400);
+    }
+    const baking = !(look.lightFollows && frame.moving) && !settling;
     if (this.canBake && baking && this.held.pass < LIGHT_PASSES) this.bakeSome(gl, scene);
 
     // The view at rest is path-traced, a pass a frame, once the camera has been still a moment; the
@@ -1454,7 +1659,7 @@ export class LiveVolume {
       this.stillSince = now;
       this.traced = undefined;
     }
-    if (this.canBake && !frame.moving && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
+    if (this.canBake && !frame.moving && !settling && now - this.stillSince >= STILL_MS) this.traceSome(gl, scene, frame, vp[2], vp[3], max);
     else if (this.canBake) {
       // A frame after the camera stops, to start path-tracing it.
       clearTimeout(this.settle);
@@ -1708,6 +1913,21 @@ export class LiveVolume {
       gl.bindTexture(gl.TEXTURE_3D, d.vol.occ!);
       gl.uniform1i(u(`uOcc${k}`), UNIT.vol + s.n + k);
     });
+    // Multiscale: the table (unit 0) and the pool (unit 1), bound always (a sampler's unit must hold its kind of texture).
+    const m = this.multiscale ? this.msUniforms : undefined;
+    const n = s.n;
+    gl.uniform1iv(u("uMs"), m && m.ms.length === n ? m.ms : new Int32Array(n));
+    gl.uniform1iv(u("uMsBase"), m && m.base.length === n ? m.base : new Int32Array(n));
+    gl.uniform3fv(u("uMsGrid"), m && m.grid.length === 3 * n ? m.grid : new Float32Array(3 * n).fill(1));
+    gl.uniform3fv(u("uLvlScale"), m && m.scale.length === 3 * MAX_LEVELS * n ? m.scale : new Float32Array(3 * MAX_LEVELS * n).fill(1));
+    gl.uniform3fv(u("uLvlOff"), m && m.off.length === 3 * MAX_LEVELS * n ? m.off : new Float32Array(3 * MAX_LEVELS * n));
+    gl.uniform3f(u("uPoolDims"), POOL_X * SLOT, POOL_Y * SLOT, POOL_Z * SLOT);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.msTable!);
+    gl.uniform1i(u("uMsTable"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_3D, this.pool!);
+    gl.uniform1i(u("uPool"), 1);
     // The surfaces, on the units after the volumes'.
     const g = s.geo;
     if (g !== undefined) this.geoTex.bind(gl, p, UNIT.vol + 2 * s.n, g.surf, g.look, g.geoFromWorld, MAX_CLIPS, g.eps);
@@ -1887,6 +2107,10 @@ export class LiveVolume {
     for (const v of this.vols.values()) [v.tex, v.occ, v.uploaded, v.occKey] = [undefined, undefined, undefined, undefined];
     this.geoTex.dispose(undefined);
     this.empty = undefined;
+    // The pool and table belong to the context: every slot written again.
+    this.pool = this.msTable = undefined;
+    this.poolFull = false;
+    this.msUniforms = undefined;
     this.vao = gl.createVertexArray()!;
     this.tf = this.texture(gl, gl.TEXTURE_2D);
     // Drawing into float textures (the light held) needs this; without it the short rays stand in.

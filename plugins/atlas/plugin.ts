@@ -116,6 +116,9 @@ type CountState =
 export class AtlasPanel {
   private layer = "";
   private layers: string[] = [];
+  /** Image layers whose name or source says they are labels (an atlas opened as an image): offered as segmentations. */
+  private labelImages: string[] = [];
+  private labelImagesKey = "";
   /** The layer's table (its `lut://` URL), and the atlas made from it. */
   private table: string | undefined;
   private atlas: Atlas | undefined;
@@ -178,10 +181,9 @@ export class AtlasPanel {
 
   /** Follows the scene: the segmentation layers, the chosen one's table and store. */
   private sync(): void {
-    this.layers = this.ctx.viewer
-      .layers()
-      .filter((l) => l.type === "segmentation")
-      .map((l) => l.name);
+    const all = this.ctx.viewer.layers();
+    this.layers = all.filter((l) => l.type === "segmentation").map((l) => l.name);
+    this.labelImages = all.filter((l) => l.type === "image" && looksLikeLabels(l.name, l.sources)).map((l) => l.name);
     if (!this.layers.includes(this.layer)) {
       this.layer = this.layers.find((l) => this.ctx.viewer.lookupTables.of(l) !== undefined) ?? this.layers[0] ?? "";
       this.forgetCounts();
@@ -202,6 +204,20 @@ export class AtlasPanel {
     this.countingFor = "";
     this.countState = { kind: "idle" };
     this.treeGeneration++;
+  }
+
+  /**
+   * An image layer of labels made a segmentation layer (one undo step): its source kept, its image settings (shader,
+   * blending, rendering samples) let go; then chosen here.
+   */
+  private useAsSegmentation(name: string): void {
+    this.ctx.viewer.patchState((ng) => {
+      const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === name);
+      if (layer === undefined) return;
+      layer.type = "segmentation";
+      for (const key of ["shader", "shaderControls", "blend", "volumeRendering", "volumeRenderingMode", "volumeRenderingDepthSamples", "volumeRenderingGain", "crossSectionRenderScale"]) delete layer[key];
+    });
+    this.choose(name);
   }
 
   private choose(layer: string): void {
@@ -557,13 +573,15 @@ export class AtlasPanel {
       region: card("atlas.region", "Region", { open: true, info: REGION_INFO }, noChoice, chosen),
       volumes: card("atlas.volumes", "Volumes", { info: VOLUMES_INFO }, el("div", { class: "row" }, countStatus, cancelCount), el("div", { class: "row" }, grid, el("span", { class: "spacer" }), saveCsv), unseenRow),
     };
-    return { empty, layer, own, table, kind, tableStatus, cursor, noTable, browse, search, only, tree, regionsBadge, noChoice, chosen, chosenName, chosenPath, chosenVolume, goButton, cancelGo, goStatus, grid, saveCsv, countStatus, cancelCount, unseenRow, unseenText, fullCount, cards, rows: new Map<Region, HTMLElement>(), items: new Map<HTMLElement, Region>(), treeKey: "", layersKey: undefined as string | undefined };
+    // Image layers of labels: offered as segmentations (the Atlas reads segmentation layers).
+    const asLabels = el("div", { class: "stack at-as-labels" });
+    return { asLabels, empty, layer, own, table, kind, tableStatus, cursor, noTable, browse, search, only, tree, regionsBadge, noChoice, chosen, chosenName, chosenPath, chosenVolume, goButton, cancelGo, goStatus, grid, saveCsv, countStatus, cancelCount, unseenRow, unseenText, fullCount, cards, rows: new Map<Region, HTMLElement>(), items: new Map<HTMLElement, Region>(), treeKey: "", layersKey: undefined as string | undefined };
   }
 
   render(host: HTMLElement): () => void {
     const parts = this.build();
     this.parts = parts;
-    host.append(parts.empty, ...Object.values(parts.cards));
+    host.append(parts.empty, parts.asLabels, ...Object.values(parts.cards));
     this.draw();
     return () => {
       if (this.parts === parts) this.parts = undefined;
@@ -576,6 +594,7 @@ export class AtlasPanel {
     if (p === undefined) return;
     const none = this.layer === "";
     p.empty.hidden = !none;
+    this.drawLabelImages();
     p.cards.atlas.hidden = none;
     p.cards.regions.hidden = none;
     p.cards.region.hidden = this.atlas === undefined;
@@ -586,6 +605,26 @@ export class AtlasPanel {
     this.drawChosen();
     this.drawVolumes();
     this.drawGoing();
+  }
+
+  /** The image layers that look like labels, each with Use as segmentation (drawn again only when they change). */
+  private drawLabelImages(): void {
+    const p = this.parts;
+    if (p === undefined) return;
+    const key = this.labelImages.join("\n");
+    if (key === this.labelImagesKey && p.asLabels.childElementCount > 0 === this.labelImages.length > 0) return;
+    this.labelImagesKey = key;
+    p.asLabels.hidden = this.labelImages.length === 0;
+    p.asLabels.replaceChildren(
+      ...(this.labelImages.length === 0
+        ? []
+        : [
+            el("p", { class: "hint" }, this.labelImages.length === 1 ? "This image layer looks like a label image (an atlas). The Atlas reads segmentation layers:" : "These image layers look like label images (atlases). The Atlas reads segmentation layers:"),
+            ...this.labelImages.map((name) =>
+              el("div", { class: "row" }, el("span", { class: "muted", style: "flex: 1; min-width: 0; overflow-wrap: anywhere" }, name), button("Use as segmentation", () => this.useAsSegmentation(name), `Make “${name}” a segmentation layer (one undo step) and show its regions here`)),
+            ),
+          ]),
+    );
   }
 
   private drawHead(): void {
@@ -926,3 +965,12 @@ export const plugin: PluginModule = {
     ctx.ui.panel(ATLAS_PANEL, (host) => atlas.render(host));
   },
 };
+
+/**
+ * Whether an image layer is likely a label image: its name or source says labels, a segmentation or a
+ * parcellation (labels, seg, dseg, aseg, aparc, parc, atlas, synthseg, supersynth).
+ */
+export function looksLikeLabels(name: string, sources: readonly string[]): boolean {
+  const text = [name, ...sources.map((s) => s.replace(/\/+$/, "").split("/").pop() ?? s)].join(" ").toLowerCase();
+  return /(^|[^a-z])(labels?|seg|dseg|aseg|aparc|parc\w*|atlas|synthseg|supersynth\w*|segmentation)([^a-z]|$)/.test(text);
+}

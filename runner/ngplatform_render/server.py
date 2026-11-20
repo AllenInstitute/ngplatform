@@ -440,6 +440,8 @@ class Session:
                 # The channel and time point shown, and how many the image has (volume.channel, volume.time).
                 "channel": L.channel, "time": L.time, "channels": L.counts.get("channels", 1), "times": L.counts.get("times", 1),
                 "axes": L.counts.get("axes", []),
+                # Every level of the store, finest first (for showing which are drawn): name, voxels (x, y, z), voxel size.
+                "levels": _levels_meta(url) if not alone else [],
             }
             lab = self.spec.get("labels")
             LB = None
@@ -1035,6 +1037,18 @@ class Session:
             "detail": {"held": self.detail_meta, "reading": self.detail_loader.status if self.detail_loader else None,
                        "levels": [lv.path for _, lv in self.detail_levels], "text": self.detail_text()},
         }
+
+
+def _levels_meta(url: str) -> list[dict[str, Any]]:
+    """A store's levels, finest first: path, voxels (x, y, z) and voxel size (mm, x, y, z); none where it cannot be read."""
+    from . import volumes
+
+    try:
+        ms = volumes.open_multiscale(url)
+        out = [{"path": lv.path, "size": [int(lv.shape[a]) for a in ms.spatial], "voxel_mm": [round(float(x), 9) for x in lv.voxel_mm]} for lv in ms.levels]
+        return sorted(out, key=lambda d: float(np.mean(d["voxel_mm"])))
+    except Exception:  # noqa: BLE001 - only for showing; the volume is read regardless
+        return []
 
 
 def flatten(img: np.ndarray, background: Any) -> np.ndarray:
@@ -1957,6 +1971,9 @@ class Handler(BaseHTTPRequestHandler):
                     extra = {"X-Alpha-Offset": str(offset)} if offset else {}
                     if s.detail_loader is not None:
                         extra["X-Detail"] = s.detail_text()
+                        if s.detail_meta is not None:
+                            m = s.detail_meta
+                            extra["X-Detail-Held"] = json.dumps({"path": m["path"], "lo": m["lo"], "hi": m["hi"]})
                     if q.get("have") is not None and int(number(q["have"], "have")) != version:
                         # The frame's points (each pixel's distance), for a page that has none for this view yet:
                         # in the same answer, so a moving view is one request a frame, not three.

@@ -140,6 +140,7 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
       getState: () => ng,
       patchState: (edit: (ng: unknown) => void) => edit(ng),
       layerTransform: (name: string) => (axes[name] ? { rank: axes[name].names.length, input: axes[name], output: axes[name], matrix: new Float64Array(), defaultMatrix: new Float64Array() } : undefined),
+      hideLayerDrawing: () => undefined,
       draw3d: (layer: string, drawer: Drawer3d) => {
         drawers.push(drawer);
         drawnOn.push(layer);

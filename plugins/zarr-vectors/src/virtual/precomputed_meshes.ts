@@ -47,8 +47,11 @@ const FRAGMENT_INDEX_MAGIC = 0x5a564647; // 'ZVFG', as fragment_index.ts reads i
 /** Decoded cells kept, by their bytes, over every store that is not given its own limit. */
 const CELL_CACHE_BYTES = 192 * 1024 * 1024;
 export const MESH_CELL_BUDGET = new ByteBudget(CELL_CACHE_BYTES);
-/** Fragments of one cell read at once. */
-const FRAGMENT_CONCURRENCY = 8;
+/**
+ * Fragments of one cell read at once. Each is a range request with a fixed cost (0.2 to 0.7 s to Google Cloud
+ * Storage) that bandwidth does not shorten, so many at once: 8 left a 4-cell MICrONS read at 18 requests in flight.
+ */
+const FRAGMENT_CONCURRENCY = 24;
 /** A failed fragment read is tried this many more times, after 250 ms, then 500 ms, …. */
 const FRAGMENT_RETRIES = 3;
 const FRAGMENT_BACKOFF_MS = 250;

@@ -194,10 +194,49 @@ export interface GeometryRead {
  * taken as two triangles a vertex), grouped as `look` colours it; or the chunks `chunks.keys` (of any levels: detail
  * by distance), those in its cache not read again, and it left holding these alone.
  */
-export async function readGeometry(storeUrl: string, look: ColourByLook | undefined, budget: number, say: (text: string) => void, stale: () => boolean, at?: number, chunks?: { keys: string[]; cache: Map<string, BuiltChunk | null> }): Promise<GeometryRead> {
+/**
+ * Readers' workers between reads (geometry is read a part at a time): handed on to the next read, so what a worker
+ * keeps of the stores it has read (their shards' indexes and segments' manifests) serves it, and a segment read
+ * again finer does not read them again. Let go after IDLE_MS unused.
+ */
+const idle: { client: StoreClient; timer: ReturnType<typeof setTimeout> }[] = [];
+const IDLE = 2;
+const IDLE_MS = 60_000;
+
+function park(client: StoreClient): void {
+  if (client.error !== undefined) {
+    client.dispose();
+    return;
+  }
+  const entry = { client, timer: setTimeout(() => {
+    const i = idle.indexOf(entry);
+    if (i >= 0) idle.splice(i, 1);
+    client.dispose();
+  }, IDLE_MS) };
+  idle.push(entry);
+  while (idle.length > IDLE) {
+    const old = idle.shift()!;
+    clearTimeout(old.timer);
+    old.client.dispose();
+  }
+}
+
+/** A reader for `storeUrl`: on an idle reader's worker, where there is one. */
+function readerFor(storeUrl: string, attributes: string[]): StoreClient {
+  const was = idle.pop();
+  if (was !== undefined) clearTimeout(was.timer);
+  const client = new StoreClient(storeUrl, { attributes, adopt: was?.client });
+  was?.client.dispose();
+  return client;
+}
+
+/** readGeometry's level: the coarsest (a mesh's levels, bounds and a first look, read cheaply). */
+export const COARSEST = -1;
+
+export async function readGeometry(storeUrl: string, look: ColourByLook | undefined, budget: number, say: (text: string) => void, stale: () => boolean, at?: number, chunks?: { keys?: string[]; cache: Map<string, BuiltChunk | null> }): Promise<GeometryRead> {
   const g = look?.by === "group" ? look.group : undefined;
   // The group's index and colour attributes read with the points (a taxonomy's tier: a cell's class).
-  const client = new StoreClient(storeUrl, { attributes: g !== undefined ? [g.attribute, ...(g.colorAttribute ? [g.colorAttribute] : [])] : [] });
+  const client = readerFor(storeUrl, g !== undefined ? [g.attribute, ...(g.colorAttribute ? [g.colorAttribute] : [])] : []);
   try {
     const info = await client.ready;
     const meshes = info.primitive === "triangles";
@@ -208,11 +247,12 @@ export async function readGeometry(storeUrl: string, look: ColourByLook | undefi
     const radius = lines && !perVertex ? info.attributes.find((a) => /^radi(us|i)$/i.test(a.id) && a.components === 1) : undefined;
     client.setScalar(g !== undefined && perVertex ? `group:${g.attribute}${g.colours === "stored" && g.colorAttribute ? `:${g.colorAttribute}` : ""}` : radius ? `attribute:${radius.id}` : "object");
     const objects = g !== undefined && !perVertex ? objectGroups(storeUrl, g.attribute, g.colours === "stored" ? g.colorAttribute : undefined) : undefined;
-    // A level asked for (where it exists), else the finest within the budget.
-    // A level asked for (where it exists), else the finest within the budget; or the chunks asked for (the finest of them its level).
-    const level = chunks !== undefined && chunks.keys.length > 0 ? Math.min(...chunks.keys.map((k) => Number(k.split("|")[0]))) : at !== undefined && at < info.levels.length ? at : pointsLevelIndex(info, meshes ? budget / 2 : budget);
+    // A level asked for (where it exists; COARSEST the coarsest), else the finest within the budget; or the chunks asked
+    // for (the finest of them its level). With a cache, chunks it holds are not read again (whatever chose them).
+    const asked = chunks?.keys;
+    const level = asked !== undefined && asked.length > 0 ? Math.min(...asked.map((k) => Number(k.split("|")[0]))) : at === COARSEST ? info.levels.length - 1 : at !== undefined && at >= 0 && at < info.levels.length ? at : pointsLevelIndex(info, meshes ? budget / 2 : budget);
     const shape = info.levels[level].chunkShape;
-    const keys = chunks?.keys ?? chunksIn(chunkRange(info.bounds.lower, info.bounds.upper, shape)).map((c) => keyOf(level, c));
+    const keys = asked ?? chunksIn(chunkRange(info.bounds.lower, info.bounds.upper, shape)).map((c) => keyOf(level, c));
     const cache = chunks?.cache;
     const need = keys.filter((k) => !cache?.has(k));
     client.want("anatomical-rendering", need);
@@ -229,7 +269,8 @@ export async function readGeometry(storeUrl: string, look: ColourByLook | undefi
     });
     if (cache) {
       for (const k of need) cache.set(k, client.get(k) ?? null);
-      for (const k of [...cache.keys()]) if (!keys.includes(k)) cache.delete(k);
+      const kept = new Set(keys);
+      for (const k of [...cache.keys()]) if (!kept.has(k)) cache.delete(k);
     }
     const built = keys.map((k) => (cache ? cache.get(k) : client.get(k))).filter((c): c is BuiltChunk => !!c);
     if (built.length === 0) throw new Error("the store has no geometry");
@@ -243,6 +284,6 @@ export async function readGeometry(storeUrl: string, look: ColourByLook | undefi
       levels: info.levels.map((l) => ({ vertexCount: l.vertexCount, chunkShape: [...l.chunkShape] })), bounds: { lower: [...info.bounds.lower], upper: [...info.bounds.upper] },
     };
   } finally {
-    client.dispose();
+    park(client);
   }
 }

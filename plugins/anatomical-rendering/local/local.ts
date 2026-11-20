@@ -19,6 +19,8 @@ import geometrySource from "./geometry.wgsl?raw";
 import type { LiveGeometryLook } from "../geometry/live_geometry.js";
 import type { Surfaces } from "../geometry/surfaces.js";
 import { G, geometryBuffer, geometryParams, objectsByteOffset } from "./local_geometry.js";
+import { APRON, BRICK_SIDE, MAX_LEVELS, REGION, regionGrid, SLOT } from "../adaptive.js";
+import { multiscale, POOL_SLOTS, POOL_X, POOL_Y, POOL_Z, slotAt } from "../adaptive_bricks.js";
 
 // WebGPU's types are not in this TypeScript's DOM library (and @webgpu/types is not installed): loose ones here.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -38,6 +40,11 @@ const GPUShaderStage = new Proxy({}, { get: (_t, k) => webgpu.GPUShaderStage[k] 
 const GPUMapMode = new Proxy({}, { get: (_t, k) => webgpu.GPUMapMode[k] }) as Record<string, number>;
 
 export const TF_SIZE = 1024;
+/** Multiscale's table starts this many entries into its buffer (after the levels' scales and offsets). */
+const MS_HEAD = 16;
+/** Multiscale: how often the picture starts again with the bricks come since (once it has MS_FOLD_SAMPLES), as live.ts. */
+const MS_FOLD_MS = 15000;
+const MS_FOLD_SAMPLES = 64;
 const BRICK = 4;
 
 export const OFFSETS: Record<string, number> = {};
@@ -506,6 +513,19 @@ export interface Level8 {
   medium?: "above" | "below";
   /** The level's name in the store. */
   path: string;
+  /** Every level of the image, finest first: its name, voxels (x, y, z) and voxel side (mm, the mean): for showing which is drawn. */
+  levels?: { path: string; size: [number, number, number]; voxelMm: number; voxelToRas?: number[] }[];
+}
+
+/** What the image reader takes for an image's url (precomputed and N5 by their prefixes, a store over http). */
+export function readerUrl(url: string): string {
+  // A precomputed image (precomputed://…) is read as the volume view reads one: `precomputed:<http url>`.
+  const pre = url.startsWith("precomputed://") ? precomputedUrl(url) : undefined;
+  // An N5 pyramid (n5://…, as the Human Organ Atlas serves them): `n5:<http url>`.
+  const n5 = pre === undefined ? n5Url(url) : undefined;
+  const http = pre !== undefined ? PRECOMPUTED + pre : n5 !== undefined ? N5 + n5 : storeHttpUrl(url.replace(/^zarr[23]?:\/\//i, "").replace(/\/?$/, "/"));
+  if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only (OME-Zarr, N5 and precomputed)`);
+  return http;
 }
 
 /**
@@ -513,14 +533,8 @@ export interface Level8 {
  * `url` is the store as the host takes it (gs:// and s3:// kept): read here at its http(s) address.
  */
 export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
-  // A precomputed image (precomputed://…) is read as the volume view reads one: `precomputed:<http url>`.
-  const pre = url.startsWith("precomputed://") ? precomputedUrl(url) : undefined;
-  // An N5 pyramid (n5://…, as the Human Organ Atlas serves them): `n5:<http url>`.
-  const n5 = pre === undefined ? n5Url(url) : undefined;
-  const http = pre !== undefined ? PRECOMPUTED + pre : n5 !== undefined ? N5 + n5 : storeHttpUrl(url.replace(/^zarr[23]?:\/\//i, "").replace(/\/?$/, "/"));
-  if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only (OME-Zarr, N5 and precomputed)`);
   // All of the image's values read as 0..255, as the host holds them: the densest tissue not cut off.
-  const { levels, window: range } = await client.open([http], undefined, { full: true });
+  const { levels, window: range } = await client.open([readerUrl(url)], undefined, { full: true });
   const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
   const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
   const level = levels[levelIndex];
@@ -531,7 +545,8 @@ export async function readLevel(client: VolumeClient, url: string, budget: numbe
   const from8 = (v: number) => span[0] + (v / 255) * (span[1] - span[0]);
   const quantiles = window && levelQuantiles(data, size, span, [from8(window[0]), from8(window[1])]);
   const medium = quantiles ? mediumSide(data, size, span, [from8(window[0]), from8(window[1])]) : undefined;
-  return { data, size, voxelToRas: Array.from(level.voxelToRas), range: span, pct: tissuePercentiles(data), window, quantiles, medium, path: level.path };
+  const all = levels.map((l) => ({ path: l.path, size: [...l.size] as [number, number, number], voxelMm: l.voxelSize, voxelToRas: Array.from(l.voxelToRas) }));
+  return { data, size, voxelToRas: Array.from(level.voxelToRas), range: span, pct: tissuePercentiles(data), window, quantiles, medium, path: level.path, levels: all };
 }
 
 export interface LocalFrame {
@@ -616,7 +631,6 @@ export class LocalRenderer {
   private tf: GPUBuffer | undefined;
   private accum: GPUBuffer | undefined;
   private out: GPUBuffer | undefined;
-  private depth: GPUBuffer | undefined;
   private uni: GPUBuffer | undefined;
   /** The surfaces (geometry.wgsl's gdata and G), and what they were made from. */
   private gdata: GPUBuffer | undefined;
@@ -640,6 +654,17 @@ export class LocalRenderer {
   adapterName = "";
   /** The level on the GPU, once loaded. */
   level: Level8 | undefined;
+  /** Each region of the image drawn at the level its size on screen calls for (adaptive_bricks.ts): the Multiscale switch. */
+  multiscale = false;
+  private url = "";
+  /** Base bounds (each brick's), as read; the pool, the table's buffer, and what of them is on the GPU. */
+  private baseBounds: Float32Array | undefined;
+  private pool: GPUTexture | undefined;
+  private msBuf: GPUBuffer | undefined;
+  private poolStamp = 0;
+  private msTableVersion = -1;
+  private msShownAt = 0;
+  private msUnlisten: (() => void) | undefined;
 
   async load(url: string, budget: number, progress?: (msg: string) => void): Promise<string> {
     const adapter = await webgpuAdapter();
@@ -661,6 +686,7 @@ export class LocalRenderer {
     const level = await readLevel(this.client, url, budget, device.limits.maxTextureDimension3D, progress);
     const { data, size } = level;
     this.level = level;
+    this.url = url;
     this.size = size;
     this.voxelToRas = level.voxelToRas;
     this.pct = level.pct;
@@ -685,6 +711,11 @@ export class LocalRenderer {
     if (this.disposed) throw new Error("closed");
     this.bounds = device.createBuffer({ size: b.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.bounds, 0, b);
+    this.baseBounds = b;
+    this.pool = device.createTexture({ size: [1, 1, 1], dimension: "3d", format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.msBuf = device.createBuffer({ size: MS_HEAD * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.poolStamp = 0;
+    this.msTableVersion = -1;
     this.maj = device.createBuffer({ size: this.nbricks * 4, usage: GPUBufferUsage.STORAGE });
     this.params = device.createBuffer({ size: NPARAMS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.tf = device.createBuffer({ size: TF_SIZE * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -698,7 +729,8 @@ export class LocalRenderer {
   }
 
   private compile(device: GPUDevice): void {
-    const consts = `const TF_SIZE: u32 = ${TF_SIZE}u;\n` + Object.entries(OFFSETS).map(([k, v]) => `const P_${k}: u32 = ${v}u;`).join("\n") + "\n";
+    const consts =
+      `const TF_SIZE: u32 = ${TF_SIZE}u;\nconst MS_HEAD: u32 = ${MS_HEAD}u;\nconst MS_REGION: u32 = ${REGION}u;\nconst MS_BRICK: u32 = ${BRICK_SIDE}u;\nconst MS_APRON: u32 = ${APRON}u;\nconst MS_SLOT: u32 = ${SLOT}u;\nconst MS_POOL_X: u32 = ${POOL_X}u;\nconst MS_POOL_Y: u32 = ${POOL_Y}u;\n` + Object.entries(OFFSETS).map(([k, v]) => `const P_${k}: u32 = ${v}u;`).join("\n") + "\n";
     const module = device.createShaderModule({ code: consts + geometrySource + shaderSource });
     const S = GPUShaderStage.COMPUTE;
     this.layout = device.createBindGroupLayout({
@@ -710,10 +742,11 @@ export class LocalRenderer {
         { binding: 4, visibility: S, buffer: { type: "storage" } },
         { binding: 5, visibility: S, buffer: { type: "storage" } },
         { binding: 6, visibility: S, buffer: { type: "storage" } },
-        { binding: 7, visibility: S, buffer: { type: "storage" } },
+        { binding: 7, visibility: S, buffer: { type: "read-only-storage" } },
         { binding: 8, visibility: S, buffer: { type: "read-only-storage" } },
         { binding: 9, visibility: S, buffer: { type: "uniform" } },
         { binding: 10, visibility: S, buffer: { type: "read-only-storage" } },
+        { binding: 11, visibility: S, texture: { sampleType: "float", viewDimension: "3d" } },
       ],
     });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
@@ -728,12 +761,11 @@ export class LocalRenderer {
     if (W !== this.W || H !== this.H || !this.accum) {
     this.accum?.destroy();
     this.out?.destroy();
-    this.depth?.destroy();
     this.W = W;
     this.H = H;
     this.accum = device.createBuffer({ size: W * H * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.out = device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    this.depth = device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    // The picture, then the depth.
+    this.out = device.createBuffer({ size: W * H * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     }
     this.bind = device.createBindGroup({
       layout: this.layout!,
@@ -745,10 +777,11 @@ export class LocalRenderer {
         { binding: 4, resource: { buffer: this.maj! } },
         { binding: 5, resource: { buffer: this.accum } },
         { binding: 6, resource: { buffer: this.out } },
-        { binding: 7, resource: { buffer: this.depth } },
+        { binding: 7, resource: { buffer: this.msBuf! } },
         { binding: 8, resource: { buffer: this.bounds! } },
         { binding: 9, resource: { buffer: this.uni! } },
         { binding: 10, resource: { buffer: this.gdata! } },
+        { binding: 11, resource: this.pool!.createView({ dimension: "3d" }) },
       ],
     });
   }
@@ -798,6 +831,125 @@ export class LocalRenderer {
   }
 
   private colourKey = "";
+
+  /**
+   * Multiscale (adaptive_bricks.ts): levels chosen for the view, the bricks come since put in the pool, and the table
+   * and the majorants again when what is drawn finer changed. The picture starts again with it once nothing more is
+   * coming, or every MS_FOLD_MS once it has MS_FOLD_SAMPLES (between, its samples mix the two).
+   */
+  /** Multiscale on or off: the picture starts again. */
+  setMultiscale(on: boolean): void {
+    if (on === this.multiscale) return;
+    this.multiscale = on;
+    this.version++;
+    if (this.view !== undefined && !this.running && this.ready) void this.loop();
+  }
+
+  private msSync(v: ViewSpec, W: number, H: number): void {
+    const device = this.device!;
+    const level = this.level;
+    if (!this.multiscale || level === undefined || !multiscale.attach(this.url, level)) {
+      if (this.msTableVersion !== -1) {
+        // Off: the base everywhere.
+        this.msTableVersion = -1;
+        multiscale.pin(this, undefined);
+        device.queue.writeBuffer(this.msBuf!, 0, new Uint32Array(4));
+        device.queue.writeBuffer(this.bounds!, 0, this.baseBounds!);
+        this.version++;
+      }
+      return;
+    }
+    this.msUnlisten ??= multiscale.listenRedraw(() => {
+      if (this.view !== undefined && !this.running && !this.disposed) void this.loop();
+    });
+    // Levels for this view.
+    const inv = rowMajor(v.inv_view_projection);
+    const vp = invert(inv);
+    const cm = (m: M) => [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r) => m[4 * r + c]));
+    const wfp = v.world_from_physical ? rowMajor(v.world_from_physical) : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const wfv = mul(wfp, this.voxelToRas);
+    const keepBox = v.boxes?.find((b) => b.keep);
+    const crop = v.crop_fraction ?? (keepBox ? ([keepBox.lo, keepBox.hi] as [[number, number, number], [number, number, number]]) : undefined);
+    const cropLo = crop ? crop[0].map((f, a) => f * this.size[a] - 0.5) : [-1e9, -1e9, -1e9];
+    const cropHi = crop ? crop[1].map((f, a) => f * this.size[a] - 0.5) : [1e9, 1e9, 1e9];
+    const key = JSON.stringify([crop, v.clips, wfv, v.preset, v.overrides]);
+    let clearCells: Uint8Array | undefined;
+    const clear = (r: number) => {
+      // Clear at the base: every brick (BRICK³) under the region's majorant 0.
+      if (clearCells === undefined) {
+        const tf = levelTable(this.pack(v, W, H).preset, level);
+        const some = new Int32Array(TF_SIZE + 1);
+        for (let i = 0; i < TF_SIZE; ++i) some[i + 1] = some[i] + (tf[4 * i + 3] > 0 ? 1 : 0);
+        const b = this.baseBounds!;
+        clearCells = new Uint8Array(this.nbricks);
+        for (let i = 0; i < this.nbricks; ++i) {
+          const a = Math.floor(Math.min(1, Math.max(0, b[2 * i])) * (TF_SIZE - 1));
+          const e = Math.min(TF_SIZE - 1, Math.ceil(Math.min(1, Math.max(0, b[2 * i + 1])) * (TF_SIZE - 1)));
+          clearCells[i] = e < a || some[e + 1] - some[a] === 0 ? 1 : 0;
+        }
+      }
+      const grid = regionGrid(this.size);
+      const g = [r % grid[0], Math.floor(r / grid[0]) % grid[1], Math.floor(r / (grid[0] * grid[1]))];
+      const per = REGION / BRICK;
+      for (let z = g[2] * per; z < Math.min(this.grid[2], (g[2] + 1) * per); ++z)
+        for (let y = g[1] * per; y < Math.min(this.grid[1], (g[1] + 1) * per); ++y)
+          for (let x = g[0] * per; x < Math.min(this.grid[0], (g[0] + 1) * per); ++x) if (!clearCells[x + this.grid[0] * (y + this.grid[1] * z)]) return false;
+      return true;
+    };
+    multiscale.plan(this.url, { invViewProjection: cm(inv), viewProjection: cm(vp), height: H, worldFromVox: cm(wfv), cropLo, cropHi, key }, Math.floor(0.9 * POOL_SLOTS), clear);
+    // The bricks come since.
+    let { slots, stamp } = multiscale.written(this.poolStamp);
+    if (slots.length > 0 && this.pool!.width === 1) {
+      this.pool!.destroy();
+      this.pool = device.createTexture({ size: [POOL_X * SLOT, POOL_Y * SLOT, POOL_Z * SLOT], dimension: "3d", format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      this.resize(W, H, true);
+      ({ slots, stamp } = multiscale.written(0));
+    }
+    for (const slot of slots) {
+      const at = slotAt(slot);
+      device.queue.writeTexture({ texture: this.pool, origin: [at[0] * SLOT, at[1] * SLOT, at[2] * SLOT] }, multiscale.slotBytes(slot)!, { bytesPerRow: SLOT, rowsPerImage: SLOT }, [SLOT, SLOT, SLOT]);
+    }
+    this.poolStamp = stamp;
+    // The table, and the majorants where regions are drawn finer (their bricks' values), taken when the picture starts
+    // again: anyway (a new view), once nothing more is coming, or at the fold's time. Between, it draws with the table
+    // it took (its slots pinned), so a picture's samples are all of one choice.
+    const now = performance.now();
+    if (multiscale.version !== this.msTableVersion && (this.applied !== this.version || this.msTableVersion === -1 || !multiscale.busy() || (now - this.msShownAt > MS_FOLD_MS && this.samples >= MS_FOLD_SAMPLES))) {
+      this.msTable(W, H);
+      this.msShownAt = now;
+      this.version++;
+    }
+  }
+
+  private msTable(W: number, H: number): void {
+    const device = this.device!;
+    this.msTableVersion = multiscale.version;
+    const t = multiscale.table([this.url]);
+    multiscale.pin(this, t.slots);
+    const head = new Uint32Array(4 * MS_HEAD);
+    head[0] = t.ms[0];
+    head.set(Array.from(t.grid.subarray(0, 3), Math.round), 1);
+    const f = new Float32Array(head.buffer);
+    for (let j = 0; j < MAX_LEVELS; ++j) {
+      f.set(t.scale.subarray(3 * j, 3 * j + 3), 4 * (1 + 2 * j));
+      f.set(t.off.subarray(3 * j, 3 * j + 3), 4 * (2 + 2 * j));
+    }
+    const bytes = head.byteLength + t.data.byteLength;
+    if (bytes > this.msBuf!.size) {
+      this.msBuf!.destroy();
+      this.msBuf = device.createBuffer({ size: Math.max(bytes, 2 * this.msBuf!.size), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      this.resize(W, H, true);
+    }
+    device.queue.writeBuffer(this.msBuf!, 0, head);
+    device.queue.writeBuffer(this.msBuf!, head.byteLength, t.data);
+    const bounds = this.baseBounds!.slice();
+    for (const [i, [lo, hi]] of multiscale.cellBounds(this.url, BRICK, this.grid) ?? []) {
+      bounds[2 * i] = Math.min(bounds[2 * i], lo);
+      bounds[2 * i + 1] = Math.max(bounds[2 * i + 1], hi);
+    }
+    // (The majorants made again from them as the picture starts again.)
+    device.queue.writeBuffer(this.bounds!, 0, bounds);
+  }
 
   /** The view to render; `tag` comes back with its frames. */
   setView(view: ViewSpec, tag = ""): void {
@@ -884,9 +1036,10 @@ export class LocalRenderer {
       while (!this.disposed) {
         const v = this.view;
         if (v === undefined) break;
-        if (this.applied === this.version && this.samples >= this.maxSamples) break;
         const W = Math.max(8, Math.round(v.width * (v.scale ?? 1)));
         const H = Math.max(8, Math.round(v.height * (v.scale ?? 1)));
+        this.msSync(v, W, H);
+        if (this.applied === this.version && this.samples >= this.maxSamples) break;
         if (this.applied !== this.version) {
           const version = this.version;
           this.resize(W, H);
@@ -905,7 +1058,7 @@ export class LocalRenderer {
           pass.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8));
           pass.end();
           const read = device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-          enc.copyBufferToBuffer(this.depth!, 0, read, 0, W * H * 4);
+          enc.copyBufferToBuffer(this.out!, W * H * 4, read, 0, W * H * 4);
           device.queue.submit([enc.finish()]);
           await read.mapAsync(GPUMapMode.READ);
           depthOut = { width: W, height: H, data: new Float32Array(read.getMappedRange().slice(0)), version };
@@ -967,6 +1120,10 @@ export class LocalRenderer {
 
   dispose(): void {
     this.disposed = true;
+    this.msUnlisten?.();
+    multiscale.pin(this, undefined);
+    if (this.url) multiscale.detach(this.url);
+    this.pool?.destroy();
     this.client?.dispose();
     this.tex?.destroy();
     this.gdata?.destroy();
