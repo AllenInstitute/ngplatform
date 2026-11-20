@@ -1,0 +1,1 @@
+const t={"org.ngplatform.zarr-vectors":()=>import("./async_computation-CEOHAeUx.js")};function n(r){try{const a=JSON.parse(r||"{}");return Array.isArray(a.plugins)?a.plugins.map(String):[]}catch{return[]}}for(const r of n(self.name))await t[r]?.();await import("./async_computation.bundle-B2HU3h-0.js");for(const r of n(self.name))(await t[r]?.())?.afterNeuroglancer?.();
