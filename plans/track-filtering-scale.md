@@ -1,6 +1,6 @@
 # Track filtering at scale: review and plan
 
-*Written 2026-11-20*, from a review of the Filtering plugin (`plugins/track-filtering`) on S-21-46's BRIDGE
+*Written 2026-11-20*, from a review of the Filtering plugin (`plugins/track-filtering`) on S-21-46's FibreGraph
 streamlines. That store is 3.3 GB: 10.3 M streamlines, 3.0 G points at level 0, 6 levels. Stores of 50 to 150 GB
 are coming: 15 to 50 times this one, so roughly 150 M to 500 M streamlines.
 
@@ -44,7 +44,7 @@ likeliest cause, and fix 3 removes most of it.
 
 - **No axis units.** The store declares none ("shown unitless"), and the scene puts it at 1.5 M "mm": the scale
   bar reads 300 m, region sizes read in kilometres, and the link's 3-D view (256 units across) shows almost
-  nothing of a brain about 1.5 M units wide. BRIDGE should write `axis_units` and scales (µm, or 50 µm voxels).
+  nothing of a brain about 1.5 M units wide. FibreGraph should write `axis_units` and scales (µm, or 50 µm voxels).
 - **Very dense level-0 chunks.** 206 chunks hold 3.0 G points: about 14 M points a chunk, roughly 240 MB decoded.
   The region worker's cache is 320 MB, about one chunk, so a region moved a little reads its chunks again. For
   the big stores, choose chunk shapes for **1 to 4 M points a chunk** (64 to 128 units here, not 256).

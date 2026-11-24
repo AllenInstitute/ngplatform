@@ -8,10 +8,11 @@ import type { ExampleSpec } from "../platform/plugin_host.js";
 
 const BUCKET = "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test";
 
-// S-21-46, a whole brain imaged by HiP-CT at 50 µm: BRIDGE's anatomically
+// S-21-46, a whole brain imaged by HiP-CT at 50 µm: FibreGraph's anatomically
 // constrained tractogram, registered to MNI space (RAS mm): 3,308,503
 // streamlines, about 420 M vertices, five levels.  https:// rather than
 // gs://: the zarr-vectors reader finds no zarr.json through the GCS kvstore.
+// The bucket folder and file name keep the pre-rename names until the store is re-uploaded.
 const S2146 = `${BUCKET}/BRIDGE_outputs/S-21-46_res-50um_space-MNI152_desc-bridgeanatomical.zarrvectors/`;
 
 // The HCP-1065 population tractogram (MNI space, RAS mm): 503,085
@@ -126,7 +127,7 @@ export const EXAMPLES: ExampleSpec[] = [
     id: "s2146-mni",
     title: "S-21-46 HiP-CT tractogram on the SRB 2026a template",
     description:
-      "3.3 million streamlines (zarr-vectors) from a whole brain imaged at 50 µm by HiP-CT, anatomically constrained (BRIDGE) and registered to MNI space, on SRB 2026a, with three track groups set up in Filtering.",
+      "3.3 million streamlines (zarr-vectors) from a whole brain imaged at 50 µm by HiP-CT, anatomically constrained (FibreGraph) and registered to MNI space, on SRB 2026a, with three track groups set up in Filtering.",
     remote: true,
     listed: false,
     plugins: [TRACK_FILTERING],

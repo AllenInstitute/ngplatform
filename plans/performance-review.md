@@ -22,7 +22,7 @@ Phases 0–5. Measured, not only read. Nothing was changed.
 Yes: the fundamentals can be improved a long way, mostly in the stores themselves rather than the code.
 
 - **OME-Zarr:**
-  - **Chunk shape:** the example stores are 192³ and 256³ unsharded. A 2-D view reads whole 3-D chunks, so these cost 3.7–5.9× the bytes and about 3.4× the GPU memory of 64³-in-shards. BRIDGE already writes 64³ in shards.
+  - **Chunk shape:** the example stores are 192³ and 256³ unsharded. A 2-D view reads whole 3-D chunks, so these cost 3.7–5.9× the bytes and about 3.4× the GPU memory of 64³-in-shards. FibreGraph already writes 64³ in shards.
   - **Panning:** with these stores, fast panning re-downloads data it has evicted (36% of 4.6 GB in two minutes). It also cancels 74–91% of its requests.
 - **Zarr Vectors:**
   - **Compression:** the store's per-chunk arrays are uncompressed. zstd makes them about 14× smaller.
@@ -82,7 +82,7 @@ Effort: S = under half a day, M = 1–3 days, L = more. "Store" items need the d
 ## Suggested order
 
 1. **Item 1** (stability) and **items 6–9** (app code, all small): ship without touching any store.
-2. **Item 2** (OME-Zarr store layout): rewrite the example stores and set the writing rule for BRIDGE exports. This is the largest single gain and needs no code.
+2. **Item 2** (OME-Zarr store layout): rewrite the example stores and set the writing rule for FibreGraph exports. This is the largest single gain and needs no code.
 3. **Items 3–5** (the Zarr Vectors format): change zarr-vectors-tools, then rewrite the S-21-46 store. This is decided with the format's spec, since readers must keep reading old stores.
 4. **Items 14–15** in the fork, behind a setting; then 12, 18, 19, 10, 11 as the data grows.
 
